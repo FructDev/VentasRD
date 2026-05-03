@@ -8,6 +8,10 @@ const withPWA = withPWAInit({
   reloadOnOnline: true,
   // Eliminamos swcMinify de aquí
   disable: process.env.NODE_ENV === "development",
+  fallbacks: {
+    // Si falla la red al abrir la PWA, inyectar directamente la raíz (el POS)
+    document: "/",
+  },
   workboxOptions: {
     disableDevLogs: true,
   },
