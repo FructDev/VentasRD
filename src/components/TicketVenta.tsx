@@ -1,0 +1,94 @@
+// src/components/TicketVenta.tsx
+import { forwardRef } from 'react';
+import { CartItem } from '@/store/useCartStore';
+
+interface TicketProps {
+    items: CartItem[];
+    subtotal: number;
+    itbis: number;
+    total: number;
+    metodoPago: string;
+    montoRecibido: string;
+    devuelta: number;
+    nombreNegocio?: string;
+    direccion?: string;
+    telefono?: string;
+    numeroTicket?: number;
+}
+
+export const TicketVenta = forwardRef<HTMLDivElement, TicketProps>(({
+    items, subtotal, itbis, total, metodoPago, montoRecibido, devuelta,
+    nombreNegocio = 'Mi Negocio', direccion = 'Ciudad, RD', telefono = '809-000-0000',
+    numeroTicket
+}, ref) => {
+
+    const fechaActual = new Date().toLocaleString('es-DO');
+    const ticketNum = numeroTicket ? String(numeroTicket).padStart(5, '0') : '-----';
+
+    return (
+        <div className="hidden print:block font-mono text-sm text-black" ref={ref} style={{ width: '80mm', padding: '10px' }}>
+
+            {/* Cabecera del Negocio */}
+            <div className="text-center mb-4">
+                <h1 className="text-xl font-bold uppercase">{nombreNegocio}</h1>
+                <p className="text-xs">{direccion}</p>
+                <p className="text-xs">Tel: {telefono}</p>
+                <p className="text-xs mt-2">Fecha: {fechaActual}</p>
+                <p className="text-xs font-bold mt-1">Ticket #: {ticketNum}</p>
+            </div>
+
+            <div className="border-b border-dashed border-black mb-2"></div>
+
+            {/* Lista de Productos */}
+            <table className="w-full text-left text-xs mb-2">
+                <thead>
+                    <tr className="border-b border-dashed border-black">
+                        <th className="py-1">CANT</th>
+                        <th className="py-1">DESCRIPCIÓN</th>
+                        <th className="py-1 text-right">IMPORTE</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {items.map((item) => (
+                        <tr key={item.id}>
+                            <td className="py-1 align-top">{item.cantidad}</td>
+                            <td className="py-1 pr-2 align-top break-words">
+                                {item.nombre}
+                                {item.cantidad > 1 && <div className="text-[10px] text-gray-500">@ {item.precio_venta.toFixed(2)}</div>}
+                            </td>
+                            <td className="py-1 text-right align-top">{(item.precio_venta * item.cantidad).toFixed(2)}</td>
+                        </tr>
+                    ))}
+                </tbody>
+            </table>
+
+            <div className="border-b border-dashed border-black mb-2"></div>
+
+            {/* Totales */}
+            <div className="flex flex-col items-end text-xs mb-4">
+                <div className="flex justify-between w-full"><span>Subtotal:</span> <span>RD$ {subtotal.toFixed(2)}</span></div>
+                <div className="flex justify-between w-full"><span>ITBIS:</span> <span>RD$ {itbis.toFixed(2)}</span></div>
+                <div className="flex justify-between w-full font-bold text-sm mt-1"><span>TOTAL:</span> <span>RD$ {total.toFixed(2)}</span></div>
+            </div>
+
+            <div className="border-b border-dashed border-black mb-2"></div>
+
+            {/* Info de Pago */}
+            <div className="text-xs mb-4">
+                <div className="flex justify-between"><span>Pago ({metodoPago}):</span> <span>RD$ {parseFloat(montoRecibido || '0').toFixed(2)}</span></div>
+                {metodoPago === 'efectivo' && (
+                    <div className="flex justify-between font-bold mt-1"><span>DEVUELTA:</span> <span>RD$ {devuelta.toFixed(2)}</span></div>
+                )}
+            </div>
+
+            {/* Pie de página */}
+            <div className="text-center mt-6 text-xs">
+                <p>¡Gracias por su compra!</p>
+                <p className="mt-1">Vuelva pronto</p>
+            </div>
+
+        </div>
+    );
+});
+
+TicketVenta.displayName = 'TicketVenta';
