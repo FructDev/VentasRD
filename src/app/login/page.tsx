@@ -73,12 +73,22 @@ export default function LoginPage() {
                     </button>
                 </form>
 
-                <p className="mt-6 text-center text-sm text-vr-gray">
-                    ¿No tienes una cuenta?{' '}
-                    <Link href="/registro" className="text-gold hover:text-gold-2 font-bold transition-colors">
-                        Crea tu negocio aquí
-                    </Link>
-                </p>
+                <div className="mt-6 space-y-3 text-center text-sm">
+                    <div>
+                        <Link
+                            href="/recuperar-contrasena"
+                            className="text-vr-gray hover:text-white transition-colors"
+                        >
+                            ¿Olvidaste tu contraseña?
+                        </Link>
+                    </div>
+                    <div className="text-vr-gray">
+                        ¿No tienes una cuenta?{' '}
+                        <Link href="/registro" className="text-gold hover:text-gold-2 font-bold transition-colors">
+                            Crea tu negocio aquí
+                        </Link>
+                    </div>
+                </div>
             </div>
         </div>
     );

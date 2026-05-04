@@ -1,5 +1,6 @@
 // src/store/useCartStore.ts
 import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
 import { ProductoLocal } from '@/types/database';
 
 // Extendemos el tipo producto para incluir la cantidad en el carrito
@@ -41,7 +42,9 @@ const calculateTotals = (items: CartItem[]) => {
     };
 };
 
-export const useCartStore = create<CartState>((set) => ({
+export const useCartStore = create<CartState>()(
+  persist(
+    (set) => ({
     items: [],
     subtotal: 0,
     itbis: 0,
@@ -83,4 +86,14 @@ export const useCartStore = create<CartState>((set) => ({
     }),
 
     clearCart: () => set({ items: [], subtotal: 0, itbis: 0, total: 0 }),
-}));
+  }),
+  {
+    name: 'ventard-cart',
+    // Solo persistir items; los totales se recalculan al rehidratar
+    partialize: (state) => ({ items: state.items }),
+    merge: (persisted, current) => {
+        const items = (persisted as { items: CartItem[] }).items ?? [];
+        return { ...current, items, ...calculateTotals(items) };
+    },
+  }
+));

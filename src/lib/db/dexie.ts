@@ -1,6 +1,6 @@
 // src/lib/db/dexie.ts
 import Dexie, { Table } from 'dexie';
-import { VentaLocal, ProductoLocal, ComposicionLocal, ClienteLocal, TransaccionFiadoLocal, VentaDetalleLocal, CajaLocal } from '@/types/database';
+import { VentaLocal, ProductoLocal, ComposicionLocal, ClienteLocal, TransaccionFiadoLocal, VentaDetalleLocal, CajaLocal, SucursalLocal } from '@/types/database';
 
 export class VentaRDDatabase extends Dexie {
     ventas!: Table<VentaLocal>;
@@ -10,6 +10,7 @@ export class VentaRDDatabase extends Dexie {
     transacciones_fiado!: Table<TransaccionFiadoLocal>;
     venta_detalles!: Table<VentaDetalleLocal>;
     cajas!: Table<CajaLocal>;
+    sucursales!: Table<SucursalLocal>;
 
     constructor() {
         super('VentaRD_Vault');
@@ -33,6 +34,12 @@ export class VentaRDDatabase extends Dexie {
 
         this.version(10).stores({
             venta_detalles: 'id, venta_id, producto_id, negocio_id, estado_sincronizacion, fecha_creacion'
+        });
+
+        // v11: cajas con sync, tabla de sucursales para cache offline
+        this.version(11).stores({
+            cajas: 'id, negocio_id, sucursal_id, estado, fecha_apertura, estado_sincronizacion, fecha_actualizacion',
+            sucursales: 'id, negocio_id',
         });
     }
 }

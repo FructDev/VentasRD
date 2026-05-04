@@ -3,7 +3,7 @@
 
 import { useEffect } from 'react';
 import { useConfigStore } from '@/store/useConfigStore';
-import { startSyncWorker } from '@/lib/db/worker';
+import { startSyncWorker, stopSyncWorker } from '@/lib/db/worker';
 
 export function SyncProvider({ children }: { children: React.ReactNode }) {
     const setConnection = useConfigStore((state) => state.setConnection);
@@ -24,16 +24,16 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
         window.addEventListener('online', handleOnline);
         window.addEventListener('offline', handleOffline);
 
-        const workerInterval = startSyncWorker();
+        startSyncWorker();
 
         // Verificamos el estado real al montar el componente
         setConnection(navigator.onLine);
 
-        // Limpieza al desmontar (buenas prácticas)
+        // Limpieza al desmontar: el singleton garantiza que solo haya un worker activo
         return () => {
             window.removeEventListener('online', handleOnline);
             window.removeEventListener('offline', handleOffline);
-            clearInterval(workerInterval);
+            stopSyncWorker();
         };
     }, [setConnection]);
 

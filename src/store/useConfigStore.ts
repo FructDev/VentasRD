@@ -16,9 +16,13 @@ interface ConfigState {
     isAdminMode: boolean;
     isOfflineUnlocked: boolean;
     toast: { message: string, type: 'success' | 'error' | 'info' } | null;
+    // Plan / suscripcion
+    planActivo: boolean;
+    trialHasta: number | null; // timestamp ms
     setConnection: (status: boolean) => void;
     setOfflineUnlock: (status: boolean) => void;
     setAuth: (user: User | null, negocioId?: string | null, negocioNombre?: string | null, pinAdmin?: string | null, whatsapp?: string | null, rnc?: string | null, direccion?: string | null, mensaje?: string | null) => void;
+    setPlan: (planActivo: boolean, trialHasta: number | null) => void;
     setSucursal: (sucursalId: string | null) => void;
     setAdminMode: (status: boolean) => void;
     showToast: (message: string, type?: 'success' | 'error' | 'info') => void;
@@ -42,8 +46,11 @@ export const useConfigStore = create<ConfigState>()(
             isAdminMode: false,
             isOfflineUnlocked: false,
             toast: null,
+            planActivo: false,
+            trialHasta: null,
 
             setConnection: (status) => set({ isOnline: status }),
+            setPlan: (planActivo, trialHasta) => set({ planActivo, trialHasta }),
             setOfflineUnlock: (status) => set({ isOfflineUnlocked: status }),
             setSucursal: (sucursalId) => set({ sucursalId }),
             setAdminMode: (status) => set({ isAdminMode: status }),
@@ -94,6 +101,8 @@ export const useConfigStore = create<ConfigState>()(
                 negocioRnc: state.negocioRnc,
                 negocioDireccion: state.negocioDireccion,
                 negocioMensajeTicket: state.negocioMensajeTicket,
+                planActivo: state.planActivo,
+                trialHasta: state.trialHasta,
             }),
         }
     )

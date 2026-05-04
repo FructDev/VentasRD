@@ -5,6 +5,7 @@ import "./globals.css";
 import { SyncProvider } from "@/components/providers/SyncProvider";
 import { AuthProvider } from "@/components/providers/AuthProvider";
 import GlobalToast from "@/components/ui/GlobalToast";
+import { ErrorBoundary } from "@/components/ui/ErrorBoundary";
 
 const syne = Syne({
   subsets: ["latin"],
@@ -47,12 +48,14 @@ export default function RootLayout({
   return (
     <html lang="es" className={`${syne.variable} ${dmSans.variable} ${dmMono.variable}`}>
       <body className="font-body antialiased">
-        <SyncProvider>
-          <AuthProvider>
-            {children}
-            <GlobalToast />
-          </AuthProvider>
-        </SyncProvider>
+        <ErrorBoundary>
+          <SyncProvider>
+            <AuthProvider>
+              {children}
+              <GlobalToast />
+            </AuthProvider>
+          </SyncProvider>
+        </ErrorBoundary>
       </body>
     </html>
   );

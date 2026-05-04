@@ -5,6 +5,9 @@ import { supabase } from '@/lib/supabase/client';
 import { useConfigStore } from '@/store/useConfigStore';
 import { useRouter, usePathname } from 'next/navigation';
 import PinScreen from '@/components/ui/PinScreen';
+import SubscriptionGate from '@/components/ui/SubscriptionGate';
+
+const RUTAS_PUBLICAS = ['/login', '/registro', '/landing', '/offline', '/pin', '/recuperar-contrasena', '/actualizar-contrasena'];
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
     const router = useRouter();
@@ -16,7 +19,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         let montado = true;
 
         const procesarUsuario = async (user: any) => {
-            const rutasPublicas = ['/login', '/registro', '/landing', '/offline', '/pin'];
+            const rutasPublicas = RUTAS_PUBLICAS;
             const currentState = useConfigStore.getState();
 
             // SIN INTERNET — usar caché directamente
@@ -54,7 +57,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 // 2. Buscar si el usuario tiene un negocio
                 let { data: negocio, error } = await supabase
                     .from('negocios')
-                    .select('id, nombre, onboarding_completado, pin_admin, whatsapp_dueno, rnc, direccion, mensaje_ticket')
+                    .select('id, nombre, onboarding_completado, pin_admin, whatsapp_dueno, rnc, direccion, mensaje_ticket, plan_activo, trial_hasta')
                     .eq('dueño_id', user.id)
                     .maybeSingle();
 
@@ -80,10 +83,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 // 3. AUTO-SANACIÓN: Si no tiene, se lo creamos en este instante (solo si hay internet y realmente es nulo)
                 if (!negocio && !error) {
                     console.log("Creando negocio faltante...");
+                    const trialHasta = Date.now() + 30 * 24 * 60 * 60 * 1000; // 30 días
                     const { data: nuevoNegocio, error: insertError } = await supabase
                         .from('negocios')
-                        .insert({ dueño_id: user.id, nombre: 'Mi Negocio', pin_admin: '1234' })
-                        .select('id, nombre, onboarding_completado, pin_admin, whatsapp_dueno, rnc, direccion, mensaje_ticket')
+                        .insert({ dueño_id: user.id, nombre: 'Mi Negocio', pin_admin: '1234', plan_activo: false, trial_hasta: trialHasta })
+                        .select('id, nombre, onboarding_completado, pin_admin, whatsapp_dueno, rnc, direccion, mensaje_ticket, plan_activo, trial_hasta')
                         .single();
                     
                     if (insertError) throw insertError;
@@ -92,14 +96,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
                 // 4. Guardar en el estado global
                 useConfigStore.getState().setAuth(
-                    user, 
-                    negocio?.id || null, 
-                    negocio?.nombre || null, 
+                    user,
+                    negocio?.id || null,
+                    negocio?.nombre || null,
                     negocio?.pin_admin || '1234',
                     negocio?.whatsapp_dueno || null,
                     negocio?.rnc || null,
                     negocio?.direccion || null,
                     negocio?.mensaje_ticket || null
+                );
+                useConfigStore.getState().setPlan(
+                    negocio?.plan_activo ?? false,
+                    negocio?.trial_hasta ?? null,
                 );
 
                 // 5. ENRUTADOR ESTRICTO
@@ -162,5 +170,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return <div className="fixed inset-0 z-[99999] bg-navy"><PinScreen onUnlock={() => setNeedsPin(false)} /></div>;
     }
 
-    return <>{children}</>;
+    // En rutas públicas no aplicar el gate de suscripcion
+    const esRutaPublica = RUTAS_PUBLICAS.some(r => pathname.startsWith(r));
+    if (esRutaPublica) return <>{children}</>;
+
+    return <SubscriptionGate>{children}</SubscriptionGate>;
 }

@@ -23,14 +23,21 @@ export function useProductosTenant(incluirInsumos = true) {
 
 /**
  * Composiciones (recetas de combos) del negocio actual.
- * Se filtran por los productos que pertenecen al negocio.
+ * Filtradas por los IDs de productos-padre que pertenecen a este negocio,
+ * garantizando aislamiento multi-tenant sin necesidad de negocio_id en la tabla.
  */
 export function useComposicionesTenant() {
     const { negocioId } = useConfigStore();
     return useLiveQuery(
-        () => negocioId
-            ? db.composiciones.toArray() // composiciones no tienen negocio_id directo, se validan por producto_padre
-            : [],
+        async () => {
+            if (!negocioId) return [];
+            const productosIds = await db.productos
+                .where('negocio_id').equals(negocioId)
+                .primaryKeys() as string[];
+            const productosSet = new Set(productosIds);
+            const all = await db.composiciones.toArray();
+            return all.filter(c => productosSet.has(c.producto_padre_id));
+        },
         [negocioId]
     ) || [];
 }
@@ -109,6 +116,19 @@ export function useProductosBajoStockTenant() {
             ? db.productos.where('negocio_id').equals(negocioId)
                 .filter(p => p.stock_actual <= p.stock_minimo)
                 .toArray()
+            : [],
+        [negocioId]
+    ) || [];
+}
+
+/**
+ * Sucursales del negocio actual (desde cache local).
+ */
+export function useSucursalesTenant() {
+    const { negocioId } = useConfigStore();
+    return useLiveQuery(
+        () => negocioId
+            ? db.sucursales.where('negocio_id').equals(negocioId).toArray()
             : [],
         [negocioId]
     ) || [];

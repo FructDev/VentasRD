@@ -91,5 +91,14 @@ export interface CajaLocal {
     denominaciones_cierre?: Record<string, number>;
     fecha_apertura: number;
     fecha_cierre?: number;
+    fecha_actualizacion: number;
     notas?: string;
+    estado_sincronizacion?: 0 | 1;
+}
+
+export interface SucursalLocal {
+    id: string;
+    negocio_id: string;
+    nombre: string;
+    direccion?: string | null;
 }
