@@ -4,11 +4,13 @@ import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase/client';
 import { useConfigStore } from '@/store/useConfigStore';
 import { useRouter, usePathname } from 'next/navigation';
+import PinPage from '@/app/pin/page';
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
     const router = useRouter();
     const pathname = usePathname();
     const [isReady, setIsReady] = useState(false);
+    const [needsPin, setNeedsPin] = useState(false);
 
     useEffect(() => {
         let montado = true;
@@ -24,7 +26,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                     // ¿Ya desbloqueó con el PIN en esta sesión offline? → dejar pasar
                     // ¿No ha desbloqueado? → pedir PIN siempre (ignorar si el dueño dejó la sesión web abierta)
                     if (!currentState.isOfflineUnlocked) {
-                        if (pathname !== '/pin') router.push('/pin');
+                        setNeedsPin(true);
                     } else {
                         if (rutasPublicas.includes(pathname)) router.push('/');
                     }
@@ -153,6 +155,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 </div>
             </div>
         );
+    }
+
+    if (needsPin) {
+        // Envolvemos PinPage para que al tener éxito limpie el estado y deje ver los children
+        return <div className="fixed inset-0 z-[99999] bg-navy"><PinPage onUnlock={() => setNeedsPin(false)} /></div>;
     }
 
     return <>{children}</>;

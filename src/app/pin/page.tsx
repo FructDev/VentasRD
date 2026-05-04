@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { useConfigStore } from '@/store/useConfigStore';
 import { useRouter } from 'next/navigation';
 
-export default function PinPage() {
+export default function PinPage({ onUnlock }: { onUnlock?: () => void }) {
   const [pin, setPin] = useState('');
   const [error, setError] = useState(false);
   const router = useRouter();
@@ -18,7 +18,11 @@ export default function PinPage() {
     if (newPin.length === 4) {
       if (newPin === pinAdmin) {
         setOfflineUnlock(true);
-        router.push('/');
+        if (onUnlock) {
+            onUnlock();
+        } else {
+            router.push('/');
+        }
       } else {
         setError(true);
         setTimeout(() => setPin(''), 600);
