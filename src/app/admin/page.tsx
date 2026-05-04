@@ -14,7 +14,7 @@ import TopBar from '@/components/shared/TopBar';
 import OfflineBanner from '@/components/shared/OfflineBanner';
 
 export default function AdminDashboard() {
-    const { negocioId, negocioNombre, sucursalId, user, setSucursal, setAuth, showToast } = useConfigStore();
+    const { negocioId, negocioNombre, sucursalId, user, isOnline, setSucursal, setAuth, showToast, cerrarSesionUsuario, desconectarDispositivo } = useConfigStore();
     const router = useRouter();
 
     const [sucursales, setSucursales] = useState<any[]>([]);
@@ -156,15 +156,33 @@ export default function AdminDashboard() {
 
     const cerrarSesion = async () => {
         try {
-            setSucursal(null);
-            setAuth(null, null, null, null);
-            await supabase.auth.signOut();
+            cerrarSesionUsuario();
+            if (isOnline) {
+                await supabase.auth.signOut();
+            }
             router.push('/login');
         } catch (e) {
             console.error(e);
-            // Fallback manual si supabase falla
-            localStorage.clear();
-            window.location.href = '/login';
+            router.push('/login');
+        }
+    };
+
+    const desvincularDispositivo = async () => {
+        if (!confirm('⚠️ ¡PELIGRO!\n\nEstás a punto de desvincular este dispositivo del negocio. Todas las ventas no sincronizadas y configuraciones locales se perderán irreversiblemente.\n\n¿Estás absolutamente seguro de continuar?')) return;
+        
+        try {
+            if (isOnline) {
+                await supabase.auth.signOut();
+            }
+            // Borramos la base de datos local
+            await db.delete();
+            // Limpiamos el caché global
+            desconectarDispositivo();
+            showToast("Dispositivo desvinculado exitosamente", "success");
+            router.push('/login');
+        } catch (e) {
+            console.error(e);
+            showToast("Error al desvincular", "error");
         }
     };
 
@@ -199,8 +217,11 @@ export default function AdminDashboard() {
                         <Link href="/select-branch" className="px-5 py-3 bg-navy-2 border border-navy-3 text-vr-gray font-bold rounded-xl hover:text-white hover:border-navy-4 transition-all">
                             Ir al POS Físico
                         </Link>
-                        <button onClick={cerrarSesion} className="px-5 py-3 bg-vr-red/10 border border-vr-red/20 text-vr-red font-bold rounded-xl hover:bg-vr-red/20 transition-all">
+                        <button onClick={cerrarSesion} className="px-5 py-3 bg-navy-3 border border-navy-4 text-white font-bold rounded-xl hover:bg-navy-4 transition-all">
                             Cerrar Sesión
+                        </button>
+                        <button onClick={desvincularDispositivo} className="px-5 py-3 bg-vr-red/10 border border-vr-red/20 text-vr-red font-bold rounded-xl hover:bg-vr-red/20 transition-all flex items-center gap-2">
+                            <span>⚠️</span> Desvincular Dispositivo
                         </button>
                     </div>
                 </div>
@@ -310,7 +331,12 @@ export default function AdminDashboard() {
                 <div className="bg-navy-2 rounded-2xl border border-navy-3 overflow-hidden">
                     <div className="p-6 border-b border-navy-3 flex justify-between items-center">
                         <h2 className="text-lg font-display font-bold text-white">Mis Sucursales</h2>
-                        <button onClick={() => setIsModalOpen(true)} className="px-4 py-2 bg-gold/10 text-gold font-bold rounded-lg hover:bg-gold/20 border border-gold/20 transition-all">
+                        <button 
+                            onClick={() => setIsModalOpen(true)} 
+                            disabled={!isOnline}
+                            className="px-4 py-2 bg-gold/10 text-gold font-bold rounded-lg hover:bg-gold/20 border border-gold/20 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                            title={!isOnline ? "Requiere conexión a internet" : ""}
+                        >
                             + Nueva Sucursal
                         </button>
                     </div>
@@ -358,7 +384,8 @@ export default function AdminDashboard() {
                                 placeholder="****"
                             />
                         </div>
-                        <button type="submit" disabled={isPinSaving || newPin.length !== 4}
+                        <button type="submit" disabled={isPinSaving || newPin.length !== 4 || !isOnline}
+                            title={!isOnline ? "Requiere conexión a internet" : ""}
                             className="px-6 py-3 bg-gold-gradient text-navy font-bold rounded-xl hover:brightness-110 disabled:opacity-30 transition-all h-[52px]"
                         >
                             {isPinSaving ? 'Guardando...' : 'Cambiar PIN'}

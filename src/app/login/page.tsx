@@ -12,10 +12,8 @@ export default function LoginPage() {
     
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
-    const [pinOffline, setPinOffline] = useState('');
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const [networkError, setNetworkError] = useState(false);
 
     const handleLogin = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -30,7 +28,6 @@ export default function LoginPage() {
         if (error) {
             if (error.message.includes('Failed to fetch')) {
                 setError('Sin conexión a internet. No pudimos verificar tus credenciales.');
-                setNetworkError(true);
             } else {
                 setError('Credenciales inválidas o correo no confirmado.');
             }
@@ -74,35 +71,6 @@ export default function LoginPage() {
                     >
                         {loading ? 'Entrando...' : 'Ingresar al POS'}
                     </button>
-                    
-                    {(!isOnline || networkError) && negocioId && (
-                        <div className="mt-6 pt-6 border-t border-navy-3">
-                            <p className="text-sm font-bold text-vr-gray mb-3 text-center flex items-center justify-center gap-2">
-                                <span className="w-2 h-2 rounded-full bg-vr-orange"></span>
-                                Modo Offline (Emergencia)
-                            </p>
-                            <input 
-                                type="password" 
-                                placeholder="PIN de Admin"
-                                className="w-full px-4 py-3 bg-navy-3 border border-navy-3 rounded-xl text-white focus:border-vr-orange focus:ring-1 focus:ring-vr-orange/30 outline-none transition-all mb-3 text-center tracking-[0.5em] font-mono text-xl placeholder:tracking-normal placeholder:text-sm"
-                                value={pinOffline} onChange={(e) => setPinOffline(e.target.value)}
-                            />
-                            <button
-                                type="button"
-                                onClick={() => {
-                                    if (pinOffline === pinAdmin) {
-                                        setOfflineUnlock(true);
-                                        router.push('/');
-                                    } else {
-                                        setError('PIN de administrador incorrecto.');
-                                    }
-                                }}
-                                className="w-full bg-navy-3 text-white border border-navy-4 py-3 rounded-xl font-bold hover:bg-navy-4 transition-all"
-                            >
-                                Entrar sin Internet
-                            </button>
-                        </div>
-                    )}
                 </form>
 
                 <p className="mt-6 text-center text-sm text-vr-gray">

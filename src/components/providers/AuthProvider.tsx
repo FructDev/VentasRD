@@ -14,22 +14,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         let montado = true;
 
         const procesarUsuario = async (user: any) => {
-            const rutasPublicas = ['/login', '/registro', '/landing', '/offline'];
+            const rutasPublicas = ['/login', '/registro', '/landing', '/offline', '/pin'];
             const currentState = useConfigStore.getState();
 
             // SIN INTERNET — usar caché directamente
             if (!navigator.onLine) {
-                // Si tiene negocio cacheado → dejar pasar al POS sin tocar Supabase
                 if (currentState.negocioId) {
-                    if (rutasPublicas.includes(pathname)) {
-                        router.push('/');
+                    // El dispositivo conoce este negocio
+                    // ¿Tiene sesión activa o ya desbloqueó? → dejar pasar
+                    // ¿No tiene sesión y no ha desbloqueado? → pedir PIN
+                    if (!user && !currentState.isOfflineUnlocked) {
+                        if (pathname !== '/pin') router.push('/pin');
+                    } else {
+                        if (rutasPublicas.includes(pathname)) router.push('/');
                     }
-                    if (montado) setIsReady(true);
-                    return;
-                }
-                // Sin caché y sin internet → no puede hacer nada
-                if (!rutasPublicas.includes(pathname)) {
-                    router.push('/login');
+                } else {
+                    // Dispositivo nuevo sin datos → no puede hacer nada offline
+                    if (!rutasPublicas.includes(pathname)) router.push('/login');
                 }
                 if (montado) setIsReady(true);
                 return;
@@ -37,7 +38,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
             // CON INTERNET — flujo normal con Supabase
             if (!user) {
-                useConfigStore.setState({ user: null });
+                useConfigStore.getState().cerrarSesionUsuario();
                 if (!rutasPublicas.includes(pathname)) {
                     const isPWA = window.matchMedia('(display-mode: standalone)').matches || ('standalone' in window.navigator && (window.navigator as any).standalone);
                     router.push(isPWA ? '/login' : '/landing');

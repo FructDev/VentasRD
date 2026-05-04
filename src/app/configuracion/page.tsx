@@ -7,7 +7,7 @@ import TopBar from '@/components/shared/TopBar';
 import PinGuard from '@/components/ui/PinGuard';
 
 export default function ConfiguracionPage() {
-    const { negocioId, showToast, negocioNombre, negocioWhatsapp, negocioRnc, negocioDireccion, negocioMensajeTicket, setAuth, user, pinAdmin } = useConfigStore();
+    const { negocioId, showToast, negocioNombre, negocioWhatsapp, negocioRnc, negocioDireccion, negocioMensajeTicket, setAuth, user, pinAdmin, isOnline } = useConfigStore();
     
     const [loading, setLoading] = useState(false);
     const [formData, setFormData] = useState({
@@ -141,8 +141,9 @@ export default function ConfiguracionPage() {
 
                                 <div className="pt-6 border-t border-navy-3 flex justify-end">
                                     <button 
-                                        type="submit" disabled={loading}
-                                        className="px-8 py-3 bg-gold-gradient text-navy font-extrabold rounded-xl hover:brightness-110 transition-all disabled:opacity-50"
+                                        type="submit" disabled={loading || !isOnline}
+                                        title={!isOnline ? "Requiere conexión a internet para guardar" : ""}
+                                        className="px-8 py-3 bg-gold-gradient text-navy font-extrabold rounded-xl hover:brightness-110 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
                                     >
                                         {loading ? 'Guardando...' : 'Guardar Cambios'}
                                     </button>

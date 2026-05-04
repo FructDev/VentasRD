@@ -22,6 +22,8 @@ interface ConfigState {
     setSucursal: (sucursalId: string | null) => void;
     setAdminMode: (status: boolean) => void;
     showToast: (message: string, type?: 'success' | 'error' | 'info') => void;
+    cerrarSesionUsuario: () => void;
+    desconectarDispositivo: () => void;
 }
 
 export const useConfigStore = create<ConfigState>()(
@@ -59,6 +61,26 @@ export const useConfigStore = create<ConfigState>()(
                 negocioRnc: rnc || null,
                 negocioDireccion: direccion || null,
                 negocioMensajeTicket: mensaje || null
+            }),
+
+            // Cerrar sesión del usuario (no borra el negocio)
+            cerrarSesionUsuario: () => set({
+                user: null,
+            }),
+
+            // Desconectar el negocio del dispositivo (acción destructiva)
+            desconectarDispositivo: () => set({
+                user: null,
+                negocioId: null,
+                negocioNombre: null,
+                sucursalId: null,
+                pinAdmin: null,
+                negocioWhatsapp: null,
+                negocioRnc: null,
+                negocioDireccion: null,
+                negocioMensajeTicket: null,
+                isAdminMode: false,
+                isOfflineUnlocked: false,
             }),
         }),
         {
