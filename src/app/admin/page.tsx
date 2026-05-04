@@ -157,9 +157,7 @@ export default function AdminDashboard() {
     const cerrarSesion = async () => {
         try {
             cerrarSesionUsuario();
-            if (isOnline) {
-                await supabase.auth.signOut();
-            }
+            await supabase.auth.signOut();
             router.push('/login');
         } catch (e) {
             console.error(e);
@@ -171,9 +169,7 @@ export default function AdminDashboard() {
         if (!confirm('⚠️ ¡PELIGRO!\n\nEstás a punto de desvincular este dispositivo del negocio. Todas las ventas no sincronizadas y configuraciones locales se perderán irreversiblemente.\n\n¿Estás absolutamente seguro de continuar?')) return;
         
         try {
-            if (isOnline) {
-                await supabase.auth.signOut();
-            }
+            await supabase.auth.signOut();
             // Borramos la base de datos local
             await db.delete();
             // Limpiamos el caché global

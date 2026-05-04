@@ -21,9 +21,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             if (!navigator.onLine) {
                 if (currentState.negocioId) {
                     // El dispositivo conoce este negocio
-                    // ¿Tiene sesión activa o ya desbloqueó? → dejar pasar
-                    // ¿No tiene sesión y no ha desbloqueado? → pedir PIN
-                    if (!user && !currentState.isOfflineUnlocked) {
+                    // ¿Ya desbloqueó con el PIN en esta sesión offline? → dejar pasar
+                    // ¿No ha desbloqueado? → pedir PIN siempre (ignorar si el dueño dejó la sesión web abierta)
+                    if (!currentState.isOfflineUnlocked) {
                         if (pathname !== '/pin') router.push('/pin');
                     } else {
                         if (rutasPublicas.includes(pathname)) router.push('/');
