@@ -63,7 +63,16 @@ export const useConfigStore = create<ConfigState>()(
         }),
         {
             name: 'ventard-config',
-            partialize: (state) => ({ sucursalId: state.sucursalId }),
+            partialize: (state) => ({
+                negocioId: state.negocioId,
+                negocioNombre: state.negocioNombre,
+                sucursalId: state.sucursalId,
+                pinAdmin: state.pinAdmin,
+                negocioWhatsapp: state.negocioWhatsapp,
+                negocioRnc: state.negocioRnc,
+                negocioDireccion: state.negocioDireccion,
+                negocioMensajeTicket: state.negocioMensajeTicket,
+            }),
         }
     )
 );

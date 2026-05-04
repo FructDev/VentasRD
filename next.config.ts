@@ -8,10 +8,35 @@ const withPWA = withPWAInit({
   reloadOnOnline: true,
   disable: process.env.NODE_ENV === "development",
   fallbacks: {
-    document: "/",
+    document: "/offline",
   },
   workboxOptions: {
     disableDevLogs: true,
+    runtimeCaching: [
+      {
+        urlPattern: /^https:\/\/[^/]+\/(|pos|dashboard|clientes|inventario|select-branch|onboarding).*/i,
+        handler: "NetworkFirst",
+        options: {
+          cacheName: "ventard-pages",
+          networkTimeoutSeconds: 3,
+          expiration: {
+            maxEntries: 32,
+            maxAgeSeconds: 24 * 60 * 60,
+          },
+        },
+      },
+      {
+        urlPattern: /\/_next\/static\/.*/i,
+        handler: "CacheFirst",
+        options: {
+          cacheName: "ventard-static",
+          expiration: {
+            maxEntries: 128,
+            maxAgeSeconds: 7 * 24 * 60 * 60,
+          },
+        },
+      },
+    ],
   },
 });
 

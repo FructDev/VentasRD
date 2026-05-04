@@ -14,44 +14,39 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         let montado = true;
 
         const procesarUsuario = async (user: any) => {
-            // Definimos claramente las rutas donde un usuario NO logueado puede estar
-            const rutasPublicas = ['/login', '/registro', '/landing'];
+            const rutasPublicas = ['/login', '/registro', '/landing', '/offline'];
+            const currentState = useConfigStore.getState();
 
-            // 1. Si no hay usuario, limpiar estado y verificar rutas
-            if (!user) {
-                // Solo borramos el usuario, preservamos el caché del negocio por si entramos offline
-                useConfigStore.setState({ user: null });
-
-                const state = useConfigStore.getState();
-                // MODO OFFLINE EXTREMO: Si tiene negocio cacheado y desbloqueó con PIN
-                if (state.isOfflineUnlocked && state.negocioId) {
-                    if (pathname === '/login' || pathname === '/landing' || pathname === '/registro') {
+            // SIN INTERNET — usar caché directamente
+            if (!navigator.onLine) {
+                // Si tiene negocio cacheado → dejar pasar al POS sin tocar Supabase
+                if (currentState.negocioId) {
+                    if (rutasPublicas.includes(pathname)) {
                         router.push('/');
                     }
                     if (montado) setIsReady(true);
                     return;
                 }
-
-                // Si no está desbloqueado offline, enviarlo al login/landing si intenta ver rutas privadas
+                // Sin caché y sin internet → no puede hacer nada
                 if (!rutasPublicas.includes(pathname)) {
-                    // Detección de PWA (Instalada) vs Navegador Web
-                    const isPWA = window.matchMedia('(display-mode: standalone)').matches || 
-                                 ('standalone' in window.navigator && (window.navigator as any).standalone);
-                    
-                    if (isPWA) {
-                        router.push('/login'); // Experiencia directa para app instalada
-                    } else {
-                        router.push('/landing'); // Experiencia informativa para web
-                    }
+                    router.push('/login');
                 }
+                if (montado) setIsReady(true);
+                return;
+            }
 
+            // CON INTERNET — flujo normal con Supabase
+            if (!user) {
+                useConfigStore.setState({ user: null });
+                if (!rutasPublicas.includes(pathname)) {
+                    const isPWA = window.matchMedia('(display-mode: standalone)').matches || ('standalone' in window.navigator && (window.navigator as any).standalone);
+                    router.push(isPWA ? '/login' : '/landing');
+                }
                 if (montado) setIsReady(true);
                 return;
             }
 
             try {
-                // Leer estado cacheado actual
-                const currentState = useConfigStore.getState();
 
                 // 2. Buscar si el usuario tiene un negocio
                 let { data: negocio, error } = await supabase
