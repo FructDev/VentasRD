@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase/client';
 import { useConfigStore } from '@/store/useConfigStore';
 import { useRouter, usePathname } from 'next/navigation';
-import PinPage from '@/app/pin/page';
+import PinScreen from '@/components/ui/PinScreen';
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
     const router = useRouter();
@@ -158,8 +158,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     if (needsPin) {
-        // Envolvemos PinPage para que al tener éxito limpie el estado y deje ver los children
-        return <div className="fixed inset-0 z-[99999] bg-navy"><PinPage onUnlock={() => setNeedsPin(false)} /></div>;
+        // Envolvemos PinScreen para que al tener éxito limpie el estado y deje ver los children
+        return <div className="fixed inset-0 z-[99999] bg-navy"><PinScreen onUnlock={() => setNeedsPin(false)} /></div>;
     }
 
     return <>{children}</>;
