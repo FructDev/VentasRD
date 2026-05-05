@@ -16,6 +16,8 @@ import TopBar from '@/components/shared/TopBar';
 import OfflineBanner from '@/components/shared/OfflineBanner';
 import VentaLibreModal from '@/components/shared/VentaLibreModal';
 import CajaModal from '@/components/shared/CajaModal';
+import { SkeletonProductGrid } from '@/components/ui/Skeleton';
+import { useLiveQuery } from 'dexie-react-hooks';
 
 export default function POSPage() {
   const { negocioId, negocioNombre, sucursalId, showToast, negocioRnc, negocioDireccion, negocioMensajeTicket } = useConfigStore();
@@ -25,8 +27,10 @@ export default function POSPage() {
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
-  const [metodoPago, setMetodoPago] = useState<'efectivo' | 'tarjeta' | 'transferencia' | 'fiado'>('efectivo');
+  const [metodoPago, setMetodoPago] = useState<'efectivo' | 'tarjeta' | 'transferencia' | 'fiado' | 'mixto'>('efectivo');
   const [montoRecibido, setMontoRecibido] = useState<string>('');
+  const [montoEfectivoMixto, setMontoEfectivoMixto] = useState<string>('');
+  const [montoTransferenciaMixto, setMontoTransferenciaMixto] = useState<string>('');
   const [ventaExitosa, setVentaExitosa] = useState(false);
   const [clienteSeleccionadoId, setClienteSeleccionadoId] = useState<string>('');
   const [isVentaLibreOpen, setIsVentaLibreOpen] = useState(false);
@@ -38,6 +42,11 @@ export default function POSPage() {
   const handlePrint = useReactToPrint({ contentRef: ticketRef });
 
   // 1. LECTURA REACTIVA AISLADA POR NEGOCIO
+  const productosRaw = useLiveQuery(
+    () => negocioId ? db.productos.where('negocio_id').equals(negocioId).limit(1).toArray() : [],
+    [negocioId]
+  );
+  const catalogoIsLoading = productosRaw === undefined;
   const productosEnDBRaw = useProductosTenant();
   const productosEnDB = useMemo(() => productosEnDBRaw.filter(p => p.tipo !== 'insumo'), [productosEnDBRaw]);
   const clientes = useClientesTenant();
@@ -48,6 +57,14 @@ export default function POSPage() {
     if (!searchTerm) return productosEnDB;
     return fuse.search(searchTerm).map(result => result.item);
   }, [searchTerm, fuse, productosEnDB]);
+
+  const devuelta = parseFloat(montoRecibido || '0') - total;
+  const totalMixto = parseFloat(montoEfectivoMixto || '0') + parseFloat(montoTransferenciaMixto || '0');
+  const esMontoValido =
+    (metodoPago === 'efectivo' && parseFloat(montoRecibido || '0') >= total) ||
+    (metodoPago === 'tarjeta' || metodoPago === 'transferencia') ||
+    (metodoPago === 'fiado' && clienteSeleccionadoId !== '') ||
+    (metodoPago === 'mixto' && parseFloat(montoEfectivoMixto || '0') > 0 && parseFloat(montoTransferenciaMixto || '0') > 0 && totalMixto >= total);
 
   // MOTOR DE ATAJOS DE TECLADO
   useEffect(() => {
@@ -60,7 +77,7 @@ export default function POSPage() {
       if (e.key === 'Enter') {
         if (isCheckoutOpen && !ventaExitosa) {
           e.preventDefault();
-          if (metodoPago !== 'efectivo' || parseFloat(montoRecibido || '0') >= total) { procesarVentaBD(); }
+          if (esMontoValido) { procesarVentaBD(); }
         } else if (document.activeElement === searchInputRef.current && searchTerm) {
           e.preventDefault();
           const productoExacto = productosEnDB.find(p => p.codigo_barras === searchTerm);
@@ -71,7 +88,7 @@ export default function POSPage() {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [items, isCheckoutOpen, isVentaLibreOpen, metodoPago, montoRecibido, total, ventaExitosa, searchTerm, productosFiltrados, productosEnDB, addItem]);
+  }, [items, isCheckoutOpen, isVentaLibreOpen, metodoPago, montoRecibido, total, ventaExitosa, searchTerm, productosFiltrados, productosEnDB, addItem, esMontoValido]);
 
   // AUTO-ENFOQUE EN INPUT DE EFECTIVO
   useEffect(() => {
@@ -80,12 +97,15 @@ export default function POSPage() {
     }
   }, [isCheckoutOpen, ventaExitosa]);
 
-  const abrirModalCobro = () => { setMetodoPago('efectivo'); setMontoRecibido(''); setVentaExitosa(false); setClienteSeleccionadoId(''); setIsCheckoutOpen(true); };
-  const devuelta = parseFloat(montoRecibido || '0') - total;
-  const esMontoValido =
-    (metodoPago === 'efectivo' && parseFloat(montoRecibido || '0') >= total) ||
-    (metodoPago === 'tarjeta' || metodoPago === 'transferencia') ||
-    (metodoPago === 'fiado' && clienteSeleccionadoId !== '');
+  const abrirModalCobro = () => {
+    setMetodoPago('efectivo');
+    setMontoRecibido('');
+    setMontoEfectivoMixto('');
+    setMontoTransferenciaMixto('');
+    setVentaExitosa(false);
+    setClienteSeleccionadoId('');
+    setIsCheckoutOpen(true);
+  };
 
   // 3. ESCRITURA TRANSACCIONAL EN DEXIE
   const procesarVentaBD = async () => {
@@ -103,6 +123,13 @@ export default function POSPage() {
           numero_ticket: ticketNum,
           total: total,
           metodo_pago: metodoPago,
+          ...(metodoPago === 'mixto' && {
+            monto_efectivo: parseFloat(montoEfectivoMixto || '0'),
+            monto_transferencia: parseFloat(montoTransferenciaMixto || '0'),
+          }),
+          ...(metodoPago === 'fiado' && clienteSeleccionadoId && {
+            cliente_id: clienteSeleccionadoId,
+          }),
           estado_sincronizacion: 0,
           fecha_creacion: Date.now(),
         });
@@ -222,7 +249,9 @@ export default function POSPage() {
 
           <div className="flex-1 overflow-y-auto pr-2">
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-              {productosFiltrados.length === 0 ? (
+              {catalogoIsLoading ? (
+                <SkeletonProductGrid count={12} />
+              ) : productosFiltrados.length === 0 ? (
                 <div className="col-span-full flex flex-col justify-center items-center h-40 text-vr-gray">
                   <span className="text-4xl mb-2">📦</span>
                   <span className="font-medium">No se encontraron productos</span>
@@ -321,6 +350,18 @@ export default function POSPage() {
                     <p className="text-3xl font-black font-mono text-vr-green">{formatDOP(devuelta)}</p>
                   </div>
                 )}
+                {metodoPago === 'mixto' && (
+                  <div className="bg-navy border border-navy-3 rounded-xl px-6 py-3 mb-6 space-y-1">
+                    <div className="flex justify-between text-sm">
+                      <span className="text-vr-green font-bold">Efectivo</span>
+                      <span className="font-mono text-white">{formatDOP(parseFloat(montoEfectivoMixto || '0'))}</span>
+                    </div>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-purple-400 font-bold">Transferencia</span>
+                      <span className="font-mono text-white">{formatDOP(parseFloat(montoTransferenciaMixto || '0'))}</span>
+                    </div>
+                  </div>
+                )}
                 <div className="flex gap-3 mt-4 w-full max-w-sm">
                   <button
                     onClick={() => {
@@ -366,18 +407,24 @@ export default function POSPage() {
                     <p className="text-5xl font-black font-mono text-gold">{formatDOP(total)}</p>
                   </div>
 
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-8">
-                    {(['efectivo', 'tarjeta', 'transferencia', 'fiado'] as const).map((metodo) => (
+                  <div className="grid grid-cols-3 md:grid-cols-5 gap-2 mb-8">
+                    {([
+                      { key: 'efectivo', label: 'Efectivo' },
+                      { key: 'tarjeta', label: 'Tarjeta' },
+                      { key: 'transferencia', label: 'Transfer.' },
+                      { key: 'fiado', label: 'Fiado' },
+                      { key: 'mixto', label: 'Mixto' },
+                    ] as const).map(({ key, label }) => (
                       <button
-                        key={metodo}
-                        onClick={() => setMetodoPago(metodo)}
-                        className={`py-3.5 rounded-xl font-bold text-sm capitalize border transition-all ${
-                          metodoPago === metodo
+                        key={key}
+                        onClick={() => setMetodoPago(key)}
+                        className={`py-3.5 rounded-xl font-bold text-sm border transition-all ${
+                          metodoPago === key
                             ? 'border-gold bg-gold/15 text-gold shadow-md'
                             : 'border-navy-3 bg-navy-3 text-vr-gray hover:border-navy-4 hover:text-white'
                         }`}
                       >
-                        {metodo}
+                        {label}
                       </button>
                     ))}
                   </div>
@@ -426,6 +473,43 @@ export default function POSPage() {
                       </select>
                       {clientes.length === 0 && (
                           <p className="mt-3 text-vr-red text-sm font-bold bg-vr-red/10 p-2 rounded border border-vr-red/20">No hay clientes registrados. Ve a la pantalla de Clientes primero.</p>
+                      )}
+                    </div>
+                  )}
+
+                  {metodoPago === 'mixto' && (
+                    <div className="bg-navy p-6 rounded-xl border border-navy-3 space-y-4">
+                      <p className="text-sm font-bold text-vr-gray">Divide el pago entre efectivo y transferencia</p>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-xs font-bold text-vr-green mb-2 uppercase tracking-wider">Efectivo (RD$)</label>
+                          <input
+                            type="number" step="0.01" min="0"
+                            className="w-full text-2xl font-black font-mono bg-transparent border-b-2 border-navy-3 focus:border-vr-green focus:outline-none py-2 text-white"
+                            placeholder="0.00"
+                            value={montoEfectivoMixto}
+                            onChange={e => setMontoEfectivoMixto(e.target.value)}
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-bold text-purple-400 mb-2 uppercase tracking-wider">Transferencia (RD$)</label>
+                          <input
+                            type="number" step="0.01" min="0"
+                            className="w-full text-2xl font-black font-mono bg-transparent border-b-2 border-navy-3 focus:border-purple-400 focus:outline-none py-2 text-white"
+                            placeholder="0.00"
+                            value={montoTransferenciaMixto}
+                            onChange={e => setMontoTransferenciaMixto(e.target.value)}
+                          />
+                        </div>
+                      </div>
+                      <div className={`flex justify-between items-center p-3 rounded-lg border ${totalMixto >= total ? 'bg-vr-green/10 border-vr-green/20' : 'bg-navy-3 border-navy-3'}`}>
+                        <span className="text-sm font-bold text-vr-gray">Total ingresado:</span>
+                        <span className={`font-mono font-black text-lg ${totalMixto >= total ? 'text-vr-green' : 'text-white'}`}>
+                          {formatDOP(totalMixto)}
+                        </span>
+                      </div>
+                      {totalMixto > 0 && totalMixto < total && (
+                        <p className="text-xs text-vr-red font-bold text-center">Faltan {formatDOP(total - totalMixto)} para completar el pago</p>
                       )}
                     </div>
                   )}
