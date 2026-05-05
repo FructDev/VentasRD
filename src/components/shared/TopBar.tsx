@@ -9,6 +9,7 @@ import { db } from '@/lib/db/dexie';
 
 const navItems = [
     { href: '/', label: 'Ventas', icon: '💰' },
+    { href: '/historial', label: 'Historial', icon: '🗒️' },
     { href: '/inventario', label: 'Inventario', icon: '📦' },
     { href: '/clientes', label: 'Clientes', icon: '👥' },
     { href: '/dashboard', label: 'Resumen', icon: '📊' },

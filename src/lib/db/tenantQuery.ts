@@ -146,3 +146,46 @@ export function useVentaDetallesTenant() {
         [negocioId]
     ) || [];
 }
+
+/**
+ * Ventas del negocio actual, ordenadas por fecha desc.
+ */
+export function useVentasTenant(limite = 100) {
+    const { negocioId } = useConfigStore();
+    return useLiveQuery(
+        async () => {
+            if (!negocioId) return [];
+            const ventas = await db.ventas.where('negocio_id').equals(negocioId).toArray();
+            return ventas.sort((a, b) => b.fecha_creacion - a.fecha_creacion).slice(0, limite);
+        },
+        [negocioId, limite]
+    ) || [];
+}
+
+/**
+ * Ventas del período especificado (desde/hasta) del negocio actual.
+ */
+export function useVentasRangoTenant(desde: number, hasta: number) {
+    const { negocioId } = useConfigStore();
+    return useLiveQuery(
+        async () => {
+            if (!negocioId) return [];
+            const ventas = await db.ventas.where('negocio_id').equals(negocioId).toArray();
+            return ventas.filter(v => v.fecha_creacion >= desde && v.fecha_creacion <= hasta);
+        },
+        [negocioId, desde, hasta]
+    ) || [];
+}
+
+/**
+ * Devoluciones del negocio actual.
+ */
+export function useDevolucionesTenant() {
+    const { negocioId } = useConfigStore();
+    return useLiveQuery(
+        () => negocioId
+            ? db.devoluciones.where('negocio_id').equals(negocioId).toArray()
+            : [],
+        [negocioId]
+    ) || [];
+}

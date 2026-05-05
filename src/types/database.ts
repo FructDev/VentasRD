@@ -27,8 +27,22 @@ export interface VentaLocal {
     numero_ticket?: number; // Secuencial por negocio
     total: number;
     metodo_pago: 'efectivo' | 'tarjeta' | 'transferencia' | 'fiado' | 'mixto';
+    monto_efectivo?: number;      // Para metodo_pago === 'mixto'
+    monto_transferencia?: number; // Para metodo_pago === 'mixto'
+    cliente_id?: string;          // Para metodo_pago === 'fiado'
     estado_sincronizacion: 0 | 1;
     fecha_creacion: number;
+}
+
+export interface DevolucionLocal {
+    id: string;
+    negocio_id: string;
+    venta_id: string;
+    items_devueltos: { producto_id: string; cantidad: number; precio_unitario: number }[];
+    monto_devuelto: number;
+    razon: string;
+    fecha_creacion: number;
+    estado_sincronizacion: 0 | 1;
 }
 
 export interface VentaDetalleLocal {

@@ -8,12 +8,20 @@ import { useConfigStore } from '@/store/useConfigStore';
 import { ProductoLocal, ComposicionLocal } from '@/types/database';
 import { formatDOP } from '@/lib/utils';
 import { v4 as uuidv4 } from 'uuid';
+import { useLiveQuery } from 'dexie-react-hooks';
 import PinGuard from '@/components/ui/PinGuard';
 import TopBar from '@/components/shared/TopBar';
 import OfflineBanner from '@/components/shared/OfflineBanner';
+import { SkeletonTable } from '@/components/ui/Skeleton';
 
 export default function InventarioPage() {
     const { negocioId } = useConfigStore();
+    // Raw query to detect loading state (undefined = still loading)
+    const productosRaw = useLiveQuery(
+        () => negocioId ? db.productos.where('negocio_id').equals(negocioId).toArray() : [],
+        [negocioId]
+    );
+    const isLoading = productosRaw === undefined;
     const productos = useProductosTenant();
     const composiciones = useComposicionesTenant();
 
@@ -54,6 +62,12 @@ export default function InventarioPage() {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [productoEditando, setProductoEditando] = useState<ProductoLocal | null>(null);
     const [busquedaInsumo, setBusquedaInsumo] = useState('');
+
+    // Estado del Modal de Ajuste de Stock
+    const [isAjusteOpen, setIsAjusteOpen] = useState(false);
+    const [productoAjustando, setProductoAjustando] = useState<ProductoLocal | null>(null);
+    const [tipoAjuste, setTipoAjuste] = useState<'entrada' | 'merma' | 'conteo'>('entrada');
+    const [cantidadAjuste, setCantidadAjuste] = useState('');
 
     const [formData, setFormData] = useState({
         nombre: '',
@@ -174,6 +188,33 @@ export default function InventarioPage() {
         }
     };
 
+    const abrirModalAjuste = (producto: ProductoLocal) => {
+        setProductoAjustando(producto);
+        setTipoAjuste('entrada');
+        setCantidadAjuste('');
+        setIsAjusteOpen(true);
+    };
+
+    const guardarAjuste = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!productoAjustando) return;
+        const cantidad = parseFloat(cantidadAjuste);
+        if (isNaN(cantidad) || cantidad < 0) return;
+
+        const stockActual = productoAjustando.stock_actual;
+        let nuevoStock: number;
+        if (tipoAjuste === 'entrada') nuevoStock = stockActual + cantidad;
+        else if (tipoAjuste === 'merma') nuevoStock = Math.max(0, stockActual - cantidad);
+        else nuevoStock = cantidad; // conteo
+
+        await db.productos.update(productoAjustando.id, {
+            stock_actual: nuevoStock,
+            estado_sincronizacion: 0,
+            fecha_actualizacion: Date.now(),
+        } as any);
+        setIsAjusteOpen(false);
+    };
+
     const insumosDisponibles = productos.filter(p => (p as any).tipo === 'insumo');
 
     return (
@@ -238,7 +279,16 @@ export default function InventarioPage() {
                                 </tr>
                             </thead>
                             <tbody>
-                                {productosConCosto.map((prod) => (
+                                {isLoading ? (
+                                    <SkeletonTable rows={6} cols={7} />
+                                ) : productosConCosto.length === 0 ? (
+                                    <tr>
+                                        <td colSpan={7} className="py-20 text-center text-vr-gray">
+                                            <span className="text-4xl block mb-3">📦</span>
+                                            <p className="font-medium">Sin productos aún. Agrega tu primer producto.</p>
+                                        </td>
+                                    </tr>
+                                ) : productosConCosto.map((prod) => (
                                     <tr key={prod.id} className="border-b border-navy-3/50 hover:bg-navy-3/30 transition-colors">
                                         <td className="p-4">
                                             <span className={`px-2 py-1 rounded text-[10px] font-black uppercase ${(prod as any).tipo === 'combo' ? 'bg-purple-500/15 text-purple-400' :
@@ -263,6 +313,9 @@ export default function InventarioPage() {
                                             </span>
                                         </td>
                                         <td className="p-4 text-right space-x-3">
+                                            {(prod as any).tipo !== 'combo' && (
+                                                <button onClick={() => abrirModalAjuste(prod)} className="text-vr-green hover:text-vr-green/80 text-sm font-bold transition-colors">Ajuste</button>
+                                            )}
                                             <button onClick={() => abrirModalEditar(prod)} className="text-gold hover:text-gold-2 text-sm font-bold transition-colors">Editar</button>
                                             <button onClick={() => eliminarProducto(prod.id)} className="text-vr-red hover:text-vr-red/80 text-sm font-bold transition-colors">Eliminar</button>
                                         </td>
@@ -272,6 +325,83 @@ export default function InventarioPage() {
                         </table>
                     </div>
                 </div>
+
+                {/* MODAL AJUSTE DE STOCK */}
+                {isAjusteOpen && productoAjustando && (
+                    <div className="fixed inset-0 bg-black/70 backdrop-blur-md z-50 flex items-center justify-center p-4 animate-fade-in">
+                        <div className="bg-navy-2 w-full max-w-sm rounded-2xl border border-navy-3 shadow-2xl overflow-hidden animate-scale-in">
+                            <div className="p-6 border-b border-navy-3 flex justify-between items-center">
+                                <div>
+                                    <h2 className="text-xl font-display font-bold text-white">Ajuste de Stock</h2>
+                                    <p className="text-sm text-vr-gray mt-0.5 truncate">{productoAjustando.nombre}</p>
+                                </div>
+                                <button onClick={() => setIsAjusteOpen(false)} className="text-vr-gray hover:text-white font-bold text-xl transition-colors">✕</button>
+                            </div>
+                            <form onSubmit={guardarAjuste} className="p-6 space-y-5">
+                                {/* Tipo de ajuste */}
+                                <div>
+                                    <label className="block text-sm font-bold text-vr-gray mb-2">Tipo de Ajuste</label>
+                                    <div className="grid grid-cols-3 gap-2">
+                                        {([
+                                            { key: 'entrada', label: 'Entrada', color: 'text-vr-green border-vr-green bg-vr-green/10' },
+                                            { key: 'merma', label: 'Merma', color: 'text-vr-red border-vr-red bg-vr-red/10' },
+                                            { key: 'conteo', label: 'Conteo', color: 'text-gold border-gold bg-gold/10' },
+                                        ] as const).map(({ key, label, color }) => (
+                                            <button key={key} type="button"
+                                                onClick={() => setTipoAjuste(key)}
+                                                className={`py-2 rounded-lg border font-bold text-sm transition-all ${tipoAjuste === key ? color : 'border-navy-3 text-vr-gray hover:text-white'}`}>
+                                                {label}
+                                            </button>
+                                        ))}
+                                    </div>
+                                    <p className="text-xs text-vr-gray mt-2">
+                                        {tipoAjuste === 'entrada' && 'Suma unidades al stock actual (mercancía recibida).'}
+                                        {tipoAjuste === 'merma' && 'Resta unidades al stock actual (pérdida, deterioro).'}
+                                        {tipoAjuste === 'conteo' && 'Establece el stock exacto según conteo físico.'}
+                                    </p>
+                                </div>
+
+                                {/* Stock actual (referencia) */}
+                                <div className="flex justify-between items-center bg-navy-3 rounded-xl px-4 py-3">
+                                    <span className="text-sm text-vr-gray font-bold">Stock actual</span>
+                                    <span className="font-mono font-black text-white text-lg">{parseFloat(Number(productoAjustando.stock_actual).toFixed(3))}</span>
+                                </div>
+
+                                {/* Cantidad */}
+                                <div>
+                                    <label className="block text-sm font-bold text-vr-gray mb-1.5">
+                                        {tipoAjuste === 'conteo' ? 'Nuevo stock físico' : 'Cantidad'}
+                                    </label>
+                                    <input
+                                        type="number" step="any" min="0" required
+                                        autoFocus
+                                        className="w-full bg-navy-3 border border-navy-3 rounded-xl p-3 text-white font-mono text-xl focus:border-gold outline-none transition-all text-center"
+                                        value={cantidadAjuste}
+                                        onChange={e => setCantidadAjuste(e.target.value)}
+                                        placeholder="0"
+                                    />
+                                </div>
+
+                                {/* Vista previa del resultado */}
+                                {cantidadAjuste !== '' && !isNaN(parseFloat(cantidadAjuste)) && (
+                                    <div className="flex justify-between items-center bg-navy rounded-xl px-4 py-3 border border-navy-3">
+                                        <span className="text-sm text-vr-gray font-bold">Resultado</span>
+                                        <span className={`font-mono font-black text-lg ${tipoAjuste === 'merma' ? 'text-vr-red' : tipoAjuste === 'entrada' ? 'text-vr-green' : 'text-gold'}`}>
+                                            {tipoAjuste === 'entrada' && `${parseFloat(Number(productoAjustando.stock_actual + parseFloat(cantidadAjuste)).toFixed(3))}`}
+                                            {tipoAjuste === 'merma' && `${parseFloat(Number(Math.max(0, productoAjustando.stock_actual - parseFloat(cantidadAjuste))).toFixed(3))}`}
+                                            {tipoAjuste === 'conteo' && `${parseFloat(Number(parseFloat(cantidadAjuste)).toFixed(3))}`}
+                                        </span>
+                                    </div>
+                                )}
+
+                                <div className="pt-2 flex justify-end gap-3">
+                                    <button type="button" onClick={() => setIsAjusteOpen(false)} className="px-6 py-3 font-bold text-vr-gray hover:text-white transition-colors">Cancelar</button>
+                                    <button type="submit" className="px-6 py-3 bg-gold-gradient text-navy font-extrabold rounded-xl hover:brightness-110 transition-all">Aplicar</button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                )}
 
                 {/* MODAL ORIGINAL CON SOPORTE DE RECETAS */}
                 {isModalOpen && (
