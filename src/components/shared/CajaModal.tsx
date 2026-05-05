@@ -88,6 +88,7 @@ export default function CajaModal({ isOpen, onClose }: Props) {
                 monto_apertura: totalContado,
                 denominaciones_apertura: { ...denominaciones },
                 fecha_apertura: Date.now(),
+                fecha_actualizacion: 0
             });
             showToast(`Caja abierta con ${formatDOP(totalContado)}`, 'success');
             onClose();
@@ -123,20 +124,20 @@ export default function CajaModal({ isOpen, onClose }: Props) {
                 const fecha = new Date().toLocaleDateString('es-DO');
                 const horaApertura = new Date(cajaAbierta.fecha_apertura).toLocaleTimeString('es-DO', { hour: '2-digit', minute: '2-digit' });
                 const horaCierre = new Date().toLocaleTimeString('es-DO', { hour: '2-digit', minute: '2-digit' });
-                
+
                 const reporte = `*Cierre de Caja - ${negocioNombre || 'Mi Negocio'}*\n` +
-                                `📅 Fecha: ${fecha}\n` +
-                                `⏰ Turno: ${horaApertura} a ${horaCierre}\n\n` +
-                                `*Resumen Efectivo:*\n` +
-                                `💵 Apertura: ${formatDOP(cajaAbierta.monto_apertura)}\n` +
-                                `📈 Ventas Efectivo: ${formatDOP(ventasEfectivoDesdeApertura)}\n` +
-                                `💰 Efectivo Esperado: ${formatDOP(montoEsperado)}\n` +
-                                `🏦 Efectivo Físico Contado: ${formatDOP(totalContado)}\n\n` +
-                                `*Cuadre:*\n` +
-                                (diferencia === 0 ? `✅ Cuadre Perfecto` : diferencia > 0 ? `🟢 Sobrante: ${formatDOP(diferencia)}` : `🔴 Faltante: ${formatDOP(Math.abs(diferencia))}`) +
-                                (notas ? `\n\n*Notas del Cajero:*\n_${notas}_` : '') +
-                                `\n\nEnviado automáticamente desde VentaRD.`;
-                                
+                    `📅 Fecha: ${fecha}\n` +
+                    `⏰ Turno: ${horaApertura} a ${horaCierre}\n\n` +
+                    `*Resumen Efectivo:*\n` +
+                    `💵 Apertura: ${formatDOP(cajaAbierta.monto_apertura)}\n` +
+                    `📈 Ventas Efectivo: ${formatDOP(ventasEfectivoDesdeApertura)}\n` +
+                    `💰 Efectivo Esperado: ${formatDOP(montoEsperado)}\n` +
+                    `🏦 Efectivo Físico Contado: ${formatDOP(totalContado)}\n\n` +
+                    `*Cuadre:*\n` +
+                    (diferencia === 0 ? `✅ Cuadre Perfecto` : diferencia > 0 ? `🟢 Sobrante: ${formatDOP(diferencia)}` : `🔴 Faltante: ${formatDOP(Math.abs(diferencia))}`) +
+                    (notas ? `\n\n*Notas del Cajero:*\n_${notas}_` : '') +
+                    `\n\nEnviado automáticamente desde VentaRD.`;
+
                 const url = `https://wa.me/${negocioWhatsapp.replace(/\D/g, '')}?text=${encodeURIComponent(reporte)}`;
                 window.open(url, '_blank');
             }
@@ -235,14 +236,13 @@ export default function CajaModal({ isOpen, onClose }: Props) {
                     </div>
 
                     {esCierre && totalContado > 0 && (
-                        <div className={`mb-4 p-3 rounded-xl text-center font-bold text-sm ${
-                            diferencia === 0 ? 'bg-vr-green/10 border border-vr-green/20 text-vr-green' :
-                            diferencia > 0 ? 'bg-gold/10 border border-gold/20 text-gold' :
-                            'bg-vr-red/10 border border-vr-red/20 text-vr-red'
-                        }`}>
+                        <div className={`mb-4 p-3 rounded-xl text-center font-bold text-sm ${diferencia === 0 ? 'bg-vr-green/10 border border-vr-green/20 text-vr-green' :
+                                diferencia > 0 ? 'bg-gold/10 border border-gold/20 text-gold' :
+                                    'bg-vr-red/10 border border-vr-red/20 text-vr-red'
+                            }`}>
                             {diferencia === 0 ? '✓ Cuadre perfecto' :
-                             diferencia > 0 ? `↑ Sobrante: ${formatDOP(diferencia)}` :
-                             `↓ Faltante: ${formatDOP(Math.abs(diferencia))}`}
+                                diferencia > 0 ? `↑ Sobrante: ${formatDOP(diferencia)}` :
+                                    `↓ Faltante: ${formatDOP(Math.abs(diferencia))}`}
                         </div>
                     )}
 
