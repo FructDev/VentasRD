@@ -47,6 +47,10 @@ function maxCreacionTs(items: Array<{ fecha_creacion?: number | null }>): number
     return items.reduce((m, i) => Math.max(m, i.fecha_creacion || 0), 0);
 }
 
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const isValidUUID = (s: string | null | undefined): boolean => !!s && UUID_RE.test(s);
+
 // ─── Worker principal ─────────────────────────────────────────────────────────
 export const startSyncWorker = (): ReturnType<typeof setInterval> => {
     // Si ya hay un intervalo activo, devolver el mismo (singleton)
@@ -194,22 +198,28 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
             }
 
             // ── 2.B  Venta detalles ───────────────────────────────────────────
-            const detallesPendientes = await db.venta_detalles.where('estado_sincronizacion').equals(0).toArray();
+            const detallesPendientes = (await db.venta_detalles.where('estado_sincronizacion').equals(0).toArray())
+                .filter(d => isValidUUID(d.id) && isValidUUID(d.venta_id) && isValidUUID(d.producto_id));
             for (const detalle of detallesPendientes) {
+                const payload = {
+                    id: detalle.id,
+                    venta_id: detalle.venta_id,
+                    producto_id: detalle.producto_id,
+                    negocio_id: detalle.negocio_id,
+                    sucursal_id: detalle.sucursal_id || sucursalId || null,
+                    cantidad: detalle.cantidad,
+                    precio_unitario: detalle.precio_unitario,
+                    subtotal: detalle.subtotal,
+                    fecha_creacion: detalle.fecha_creacion,
+                };
                 const { error } = await withTimeout(() =>
-                    supabase.from('venta_detalles').upsert({
-                        id: detalle.id,
-                        venta_id: detalle.venta_id,
-                        producto_id: detalle.producto_id,
-                        negocio_id: detalle.negocio_id,
-                        sucursal_id: detalle.sucursal_id || sucursalId,
-                        cantidad: detalle.cantidad,
-                        precio_unitario: detalle.precio_unitario,
-                        subtotal: detalle.subtotal,
-                        fecha_creacion: detalle.fecha_creacion,
-                    })
+                    supabase.from('venta_detalles').upsert(payload)
                 );
-                if (!error) await db.venta_detalles.update(detalle.id, { estado_sincronizacion: 1 });
+                if (error) {
+                    console.error('[sync] venta_detalles error:', error.code, error.message, error.details, error.hint, '\npayload:', payload);
+                } else {
+                    await db.venta_detalles.update(detalle.id, { estado_sincronizacion: 1 });
+                }
             }
 
             // ── 2.C  Productos & inventario ───────────────────────────────────
@@ -241,7 +251,7 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                                     stock_minimo: p.stock_minimo,
                                     fecha_actualizacion: p.fecha_actualizacion || Date.now(),
                                 })),
-                                { onConflict: 'sucursal_id, producto_id' }
+                                { onConflict: 'sucursal_id,producto_id' }
                             )
                         );
                     }
@@ -288,23 +298,26 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
             // ── 2.F  Transacciones fiado ──────────────────────────────────────
             const transPendientes = await db.transacciones_fiado.where('estado_sincronizacion').equals(0).toArray();
             if (transPendientes.length > 0) {
+                const transPayload = transPendientes.map(t => ({
+                    id: t.id,
+                    negocio_id: t.negocio_id,
+                    sucursal_id: t.sucursal_id || sucursalId || null,
+                    cliente_id: t.cliente_id,
+                    venta_id: t.venta_id,
+                    tipo: t.tipo,
+                    monto: t.monto,
+                    concepto: t.concepto,
+                    fecha_creacion: new Date(t.fecha_creacion).toISOString(),
+                    fecha_actualizacion: t.fecha_actualizacion || Date.now(),
+                }));
                 const { error: transError } = await withTimeout(() =>
-                    supabase.from('transacciones_fiado').upsert(
-                        transPendientes.map(t => ({
-                            id: t.id,
-                            negocio_id: t.negocio_id,
-                            sucursal_id: t.sucursal_id || sucursalId,
-                            cliente_id: t.cliente_id,
-                            venta_id: t.venta_id,
-                            tipo: t.tipo,
-                            monto: t.monto,
-                            concepto: t.concepto,
-                            fecha_creacion: new Date(t.fecha_creacion).getTime(),
-                            fecha_actualizacion: t.fecha_actualizacion || Date.now(),
-                        }))
-                    )
+                    supabase.from('transacciones_fiado').upsert(transPayload)
                 );
-                if (!transError) await db.transacciones_fiado.bulkPut(transPendientes.map(t => ({ ...t, estado_sincronizacion: 1 })));
+                if (transError) {
+                    console.error('[sync] transacciones_fiado error:', transError.code, transError.message, transError.details, transError.hint, '\npayload[0]:', transPayload[0]);
+                } else {
+                    await db.transacciones_fiado.bulkPut(transPendientes.map(t => ({ ...t, estado_sincronizacion: 1 })));
+                }
             }
 
             // ── 2.G  Cajas (NUEVO) ────────────────────────────────────────────

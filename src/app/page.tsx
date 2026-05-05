@@ -10,7 +10,7 @@ import Fuse from 'fuse.js';
 import { useReactToPrint } from 'react-to-print';
 import { TicketVenta } from '@/components/TicketVenta';
 import { db, getNextTicketNumber } from '@/lib/db/dexie';
-import { useProductosTenant, useClientesTenant } from '@/lib/db/tenantQuery';
+import { useProductosTenant, useClientesTenant, useTransaccionesFiadoTenant } from '@/lib/db/tenantQuery';
 import { v4 as uuidv4 } from 'uuid';
 import TopBar from '@/components/shared/TopBar';
 import OfflineBanner from '@/components/shared/OfflineBanner';
@@ -21,7 +21,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 
 export default function POSPage() {
   const { negocioId, negocioNombre, sucursalId, showToast, negocioRnc, negocioDireccion, negocioMensajeTicket } = useConfigStore();
-  const { items, subtotal, itbis, total, addItem, clearCart, updateQuantity } = useCartStore();
+  const { items, subtotal, itbis, descuento, total, tipoDescuento, valorDescuento, addItem, clearCart, updateQuantity, setDescuento } = useCartStore();
 
   const [searchTerm, setSearchTerm] = useState('');
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -50,6 +50,7 @@ export default function POSPage() {
   const productosEnDBRaw = useProductosTenant();
   const productosEnDB = useMemo(() => productosEnDBRaw.filter(p => p.tipo !== 'insumo'), [productosEnDBRaw]);
   const clientes = useClientesTenant();
+  const transacciones = useTransaccionesFiadoTenant();
 
   // MOTOR DE BÚSQUEDA
   const fuse = useMemo(() => new Fuse(productosEnDB, { keys: ['nombre', 'codigo_barras'], threshold: 0.4, ignoreLocation: true }), [productosEnDB]);
@@ -60,11 +61,6 @@ export default function POSPage() {
 
   const devuelta = parseFloat(montoRecibido || '0') - total;
   const totalMixto = parseFloat(montoEfectivoMixto || '0') + parseFloat(montoTransferenciaMixto || '0');
-  const esMontoValido =
-    (metodoPago === 'efectivo' && parseFloat(montoRecibido || '0') >= total) ||
-    (metodoPago === 'tarjeta' || metodoPago === 'transferencia') ||
-    (metodoPago === 'fiado' && clienteSeleccionadoId !== '') ||
-    (metodoPago === 'mixto' && parseFloat(montoEfectivoMixto || '0') > 0 && parseFloat(montoTransferenciaMixto || '0') > 0 && totalMixto >= total);
 
   // MOTOR DE ATAJOS DE TECLADO
   useEffect(() => {
@@ -88,7 +84,7 @@ export default function POSPage() {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [items, isCheckoutOpen, isVentaLibreOpen, metodoPago, montoRecibido, total, ventaExitosa, searchTerm, productosFiltrados, productosEnDB, addItem, esMontoValido]);
+  }, [items, isCheckoutOpen, isVentaLibreOpen, metodoPago, montoRecibido, total, ventaExitosa, searchTerm, productosFiltrados, productosEnDB, addItem]);
 
   // AUTO-ENFOQUE EN INPUT DE EFECTIVO
   useEffect(() => {
@@ -106,6 +102,29 @@ export default function POSPage() {
     setClienteSeleccionadoId('');
     setIsCheckoutOpen(true);
   };
+
+  // Crédito: balance actual del cliente seleccionado y si excede el límite
+  const { balanceClienteSeleccionado, limiteClienteSeleccionado, excedeCredito } = useMemo(() => {
+    if (!clienteSeleccionadoId || metodoPago !== 'fiado') {
+      return { balanceClienteSeleccionado: 0, limiteClienteSeleccionado: 0, excedeCredito: false };
+    }
+    const cliente = clientes.find(c => c.id === clienteSeleccionadoId);
+    const limite = cliente?.limite_credito ?? 0;
+    const cargos = transacciones.filter(t => t.tipo === 'cargo' && t.cliente_id === clienteSeleccionadoId).reduce((s, t) => s + t.monto, 0);
+    const abonos = transacciones.filter(t => t.tipo === 'abono' && t.cliente_id === clienteSeleccionadoId).reduce((s, t) => s + t.monto, 0);
+    const balance = cargos - abonos;
+    return {
+      balanceClienteSeleccionado: balance,
+      limiteClienteSeleccionado: limite,
+      excedeCredito: limite > 0 && (balance + total) > limite,
+    };
+  }, [clienteSeleccionadoId, metodoPago, clientes, transacciones, total]);
+
+  const esMontoValido =
+    (metodoPago === 'efectivo' && parseFloat(montoRecibido || '0') >= total) ||
+    (metodoPago === 'tarjeta' || metodoPago === 'transferencia') ||
+    (metodoPago === 'fiado' && clienteSeleccionadoId !== '' && !excedeCredito) ||
+    (metodoPago === 'mixto' && parseFloat(montoEfectivoMixto || '0') > 0 && parseFloat(montoTransferenciaMixto || '0') > 0 && totalMixto >= total);
 
   // 3. ESCRITURA TRANSACCIONAL EN DEXIE
   const procesarVentaBD = async () => {
@@ -219,9 +238,10 @@ export default function POSPage() {
         {/* COMPONENTE OCULTO DE IMPRESIÓN */}
         <div style={{ display: "none" }}>
           <TicketVenta
-            ref={ticketRef} items={items} subtotal={subtotal} itbis={itbis} total={total}
+            ref={ticketRef} items={items} subtotal={subtotal} itbis={itbis} descuento={descuento} total={total}
             metodoPago={metodoPago} montoRecibido={montoRecibido} devuelta={devuelta}
             nombreNegocio={negocioNombre || 'VentaRD'} numeroTicket={ultimoTicketNum}
+            mensajePie={negocioMensajeTicket || undefined}
           />
         </div>
 
@@ -319,6 +339,12 @@ export default function POSPage() {
             <div className="space-y-1.5 mb-4 text-sm">
               <div className="flex justify-between text-vr-gray"><span>Subtotal</span><span className="font-mono">{formatDOP(subtotal)}</span></div>
               <div className="flex justify-between text-vr-gray"><span>ITBIS</span><span className="font-mono">{formatDOP(itbis)}</span></div>
+              {descuento > 0 && (
+                <div className="flex justify-between text-vr-green font-bold">
+                  <span>Descuento {tipoDescuento === 'porcentaje' ? `(${valorDescuento}%)` : ''}</span>
+                  <span className="font-mono">- {formatDOP(descuento)}</span>
+                </div>
+              )}
               <div className="flex justify-between text-2xl font-black text-white pt-2 border-t border-navy-3 mt-2">
                 <span>Total</span><span className="font-mono text-gold">{formatDOP(total)}</span>
               </div>
@@ -429,6 +455,43 @@ export default function POSPage() {
                     ))}
                   </div>
 
+                  {/* ── DESCUENTO ── */}
+                  <div className="bg-navy p-4 rounded-xl border border-navy-3 mb-6">
+                    <div className="flex items-center justify-between mb-3">
+                      <span className="text-sm font-bold text-vr-gray">Descuento</span>
+                      <div className="flex bg-navy-2 border border-navy-3 rounded-lg p-0.5">
+                        {(['porcentaje', 'monto'] as const).map(t => (
+                          <button
+                            key={t}
+                            onClick={() => setDescuento(t, valorDescuento)}
+                            className={`px-3 py-1 rounded-md text-xs font-bold transition-all ${tipoDescuento === t ? 'bg-gold text-navy' : 'text-vr-gray hover:text-white'}`}
+                          >
+                            {t === 'porcentaje' ? '%' : 'RD$'}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="number" min="0"
+                        max={tipoDescuento === 'porcentaje' ? 100 : undefined}
+                        step={tipoDescuento === 'porcentaje' ? 1 : 10}
+                        placeholder="0"
+                        value={valorDescuento || ''}
+                        onChange={e => setDescuento(tipoDescuento, parseFloat(e.target.value) || 0)}
+                        className="flex-1 bg-navy-2 border border-navy-3 rounded-lg p-2 text-white font-mono font-bold text-center focus:border-gold outline-none text-lg"
+                      />
+                      {descuento > 0 && (
+                        <div className="text-vr-green font-bold text-sm font-mono whitespace-nowrap">
+                          − {formatDOP(descuento)}
+                        </div>
+                      )}
+                      {descuento > 0 && (
+                        <button onClick={() => setDescuento('porcentaje', 0)} className="text-vr-gray hover:text-vr-red text-lg font-bold px-2">✕</button>
+                      )}
+                    </div>
+                  </div>
+
                   {metodoPago === 'efectivo' && (
                     <div className="bg-navy p-6 rounded-xl border border-navy-3">
                       <label className="block text-sm font-bold text-vr-gray mb-3">¿Con cuánto paga el cliente?</label>
@@ -459,7 +522,7 @@ export default function POSPage() {
                   )}
 
                   {metodoPago === 'fiado' && (
-                    <div className="bg-vr-orange/5 p-6 rounded-xl border border-vr-orange/20 mb-8">
+                    <div className={`p-6 rounded-xl border mb-8 ${excedeCredito ? 'bg-vr-red/5 border-vr-red/30' : 'bg-vr-orange/5 border-vr-orange/20'}`}>
                       <label className="block text-sm font-bold text-vr-orange mb-3">Seleccionar Cliente para Fiado</label>
                       <select
                         className="w-full text-base bg-navy border border-navy-3 focus:border-gold focus:outline-none py-3 px-4 rounded-lg font-bold text-white"
@@ -473,6 +536,27 @@ export default function POSPage() {
                       </select>
                       {clientes.length === 0 && (
                           <p className="mt-3 text-vr-red text-sm font-bold bg-vr-red/10 p-2 rounded border border-vr-red/20">No hay clientes registrados. Ve a la pantalla de Clientes primero.</p>
+                      )}
+                      {clienteSeleccionadoId && limiteClienteSeleccionado > 0 && (
+                        <div className={`mt-4 p-4 rounded-xl border text-sm ${excedeCredito ? 'bg-vr-red/10 border-vr-red/30 text-vr-red' : 'bg-navy border-navy-3 text-vr-gray'}`}>
+                          <div className="flex justify-between mb-1">
+                            <span>Deuda actual</span>
+                            <span className="font-mono font-bold text-white">{formatDOP(balanceClienteSeleccionado)}</span>
+                          </div>
+                          <div className="flex justify-between mb-1">
+                            <span>Esta venta</span>
+                            <span className="font-mono font-bold text-white">+ {formatDOP(total)}</span>
+                          </div>
+                          <div className={`flex justify-between pt-2 border-t font-bold ${excedeCredito ? 'border-vr-red/30' : 'border-navy-3'}`}>
+                            <span>Límite de crédito</span>
+                            <span className="font-mono">{formatDOP(limiteClienteSeleccionado)}</span>
+                          </div>
+                          {excedeCredito && (
+                            <p className="mt-3 font-bold text-center">
+                              Excede el límite por {formatDOP((balanceClienteSeleccionado + total) - limiteClienteSeleccionado)}. No se puede procesar.
+                            </p>
+                          )}
+                        </div>
                       )}
                     </div>
                   )}

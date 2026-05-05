@@ -6,6 +6,7 @@ interface TicketProps {
     items: CartItem[];
     subtotal: number;
     itbis: number;
+    descuento?: number;
     total: number;
     metodoPago: string;
     montoRecibido: string;
@@ -14,12 +15,13 @@ interface TicketProps {
     direccion?: string;
     telefono?: string;
     numeroTicket?: number;
+    mensajePie?: string;
 }
 
 export const TicketVenta = forwardRef<HTMLDivElement, TicketProps>(({
-    items, subtotal, itbis, total, metodoPago, montoRecibido, devuelta,
+    items, subtotal, itbis, descuento = 0, total, metodoPago, montoRecibido, devuelta,
     nombreNegocio = 'Mi Negocio', direccion = 'Ciudad, RD', telefono = '809-000-0000',
-    numeroTicket
+    numeroTicket, mensajePie
 }, ref) => {
 
     const fechaActual = new Date().toLocaleString('es-DO');
@@ -68,7 +70,10 @@ export const TicketVenta = forwardRef<HTMLDivElement, TicketProps>(({
             <div className="flex flex-col items-end text-xs mb-4">
                 <div className="flex justify-between w-full"><span>Subtotal:</span> <span>RD$ {subtotal.toFixed(2)}</span></div>
                 <div className="flex justify-between w-full"><span>ITBIS:</span> <span>RD$ {itbis.toFixed(2)}</span></div>
-                <div className="flex justify-between w-full font-bold text-sm mt-1"><span>TOTAL:</span> <span>RD$ {total.toFixed(2)}</span></div>
+                {descuento > 0 && (
+                    <div className="flex justify-between w-full"><span>Descuento:</span> <span>- RD$ {descuento.toFixed(2)}</span></div>
+                )}
+                <div className="flex justify-between w-full font-bold text-sm mt-1 border-t border-dashed border-black pt-1"><span>TOTAL:</span> <span>RD$ {total.toFixed(2)}</span></div>
             </div>
 
             <div className="border-b border-dashed border-black mb-2"></div>
@@ -83,8 +88,8 @@ export const TicketVenta = forwardRef<HTMLDivElement, TicketProps>(({
 
             {/* Pie de página */}
             <div className="text-center mt-6 text-xs">
-                <p>¡Gracias por su compra!</p>
-                <p className="mt-1">Vuelva pronto</p>
+                <p>{mensajePie || '¡Gracias por su compra!'}</p>
+                <p className="mt-1 text-[10px] text-gray-500">VentaRD POS</p>
             </div>
 
         </div>

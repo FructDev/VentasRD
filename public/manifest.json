@@ -1,22 +1,40 @@
 {
     "name": "VentaRD POS",
     "short_name": "VentaRD",
-    "description": "El punto de venta sin fricción",
+    "description": "El punto de venta sin fricción para tu negocio",
     "start_url": "/",
     "display": "standalone",
-    "background_color": "#ffffff",
-    "theme_color": "#000000",
-    "orientation": "landscape",
+    "background_color": "#0D1B2E",
+    "theme_color": "#0D1B2E",
+    "orientation": "any",
+    "categories": ["business", "productivity"],
     "icons": [
+        {
+            "src": "/favicon-16x16.png",
+            "sizes": "16x16",
+            "type": "image/png"
+        },
+        {
+            "src": "/favicon-32x32.png",
+            "sizes": "32x32",
+            "type": "image/png"
+        },
+        {
+            "src": "/apple-touch-icon.png",
+            "sizes": "180x180",
+            "type": "image/png"
+        },
         {
             "src": "/icon-192x192.png",
             "sizes": "192x192",
-            "type": "image/png"
+            "type": "image/png",
+            "purpose": "any maskable"
         },
         {
             "src": "/icon-512x512.png",
             "sizes": "512x512",
-            "type": "image/png"
+            "type": "image/png",
+            "purpose": "any maskable"
         }
     ]
 }

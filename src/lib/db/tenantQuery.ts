@@ -107,6 +107,24 @@ export function useVentasPeriodoTenant(dias: number) {
 }
 
 /**
+ * Ventas en un rango de timestamps arbitrario del negocio actual.
+ */
+export function useVentasRangoTenant(desde: number, hasta: number) {
+    const { negocioId } = useConfigStore();
+    return useLiveQuery(
+        async () => {
+            if (!negocioId) return [];
+            const ventas = await db.ventas
+                .where('negocio_id')
+                .equals(negocioId)
+                .toArray();
+            return ventas.filter(v => v.fecha_creacion >= desde && v.fecha_creacion <= hasta);
+        },
+        [negocioId, desde, hasta]
+    ) || [];
+}
+
+/**
  * Productos con stock bajo/agotado del negocio actual.
  */
 export function useProductosBajoStockTenant() {
@@ -159,21 +177,6 @@ export function useVentasTenant(limite = 100) {
             return ventas.sort((a, b) => b.fecha_creacion - a.fecha_creacion).slice(0, limite);
         },
         [negocioId, limite]
-    ) || [];
-}
-
-/**
- * Ventas del período especificado (desde/hasta) del negocio actual.
- */
-export function useVentasRangoTenant(desde: number, hasta: number) {
-    const { negocioId } = useConfigStore();
-    return useLiveQuery(
-        async () => {
-            if (!negocioId) return [];
-            const ventas = await db.ventas.where('negocio_id').equals(negocioId).toArray();
-            return ventas.filter(v => v.fecha_creacion >= desde && v.fecha_creacion <= hasta);
-        },
-        [negocioId, desde, hasta]
     ) || [];
 }
 

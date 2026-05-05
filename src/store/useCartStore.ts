@@ -3,7 +3,6 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { ProductoLocal } from '@/types/database';
 
-// Extendemos el tipo producto para incluir la cantidad en el carrito
 export interface CartItem extends ProductoLocal {
     cantidad: number;
 }
@@ -12,84 +11,91 @@ interface CartState {
     items: CartItem[];
     subtotal: number;
     itbis: number;
+    descuento: number;        // monto de descuento calculado
     total: number;
 
-    // Acciones
+    tipoDescuento: 'porcentaje' | 'monto';
+    valorDescuento: number;   // valor que ingresó el usuario (% o RD$)
+
     addItem: (producto: ProductoLocal) => void;
     removeItem: (id: string) => void;
     updateQuantity: (id: string, cantidad: number) => void;
+    setDescuento: (tipo: 'porcentaje' | 'monto', valor: number) => void;
     clearCart: () => void;
 }
 
-// Función auxiliar para recalcular los totales al instante
-const calculateTotals = (items: CartItem[]) => {
+const calculateTotals = (
+    items: CartItem[],
+    tipoDescuento: 'porcentaje' | 'monto' = 'porcentaje',
+    valorDescuento: number = 0
+) => {
     let subtotal = 0;
     let itbis = 0;
 
     items.forEach(item => {
         const itemSubtotal = item.precio_venta * item.cantidad;
         subtotal += itemSubtotal;
-        // Si el producto tiene tasa de impuesto (ej. 0.18), la sumamos
-        if (item.tasa_itbis) {
-            itbis += itemSubtotal * item.tasa_itbis;
-        }
+        if (item.tasa_itbis) itbis += itemSubtotal * item.tasa_itbis;
     });
 
-    return {
-        subtotal,
-        itbis,
-        total: subtotal + itbis
-    };
+    const bruto = subtotal + itbis;
+    let descuento = 0;
+    if (valorDescuento > 0) {
+        descuento = tipoDescuento === 'porcentaje'
+            ? Math.min(bruto * (valorDescuento / 100), bruto)
+            : Math.min(valorDescuento, bruto);
+        descuento = Math.round(descuento * 100) / 100;
+    }
+
+    return { subtotal, itbis, descuento, total: Math.max(0, bruto - descuento) };
 };
 
 export const useCartStore = create<CartState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
     items: [],
     subtotal: 0,
     itbis: 0,
+    descuento: 0,
     total: 0,
+    tipoDescuento: 'porcentaje',
+    valorDescuento: 0,
 
     addItem: (producto) => set((state) => {
         const existingItem = state.items.find(item => item.id === producto.id);
-        let newItems;
-
-        if (existingItem) {
-            // Si ya está en el carrito, solo aumentamos la cantidad
-            newItems = state.items.map(item =>
-                item.id === producto.id ? { ...item, cantidad: item.cantidad + 1 } : item
-            );
-        } else {
-            // Si es nuevo, entra con cantidad 1
-            newItems = [...state.items, { ...producto, cantidad: 1 }];
-        }
-
-        return { items: newItems, ...calculateTotals(newItems) };
+        const newItems = existingItem
+            ? state.items.map(item => item.id === producto.id ? { ...item, cantidad: item.cantidad + 1 } : item)
+            : [...state.items, { ...producto, cantidad: 1 }];
+        return { items: newItems, ...calculateTotals(newItems, state.tipoDescuento, state.valorDescuento) };
     }),
 
     removeItem: (id) => set((state) => {
         const newItems = state.items.filter(item => item.id !== id);
-        return { items: newItems, ...calculateTotals(newItems) };
+        return { items: newItems, ...calculateTotals(newItems, state.tipoDescuento, state.valorDescuento) };
     }),
 
     updateQuantity: (id, cantidad) => set((state) => {
-        // Evitamos cantidades negativas o cero desde aquí
         if (cantidad <= 0) {
             const newItems = state.items.filter(item => item.id !== id);
-            return { items: newItems, ...calculateTotals(newItems) };
+            return { items: newItems, ...calculateTotals(newItems, state.tipoDescuento, state.valorDescuento) };
         }
-
-        const newItems = state.items.map(item =>
-            item.id === id ? { ...item, cantidad } : item
-        );
-        return { items: newItems, ...calculateTotals(newItems) };
+        const newItems = state.items.map(item => item.id === id ? { ...item, cantidad } : item);
+        return { items: newItems, ...calculateTotals(newItems, state.tipoDescuento, state.valorDescuento) };
     }),
 
-    clearCart: () => set({ items: [], subtotal: 0, itbis: 0, total: 0 }),
+    setDescuento: (tipo, valor) => set((state) => ({
+        tipoDescuento: tipo,
+        valorDescuento: valor,
+        ...calculateTotals(state.items, tipo, valor),
+    })),
+
+    clearCart: () => set({
+        items: [], subtotal: 0, itbis: 0, descuento: 0, total: 0,
+        tipoDescuento: 'porcentaje', valorDescuento: 0,
+    }),
   }),
   {
     name: 'ventard-cart',
-    // Solo persistir items; los totales se recalculan al rehidratar
     partialize: (state) => ({ items: state.items }),
     merge: (persisted, current) => {
         const items = (persisted as { items: CartItem[] }).items ?? [];

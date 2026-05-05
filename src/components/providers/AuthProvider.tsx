@@ -73,7 +73,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                             rnc: currentState.negocioRnc,
                             direccion: currentState.negocioDireccion,
                             mensaje_ticket: currentState.negocioMensajeTicket,
-                            onboarding_completado: true
+                            onboarding_completado: true,
+                            plan_activo: currentState.planActivo,
+                            trial_hasta: currentState.trialHasta,
                         };
                     } else {
                         throw error;

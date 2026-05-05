@@ -35,7 +35,7 @@ export default function VentaLibreModal({ isOpen, onClose }: Props) {
 
         // Crear un producto virtual temporal
         const productoVirtual: ProductoLocal = {
-            id: `libre-${uuidv4()}`,
+            id: uuidv4(),
             negocio_id: '',
             nombre: nombre.trim(),
             codigo_barras: '',

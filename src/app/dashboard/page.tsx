@@ -1,10 +1,10 @@
 // src/app/dashboard/page.tsx
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { formatDOP } from '@/lib/utils';
 import {
-    useVentasHoyTenant, useProductosBajoStockTenant, useProductosTenant,
+    useVentasRangoTenant, useProductosBajoStockTenant, useProductosTenant,
     useVentaDetallesTenant, useClientesTenant, useTransaccionesFiadoTenant, useVentasPeriodoTenant
 } from '@/lib/db/tenantQuery';
 import TopBar from '@/components/shared/TopBar';
@@ -17,9 +17,37 @@ import {
 
 const CHART_COLORS = ['#D4A017', '#22c55e', '#3b82f6', '#f97316'];
 
+type Periodo = 'hoy' | '7d' | 'mes';
+
+const PERIODOS: { key: Periodo; label: string }[] = [
+    { key: 'hoy', label: 'Hoy' },
+    { key: '7d', label: '7 días' },
+    { key: 'mes', label: 'Este mes' },
+];
+
+function getRango(periodo: Periodo): { desde: number; hasta: number } {
+    const now = new Date();
+    // Use end-of-day (23:59:59.999) so the range doesn't shift every millisecond
+    const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999).getTime();
+
+    if (periodo === 'hoy') {
+        return { desde: new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime(), hasta: endOfDay };
+    }
+    if (periodo === '7d') {
+        const startOf7d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6).getTime();
+        return { desde: startOf7d, hasta: endOfDay };
+    }
+    // mes actual
+    return { desde: new Date(now.getFullYear(), now.getMonth(), 1).getTime(), hasta: endOfDay };
+}
+
 export default function DashboardPage() {
+    const [periodo, setPeriodo] = useState<Periodo>('hoy');
+    // Memoize so desde/hasta don't change on every render (useLiveQuery uses them as deps)
+    const { desde, hasta } = useMemo(() => getRango(periodo), [periodo]);
+
     // === QUERIES AISLADAS POR NEGOCIO ===
-    const ventasHoy = useVentasHoyTenant();
+    const ventasPeriodo = useVentasRangoTenant(desde, hasta);
     const ventas7d = useVentasPeriodoTenant(7);
     const productosBajoStock = useProductosBajoStockTenant();
     const productos = useProductosTenant();
@@ -28,22 +56,20 @@ export default function DashboardPage() {
     const transacciones = useTransaccionesFiadoTenant();
 
     // === KPIs CALCULADOS ===
-    const totalVentas = ventasHoy.reduce((acc, v) => acc + v.total, 0);
-    const ticketPromedio = ventasHoy.length > 0 ? totalVentas / ventasHoy.length : 0;
+    const totalVentas = ventasPeriodo.reduce((acc, v) => acc + v.total, 0);
+    const ticketPromedio = ventasPeriodo.length > 0 ? totalVentas / ventasPeriodo.length : 0;
 
-    // Ganancia bruta del día (precio_venta - costo) * cantidad
+    // Ganancia bruta del período (precio_venta - costo) * cantidad
     const gananciaBruta = useMemo(() => {
         const productoMap = new Map(productos.map(p => [p.id, p]));
-        const detallesHoy = detalles.filter(d => {
-            const venta = ventasHoy.find(v => v.id === d.venta_id);
-            return !!venta;
-        });
-        return detallesHoy.reduce((acc, d) => {
+        const ventasSet = new Set(ventasPeriodo.map(v => v.id));
+        const detallesPeriodo = detalles.filter(d => ventasSet.has(d.venta_id));
+        return detallesPeriodo.reduce((acc, d) => {
             const prod = productoMap.get(d.producto_id);
             if (!prod) return acc;
             return acc + ((prod.precio_venta - prod.costo) * d.cantidad);
         }, 0);
-    }, [ventasHoy, detalles, productos]);
+    }, [ventasPeriodo, detalles, productos]);
 
     // Balance de fiados consolidado
     const balanceFiados = useMemo(() => {
@@ -74,51 +100,82 @@ export default function DashboardPage() {
         );
     }, [productos, detalles, ventas7d]);
 
-    // Data: Ventas por hora
+    // Data: Ventas por hora (solo relevante en vista "hoy", para otros períodos agrupamos por día)
     const ventasPorHora = useMemo(() => {
-        const horas: Record<number, number> = {};
-        for (let i = 6; i < 24; i++) horas[i] = 0;
-        ventasHoy.forEach(v => {
-            const hora = new Date(v.fecha_creacion).getHours();
-            horas[hora] = (horas[hora] || 0) + v.total;
-        });
-        return Object.entries(horas).map(([hora, monto]) => ({
-            hora: `${hora}:00`, ventas: Math.round(monto),
-        }));
-    }, [ventasHoy]);
+        if (periodo === 'hoy') {
+            const horas: Record<number, number> = {};
+            for (let i = 6; i < 24; i++) horas[i] = 0;
+            ventasPeriodo.forEach(v => {
+                const hora = new Date(v.fecha_creacion).getHours();
+                horas[hora] = (horas[hora] || 0) + v.total;
+            });
+            return Object.entries(horas).map(([hora, monto]) => ({
+                hora: `${hora}:00`, ventas: Math.round(monto),
+            }));
+        } else {
+            // Agrupar por día
+            const dias: Record<string, number> = {};
+            ventasPeriodo.forEach(v => {
+                const d = new Date(v.fecha_creacion);
+                const key = `${d.getDate()}/${d.getMonth() + 1}`;
+                dias[key] = (dias[key] || 0) + v.total;
+            });
+            return Object.entries(dias).map(([hora, ventas]) => ({ hora, ventas: Math.round(ventas) }));
+        }
+    }, [ventasPeriodo, periodo]);
 
     // Data: Ventas por método de pago
     const ventasPorMetodo = useMemo(() => {
         const metodos: Record<string, number> = {};
-        ventasHoy.forEach(v => { metodos[v.metodo_pago] = (metodos[v.metodo_pago] || 0) + v.total; });
+        ventasPeriodo.forEach(v => { metodos[v.metodo_pago] = (metodos[v.metodo_pago] || 0) + v.total; });
         const labels: Record<string, string> = { efectivo: 'Efectivo', tarjeta: 'Tarjeta', transferencia: 'Transferencia', fiado: 'Fiado' };
         return Object.entries(metodos).map(([m, monto]) => ({ name: labels[m] || m, value: Math.round(monto) }));
-    }, [ventasHoy]);
+    }, [ventasPeriodo]);
+
+    const chartLabel = periodo === 'hoy' ? 'Ventas por Hora' : 'Ventas por Día';
 
     return (
         <div className="min-h-screen bg-navy flex flex-col">
             <TopBar />
             <OfflineBanner />
 
-            <div className="flex-1 p-8 overflow-y-auto">
+            <div className="flex-1 p-4 md:p-8 overflow-y-auto">
                 <div className="max-w-6xl mx-auto">
-                    <header className="flex justify-between items-center mb-8">
+                    <header className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 mb-6">
                         <div>
-                            <h1 className="text-3xl font-display font-extrabold text-white">Resumen de Hoy</h1>
-                            <p className="text-vr-gray font-medium mt-1">Inteligencia de negocio en tiempo real.</p>
+                            <h1 className="text-2xl md:text-3xl font-display font-extrabold text-white">Dashboard</h1>
+                            <p className="text-vr-gray font-medium mt-1 text-sm">Resumen de tu negocio</p>
                         </div>
-                        <Link href="/" className="bg-navy-2 border border-navy-3 px-6 py-3 rounded-xl font-bold text-vr-gray hover:text-white hover:border-navy-4 transition-all">
-                            Ir a la Caja
-                        </Link>
+                        <div className="flex items-center gap-3">
+                            {/* Period selector */}
+                            <div className="flex bg-navy-2 border border-navy-3 rounded-xl p-1 gap-1">
+                                {PERIODOS.map(p => (
+                                    <button
+                                        key={p.key}
+                                        onClick={() => setPeriodo(p.key)}
+                                        className={`px-3 py-1.5 rounded-lg text-sm font-bold transition-all ${
+                                            periodo === p.key
+                                                ? 'bg-gold text-navy'
+                                                : 'text-vr-gray hover:text-white'
+                                        }`}
+                                    >
+                                        {p.label}
+                                    </button>
+                                ))}
+                            </div>
+                            <Link href="/" className="bg-navy-2 border border-navy-3 px-4 py-2 rounded-xl font-bold text-vr-gray hover:text-white hover:border-navy-4 transition-all text-sm hidden sm:block">
+                                Ir a la Caja
+                            </Link>
+                        </div>
                     </header>
 
-                    {/* KPI Cards - Row 1 */}
+                    {/* KPI Cards */}
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
                         <div className="bg-navy-2 p-5 rounded-2xl border border-navy-3 relative overflow-hidden glow-gold">
                             <div className="relative z-10">
-                                <p className="text-vr-gray font-bold uppercase text-[10px] tracking-widest">Vendido Hoy</p>
+                                <p className="text-vr-gray font-bold uppercase text-[10px] tracking-widest">Vendido</p>
                                 <h2 className="text-2xl font-black font-mono mt-2 text-gold">{formatDOP(totalVentas)}</h2>
-                                <p className="mt-1 text-vr-green text-xs font-bold">↑ {ventasHoy.length} transacciones</p>
+                                <p className="mt-1 text-vr-green text-xs font-bold">↑ {ventasPeriodo.length} transacciones</p>
                             </div>
                             <div className="absolute -right-4 -bottom-4 w-16 h-16 bg-gold/5 rounded-full"></div>
                         </div>
@@ -143,10 +200,9 @@ export default function DashboardPage() {
 
                     {/* Charts Row */}
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
-                        {/* Ventas por Hora */}
                         <div className="lg:col-span-2 bg-navy-2 p-6 rounded-2xl border border-navy-3">
-                            <h3 className="text-white font-display font-bold mb-4">Ventas por Hora</h3>
-                            {ventasHoy.length === 0 ? (
+                            <h3 className="text-white font-display font-bold mb-4">{chartLabel}</h3>
+                            {ventasPeriodo.length === 0 ? (
                                 <div className="h-48 flex items-center justify-center text-vr-gray text-sm">
                                     <span>Sin datos aún — las ventas aparecerán aquí en tiempo real</span>
                                 </div>
@@ -167,7 +223,6 @@ export default function DashboardPage() {
                             )}
                         </div>
 
-                        {/* Ventas por Método */}
                         <div className="bg-navy-2 p-6 rounded-2xl border border-navy-3">
                             <h3 className="text-white font-display font-bold mb-4">Métodos de Pago</h3>
                             {ventasPorMetodo.length === 0 ? (
@@ -191,11 +246,10 @@ export default function DashboardPage() {
                         </div>
                     </div>
 
-                    {/* BI Row: Top Clientes + Productos Sin Movimiento + Stock Crítico */}
+                    {/* BI Row */}
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
-                        {/* Top Clientes */}
                         <div className="bg-navy-2 p-6 rounded-2xl border border-navy-3">
-                            <h3 className="text-white font-display font-bold mb-3">🏆 Top Clientes</h3>
+                            <h3 className="text-white font-display font-bold mb-3">Top Clientes</h3>
                             {topClientes.length === 0 ? (
                                 <p className="text-vr-gray text-sm">Sin datos de clientes aún</p>
                             ) : (
@@ -213,11 +267,10 @@ export default function DashboardPage() {
                             )}
                         </div>
 
-                        {/* Productos Sin Movimiento */}
                         <div className="bg-navy-2 p-6 rounded-2xl border border-navy-3">
-                            <h3 className="text-white font-display font-bold mb-3">😴 Sin Movimiento <span className="text-vr-gray text-xs font-normal">(7 días)</span></h3>
+                            <h3 className="text-white font-display font-bold mb-3">Sin Movimiento <span className="text-vr-gray text-xs font-normal">(7 días)</span></h3>
                             {productosSinMovimiento.length === 0 ? (
-                                <p className="text-vr-green text-sm font-bold">✓ Todos los productos se están vendiendo</p>
+                                <p className="text-vr-green text-sm font-bold">Todos los productos se están vendiendo</p>
                             ) : (
                                 <div className="space-y-2 max-h-48 overflow-y-auto">
                                     {productosSinMovimiento.slice(0, 8).map(p => (
@@ -225,7 +278,6 @@ export default function DashboardPage() {
                                             <span className="text-white text-sm truncate max-w-[140px]">{p.nombre}</span>
                                             <div className="text-right">
                                                 <span className="text-vr-orange font-mono text-xs font-bold">{p.stock_actual} uds</span>
-                                                <span className="text-vr-gray text-[10px] ml-1">({formatDOP(p.costo * p.stock_actual)})</span>
                                             </div>
                                         </div>
                                     ))}
@@ -236,11 +288,10 @@ export default function DashboardPage() {
                             )}
                         </div>
 
-                        {/* Stock Crítico */}
                         <div className="bg-navy-2 p-6 rounded-2xl border border-navy-3">
-                            <h3 className="text-white font-display font-bold mb-3">🔴 Stock Crítico</h3>
+                            <h3 className="text-white font-display font-bold mb-3">Stock Crítico</h3>
                             {productosBajoStock.length === 0 ? (
-                                <p className="text-vr-green text-sm font-bold">✓ Inventario sano</p>
+                                <p className="text-vr-green text-sm font-bold">Inventario sano</p>
                             ) : (
                                 <div className="space-y-2 max-h-48 overflow-y-auto">
                                     {productosBajoStock.slice(0, 8).map(p => (
@@ -261,19 +312,19 @@ export default function DashboardPage() {
                         </div>
                     </div>
 
-                    {/* Consejo Inteligente */}
+                    {/* Consejo */}
                     <div className="bg-gold/5 border border-gold/15 p-6 rounded-2xl">
-                        <h3 className="text-gold font-display font-bold mb-2">💡 Consejo del Asistente VentaRD</h3>
+                        <h3 className="text-gold font-display font-bold mb-2">Consejo del Asistente VentaRD</h3>
                         <p className="text-vr-gray leading-relaxed text-sm">
                             {productosSinMovimiento.length > 3
-                                ? `Tienes ${productosSinMovimiento.length} productos sin movimiento en 7 días, con ${formatDOP(productosSinMovimiento.reduce((s, p) => s + p.costo * p.stock_actual, 0))} de capital estancado. Considera una promoción para liberarlo.`
+                                ? `Tienes ${productosSinMovimiento.length} productos sin movimiento en 7 días. Considera una promoción para mover ese inventario.`
                                 : balanceFiados > 5000
                                 ? `Tienes ${formatDOP(balanceFiados)} en fiados pendientes. Es buen momento para recordar a tus clientes con pagos atrasados.`
                                 : totalVentas > 5000
                                 ? "¡Excelente ritmo! Revisa tu inventario para asegurar que los productos estrella no se agoten."
-                                : ventasHoy.length > 0
-                                ? "Las ventas van arrancando. Podrías aplicar una oferta relámpago en productos con mucho stock."
-                                : "Aún no hay ventas hoy. ¡Prepárate revisando el inventario y organizando los productos estrella!"}
+                                : ventasPeriodo.length > 0
+                                ? "Las ventas van bien. Podrías aplicar una oferta en productos con mucho stock para moverlos."
+                                : "Aún no hay ventas en este período. ¡Prepárate revisando el inventario!"}
                         </p>
                     </div>
                 </div>
