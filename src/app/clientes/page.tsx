@@ -10,6 +10,7 @@ import { formatDOP } from '@/lib/utils';
 import { v4 as uuidv4 } from 'uuid';
 import TopBar from '@/components/shared/TopBar';
 import OfflineBanner from '@/components/shared/OfflineBanner';
+import Pagination from '@/components/ui/Pagination';
 
 export default function ClientesPage() {
     const { negocioId, showToast, negocioNombre } = useConfigStore();
@@ -92,6 +93,14 @@ export default function ClientesPage() {
     const totalCuentasPorCobrar = clientesConSaldo.reduce((acc, c) => acc + c.saldo_pendiente, 0);
     const clientesConDeuda = clientesConSaldo.filter(c => c.saldo_pendiente > 0).length;
 
+    const ITEMS_POR_PAGINA = 20;
+    const [pagina, setPagina] = useState(1);
+    const clientesPaginados = useMemo(() => {
+        const inicio = (pagina - 1) * ITEMS_POR_PAGINA;
+        return clientesConSaldo.slice(inicio, inicio + ITEMS_POR_PAGINA);
+    }, [clientesConSaldo, pagina]);
+    const totalPaginas = Math.ceil(clientesConSaldo.length / ITEMS_POR_PAGINA);
+
     return (
         <div className="min-h-screen bg-navy flex flex-col">
             <TopBar />
@@ -137,7 +146,7 @@ export default function ClientesPage() {
                                 {clientesConSaldo.length === 0 ? (
                                     <tr><td colSpan={5} className="p-8 text-center text-vr-gray">No hay clientes registrados.</td></tr>
                                 ) : (
-                                    clientesConSaldo.map((cliente) => (
+                                    clientesPaginados.map((cliente) => (
                                         <tr key={cliente.id} className="border-b border-navy-3/50 hover:bg-navy-3/30 transition-colors">
                                             <td className="p-4 font-bold text-white">
                                                 {cliente.nombre}
@@ -173,6 +182,13 @@ export default function ClientesPage() {
                                 )}
                             </tbody>
                         </table>
+                        <Pagination
+                            pagina={pagina}
+                            totalPaginas={totalPaginas}
+                            onCambiar={setPagina}
+                            totalItems={clientesConSaldo.length}
+                            itemsPorPagina={ITEMS_POR_PAGINA}
+                        />
                     </div>
 
                     {/* MODAL CREAR/EDITAR CLIENTE */}

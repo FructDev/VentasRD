@@ -13,6 +13,7 @@ import PinGuard from '@/components/ui/PinGuard';
 import TopBar from '@/components/shared/TopBar';
 import OfflineBanner from '@/components/shared/OfflineBanner';
 import { SkeletonTable } from '@/components/ui/Skeleton';
+import Pagination from '@/components/ui/Pagination';
 
 const METODO_LABEL: Record<string, string> = {
     efectivo: 'Efectivo',
@@ -55,6 +56,9 @@ export default function HistorialPage() {
 
     // Filtro por método de pago
     const [filtroMetodo, setFiltroMetodo] = useState<string>('todos');
+    // Paginación
+    const ITEMS_POR_PAGINA = 25;
+    const [pagina, setPagina] = useState(1);
     // Expansión de filas
     const [ventaExpandida, setVentaExpandida] = useState<string | null>(null);
     // Modal de devolución
@@ -89,9 +93,16 @@ export default function HistorialPage() {
     }, [clientes]);
 
     const ventasFiltradas = useMemo(() => {
+        setPagina(1); // reset al cambiar filtro
         if (filtroMetodo === 'todos') return ventas;
         return ventas.filter(v => v.metodo_pago === filtroMetodo);
     }, [ventas, filtroMetodo]);
+
+    const ventasPaginadas = useMemo(() => {
+        const inicio = (pagina - 1) * ITEMS_POR_PAGINA;
+        return ventasFiltradas.slice(inicio, inicio + ITEMS_POR_PAGINA);
+    }, [ventasFiltradas, pagina]);
+    const totalPaginas = Math.ceil(ventasFiltradas.length / ITEMS_POR_PAGINA);
 
     const abrirDevolucion = (venta: VentaLocal) => {
         const items = detallesPorVenta.get(venta.id) || [];
@@ -269,6 +280,7 @@ export default function HistorialPage() {
                                     <p className="font-medium">No hay ventas registradas</p>
                                 </div>
                             ) : (
+                                <>
                                 <table className="w-full text-left">
                                     <thead>
                                         <tr className="border-b border-navy-3 text-vr-gray text-xs uppercase tracking-wider">
@@ -280,7 +292,7 @@ export default function HistorialPage() {
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        {ventasFiltradas.map(venta => {
+                                        {ventasPaginadas.map(venta => {
                                             const yaDevuelta = devolucionesMap.has(venta.id);
                                             const isExpanded = ventaExpandida === venta.id;
                                             const items = detallesPorVenta.get(venta.id) || [];
@@ -349,6 +361,14 @@ export default function HistorialPage() {
                                         })}
                                     </tbody>
                                 </table>
+                                <Pagination
+                                    pagina={pagina}
+                                    totalPaginas={totalPaginas}
+                                    onCambiar={setPagina}
+                                    totalItems={ventasFiltradas.length}
+                                    itemsPorPagina={ITEMS_POR_PAGINA}
+                                />
+                                </>
                             )}
                         </div>
                     </div>

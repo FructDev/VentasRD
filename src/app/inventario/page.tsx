@@ -13,6 +13,7 @@ import PinGuard from '@/components/ui/PinGuard';
 import TopBar from '@/components/shared/TopBar';
 import OfflineBanner from '@/components/shared/OfflineBanner';
 import { SkeletonTable } from '@/components/ui/Skeleton';
+import Pagination from '@/components/ui/Pagination';
 
 export default function InventarioPage() {
     const { negocioId } = useConfigStore();
@@ -84,15 +85,29 @@ export default function InventarioPage() {
     // ==========================================
     // INTELIGENCIA DE NEGOCIO (INSIGHTS)
     // ==========================================
+    // Paginación
+    const ITEMS_POR_PAGINA = 20;
+    const [pagina, setPagina] = useState(1);
+    const productosPaginados = useMemo(() => {
+        const inicio = (pagina - 1) * ITEMS_POR_PAGINA;
+        return productosConCosto.slice(inicio, inicio + ITEMS_POR_PAGINA);
+    }, [productosConCosto, pagina]);
+    const totalPaginas = Math.ceil(productosConCosto.length / ITEMS_POR_PAGINA);
+
     const insights = useMemo(() => {
         if (productosConCosto.length === 0) return null;
 
-        const agotados = productosConCosto.filter(p => p.stock_actual <= 0);
-        const porAgotarse = productosConCosto.filter(p => p.stock_actual > 0 && p.stock_actual <= p.stock_minimo);
-        const inversionTotal = productosConCosto.reduce((acc, p) => acc + (p.costo * p.stock_actual), 0);
+        // Solo productos de venta directa (simple) generan alertas de stock
+        const vendibles = productosConCosto.filter(p => (p as any).tipo === 'simple');
+        const agotados = vendibles.filter(p => p.stock_actual <= 0);
+        const porAgotarse = vendibles.filter(p => p.stock_actual > 0 && p.stock_actual <= p.stock_minimo);
+        // Inversión: insumos + simples (combos no tienen costo real en el shelf)
+        const inversionTotal = productosConCosto
+            .filter(p => (p as any).tipo !== 'combo')
+            .reduce((acc, p) => acc + (p.costo * p.stock_actual), 0);
 
         const mejorMargen = [...productosConCosto]
-            .filter(p => (p as any).tipo !== 'insumo')
+            .filter(p => (p as any).tipo === 'simple')
             .sort((a, b) => (b.precio_venta - b.costo) - (a.precio_venta - a.costo))[0];
 
         return {
@@ -288,41 +303,61 @@ export default function InventarioPage() {
                                             <p className="font-medium">Sin productos aún. Agrega tu primer producto.</p>
                                         </td>
                                     </tr>
-                                ) : productosConCosto.map((prod) => (
+                                ) : productosPaginados.map((prod) => {
+                                    const tipo = (prod as any).tipo as string;
+                                    const esCombo = tipo === 'combo';
+                                    const esInsumo = tipo === 'insumo';
+                                    // Stock cell: combos = púrpura (calculado), insumos = naranja (ingrediente), simples = rojo/verde
+                                    const stockClass = esCombo
+                                        ? 'bg-purple-500/10 text-purple-300'
+                                        : esInsumo
+                                        ? 'bg-vr-orange/10 text-vr-orange'
+                                        : prod.stock_actual <= prod.stock_minimo
+                                        ? 'bg-vr-red/15 text-vr-red'
+                                        : 'bg-vr-green/15 text-vr-green';
+                                    return (
                                     <tr key={prod.id} className="border-b border-navy-3/50 hover:bg-navy-3/30 transition-colors">
                                         <td className="p-4">
-                                            <span className={`px-2 py-1 rounded text-[10px] font-black uppercase ${(prod as any).tipo === 'combo' ? 'bg-purple-500/15 text-purple-400' :
-                                                    (prod as any).tipo === 'insumo' ? 'bg-vr-orange/15 text-vr-orange' : 'bg-gold/15 text-gold'
-                                                }`}>
-                                                {(prod as any).tipo || 'simple'}
+                                            <span className={`px-2 py-1 rounded text-[10px] font-black uppercase ${esCombo ? 'bg-purple-500/15 text-purple-400' : esInsumo ? 'bg-vr-orange/15 text-vr-orange' : 'bg-gold/15 text-gold'}`}>
+                                                {tipo || 'simple'}
                                             </span>
                                         </td>
                                         <td className="p-4 font-bold text-white">{prod.nombre}</td>
-                                        <td className="p-4 font-medium font-mono text-vr-green">{(prod as any).tipo === 'insumo' ? '-' : formatDOP(prod.precio_venta)}</td>
-                                        <td className="p-4 text-vr-gray font-mono">{formatDOP(prod.costo)} {(prod as any).tipo === 'combo' && <span className="text-[10px] italic ml-1">(calc)</span>}</td>
+                                        <td className="p-4 font-medium font-mono text-vr-green">{esInsumo ? '-' : formatDOP(prod.precio_venta)}</td>
+                                        <td className="p-4 text-vr-gray font-mono">{formatDOP(prod.costo)} {esCombo && <span className="text-[10px] italic ml-1">(calc)</span>}</td>
                                         <td className="p-4 font-bold font-mono">
-                                            {(prod as any).tipo === 'insumo' ? '-' : (
+                                            {esInsumo ? '-' : (
                                                 <span className={(prod.precio_venta - prod.costo) > 0 ? 'text-vr-green' : 'text-vr-red'}>
                                                     {prod.precio_venta > 0 ? ((prod.precio_venta - prod.costo) / prod.precio_venta * 100).toFixed(0) : '0'}%
                                                 </span>
                                             )}
                                         </td>
                                         <td className="p-4">
-                                            <span className={`px-2 py-1 rounded-md text-sm font-bold font-mono ${prod.stock_actual <= prod.stock_minimo ? 'bg-vr-red/15 text-vr-red' : 'bg-vr-green/15 text-vr-green'}`}>
-                                                {parseFloat(Number(prod.stock_actual).toFixed(3))} {(prod as any).tipo === 'combo' && <span className="text-[10px] ml-1">Max.</span>}
+                                            <span className={`px-2 py-1 rounded-md text-sm font-bold font-mono ${stockClass}`}>
+                                                {parseFloat(Number(prod.stock_actual).toFixed(3))}
+                                                {esCombo && <span className="text-[10px] ml-1 opacity-60">calc.</span>}
+                                                {esInsumo && <span className="text-[10px] ml-1 opacity-60">ing.</span>}
                                             </span>
                                         </td>
                                         <td className="p-4 text-right space-x-3">
-                                            {(prod as any).tipo !== 'combo' && (
+                                            {!esCombo && (
                                                 <button onClick={() => abrirModalAjuste(prod)} className="text-vr-green hover:text-vr-green/80 text-sm font-bold transition-colors">Ajuste</button>
                                             )}
                                             <button onClick={() => abrirModalEditar(prod)} className="text-gold hover:text-gold-2 text-sm font-bold transition-colors">Editar</button>
                                             <button onClick={() => eliminarProducto(prod.id)} className="text-vr-red hover:text-vr-red/80 text-sm font-bold transition-colors">Eliminar</button>
                                         </td>
                                     </tr>
-                                ))}
+                                    );
+                                })}
                             </tbody>
                         </table>
+                        <Pagination
+                            pagina={pagina}
+                            totalPaginas={totalPaginas}
+                            onCambiar={p => { setPagina(p); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
+                            totalItems={productosConCosto.length}
+                            itemsPorPagina={ITEMS_POR_PAGINA}
+                        />
                     </div>
                 </div>
 
