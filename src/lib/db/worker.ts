@@ -192,6 +192,11 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                         total: venta.total,
                         metodo_pago: venta.metodo_pago,
                         fecha_creacion: venta.fecha_creacion,
+                        // Pagos mixtos
+                        ...(venta.monto_efectivo != null && { monto_efectivo: venta.monto_efectivo }),
+                        ...(venta.monto_transferencia != null && { monto_transferencia: venta.monto_transferencia }),
+                        // Fiado
+                        ...(venta.cliente_id && { cliente_id: venta.cliente_id }),
                     })
                 );
                 if (!error) await db.ventas.update(venta.id, { estado_sincronizacion: 1 });
@@ -344,6 +349,23 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                     })
                 );
                 if (!error) await db.cajas.update(caja.id, { estado_sincronizacion: 1 });
+            }
+
+            // ── 2.H  Devoluciones ────────────────────────────────────────────
+            const devolucionesPendientes = await db.devoluciones.where('estado_sincronizacion').equals(0).toArray();
+            for (const dev of devolucionesPendientes) {
+                const { error } = await withTimeout(() =>
+                    supabase.from('devoluciones').upsert({
+                        id: dev.id,
+                        negocio_id: dev.negocio_id,
+                        venta_id: dev.venta_id,
+                        items_devueltos: dev.items_devueltos,
+                        monto_devuelto: dev.monto_devuelto,
+                        razon: dev.razon,
+                        fecha_creacion: dev.fecha_creacion,
+                    })
+                );
+                if (!error) await db.devoluciones.update(dev.id, { estado_sincronizacion: 1 });
             }
 
             consecutiveErrors = 0;

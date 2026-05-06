@@ -17,7 +17,6 @@ import Pagination from '@/components/ui/Pagination';
 
 export default function InventarioPage() {
     const { negocioId } = useConfigStore();
-    // Raw query to detect loading state (undefined = still loading)
     const productosRaw = useLiveQuery(
         () => negocioId ? db.productos.where('negocio_id').equals(negocioId).toArray() : [],
         [negocioId]
@@ -26,9 +25,6 @@ export default function InventarioPage() {
     const productos = useProductosTenant();
     const composiciones = useComposicionesTenant();
 
-    // ==========================================
-    // CÁLCULO DE COSTO DINÁMICO Y STOCK VIRTUAL
-    // ==========================================
     const productosConCosto = useMemo(() => {
         return productos.map(prod => {
             if ((prod as any).tipo === 'combo') {
@@ -49,8 +45,8 @@ export default function InventarioPage() {
                     }
                 });
 
-                return { 
-                    ...prod, 
+                return {
+                    ...prod,
                     costo: costoCalculado,
                     stock_actual: stockVirtual === Infinity ? 0 : stockVirtual
                 };
@@ -59,12 +55,10 @@ export default function InventarioPage() {
         });
     }, [productos, composiciones]);
 
-    // Estados del Modal y UI
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [productoEditando, setProductoEditando] = useState<ProductoLocal | null>(null);
     const [busquedaInsumo, setBusquedaInsumo] = useState('');
 
-    // Estado del Modal de Ajuste de Stock
     const [isAjusteOpen, setIsAjusteOpen] = useState(false);
     const [productoAjustando, setProductoAjustando] = useState<ProductoLocal | null>(null);
     const [tipoAjuste, setTipoAjuste] = useState<'entrada' | 'merma' | 'conteo'>('entrada');
@@ -82,10 +76,6 @@ export default function InventarioPage() {
         ingredientes: [] as { insumo_id: string, nombre: string, cantidad: number }[]
     });
 
-    // ==========================================
-    // INTELIGENCIA DE NEGOCIO (INSIGHTS)
-    // ==========================================
-    // Paginación
     const ITEMS_POR_PAGINA = 20;
     const [pagina, setPagina] = useState(1);
     const productosPaginados = useMemo(() => {
@@ -97,11 +87,9 @@ export default function InventarioPage() {
     const insights = useMemo(() => {
         if (productosConCosto.length === 0) return null;
 
-        // Solo productos de venta directa (simple) generan alertas de stock
         const vendibles = productosConCosto.filter(p => (p as any).tipo === 'simple');
         const agotados = vendibles.filter(p => p.stock_actual <= 0);
         const porAgotarse = vendibles.filter(p => p.stock_actual > 0 && p.stock_actual <= p.stock_minimo);
-        // Inversión: insumos + simples (combos no tienen costo real en el shelf)
         const inversionTotal = productosConCosto
             .filter(p => (p as any).tipo !== 'combo')
             .reduce((acc, p) => acc + (p.costo * p.stock_actual), 0);
@@ -118,9 +106,6 @@ export default function InventarioPage() {
         };
     }, [productosConCosto]);
 
-    // ==========================================
-    // ACCIONES Y LÓGICA
-    // ==========================================
     const abrirModalNuevo = () => {
         setProductoEditando(null);
         setFormData({ nombre: '', tipo: 'simple', codigo_barras: '', precio_venta: '', costo: '', stock_actual: '', stock_minimo: '', tasa_itbis: '0.18', ingredientes: [] });
@@ -220,7 +205,7 @@ export default function InventarioPage() {
         let nuevoStock: number;
         if (tipoAjuste === 'entrada') nuevoStock = stockActual + cantidad;
         else if (tipoAjuste === 'merma') nuevoStock = Math.max(0, stockActual - cantidad);
-        else nuevoStock = cantidad; // conteo
+        else nuevoStock = cantidad;
 
         await db.productos.update(productoAjustando.id, {
             stock_actual: nuevoStock,
@@ -237,68 +222,68 @@ export default function InventarioPage() {
             <div className="min-h-screen bg-navy flex flex-col">
                 <TopBar />
                 <OfflineBanner />
-                <div className="flex-1 p-8">
+                <div className="flex-1 p-3 sm:p-6 lg:p-8">
                 <div className="max-w-7xl mx-auto">
 
-                    <div className="flex justify-between items-center mb-8">
+                    <div className="flex justify-between items-center mb-4 sm:mb-8">
                         <div>
-                            <h1 className="text-3xl font-display font-extrabold text-white">Inventario</h1>
-                            <p className="text-vr-gray mt-1">Gestión inteligente de productos y recetas</p>
+                            <h1 className="text-2xl sm:text-3xl font-display font-extrabold text-white">Inventario</h1>
+                            <p className="text-vr-gray mt-0.5 text-sm hidden sm:block">Gestión inteligente de productos y recetas</p>
                         </div>
-                        <button onClick={abrirModalNuevo} className="px-6 py-3 bg-gold-gradient text-navy font-extrabold rounded-xl hover:brightness-110 transition-all shadow-md">
-                            + Nuevo Producto
+                        <button onClick={abrirModalNuevo} className="px-4 sm:px-6 py-2.5 sm:py-3 bg-gold-gradient text-navy font-extrabold rounded-xl hover:brightness-110 transition-all shadow-md text-sm sm:text-base">
+                            + Nuevo
                         </button>
                     </div>
 
                     {insights && (
-                        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
-                            <div className={`p-5 rounded-2xl border ${insights.porAgotarse > 0 ? 'border-vr-orange/30 bg-vr-orange/5' : 'border-navy-3 bg-navy-2'}`}>
-                                <p className="text-xs font-bold text-vr-gray uppercase tracking-wider">Alertas de Stock</p>
-                                <h3 className="text-2xl font-black font-mono mt-1 text-white">
-                                    {insights.porAgotarse} <span className="text-sm font-normal text-vr-gray">por agotarse</span>
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4 mb-4 sm:mb-8">
+                            <div className={`p-3 sm:p-5 rounded-2xl border ${insights.porAgotarse > 0 ? 'border-vr-orange/30 bg-vr-orange/5' : 'border-navy-3 bg-navy-2'}`}>
+                                <p className="text-xs font-bold text-vr-gray uppercase tracking-wider leading-tight">Alertas Stock</p>
+                                <h3 className="text-xl sm:text-2xl font-black font-mono mt-1 text-white">
+                                    {insights.porAgotarse} <span className="text-xs font-normal text-vr-gray">por agotarse</span>
                                 </h3>
                             </div>
 
-                            <div className="p-5 rounded-2xl border border-navy-3 bg-navy-2">
-                                <p className="text-xs font-bold text-vr-gray uppercase tracking-wider">Capital en Estante</p>
-                                <h3 className="text-2xl font-black font-mono mt-1 text-gold">{formatDOP(insights.inversionTotal)}</h3>
+                            <div className="p-3 sm:p-5 rounded-2xl border border-navy-3 bg-navy-2">
+                                <p className="text-xs font-bold text-vr-gray uppercase tracking-wider leading-tight">Capital Estante</p>
+                                <h3 className="text-lg sm:text-2xl font-black font-mono mt-1 text-gold truncate">{formatDOP(insights.inversionTotal)}</h3>
                             </div>
 
-                            <div className="p-5 rounded-2xl border border-navy-3 bg-navy-2">
-                                <p className="text-xs font-bold text-vr-gray uppercase tracking-wider">Mayor Ganancia</p>
-                                <h3 className="text-lg font-black mt-1 text-white truncate">{insights.mejorMargen?.nombre || 'N/A'}</h3>
-                                <p className="text-xs text-vr-green mt-1 font-bold font-mono">+{formatDOP(insights.mejorMargen ? insights.mejorMargen.precio_venta - insights.mejorMargen.costo : 0)} / ud</p>
+                            <div className="p-3 sm:p-5 rounded-2xl border border-navy-3 bg-navy-2">
+                                <p className="text-xs font-bold text-vr-gray uppercase tracking-wider leading-tight">Mayor Ganancia</p>
+                                <h3 className="text-base sm:text-lg font-black mt-1 text-white truncate">{insights.mejorMargen?.nombre || 'N/A'}</h3>
+                                <p className="text-xs text-vr-green mt-0.5 font-bold font-mono">+{formatDOP(insights.mejorMargen ? insights.mejorMargen.precio_venta - insights.mejorMargen.costo : 0)}</p>
                             </div>
 
-                            <div className="p-5 rounded-2xl border border-gold/15 bg-gold/5">
-                                <p className="text-xs font-bold text-gold uppercase tracking-wider italic">Consejo VentaRD</p>
-                                <p className="text-sm mt-2 leading-tight text-vr-gray">
-                                    {insights.agotados > 0 ? `Tienes ${insights.agotados} productos en cero. ¡Estás perdiendo ventas!` : "Tu inventario está sano. ¡Buen trabajo!"}
+                            <div className="p-3 sm:p-5 rounded-2xl border border-gold/15 bg-gold/5">
+                                <p className="text-xs font-bold text-gold uppercase tracking-wider italic leading-tight">Consejo</p>
+                                <p className="text-xs sm:text-sm mt-1 sm:mt-2 leading-tight text-vr-gray">
+                                    {insights.agotados > 0 ? `${insights.agotados} productos en cero. ¡Estás perdiendo ventas!` : "Tu inventario está sano. ¡Buen trabajo!"}
                                 </p>
                             </div>
                         </div>
                     )}
 
-                    {/* TABLA ORIGINAL CON ACCIONES RESTAURADAS */}
+                    {/* TABLE */}
                     <div className="bg-navy-2 rounded-2xl border border-navy-3 overflow-hidden">
+                        <div className="overflow-x-auto">
                         <table className="w-full text-left border-collapse">
                             <thead>
                                 <tr className="border-b border-navy-3 text-vr-gray text-xs uppercase tracking-wider">
-                                    <th className="p-4 font-semibold">Tipo</th>
-                                    <th className="p-4 font-semibold">Producto</th>
-                                    <th className="p-4 font-semibold">Precio</th>
-                                    <th className="p-4 font-semibold">Costo</th>
-                                    <th className="p-4 font-semibold">Margen</th>
-                                    <th className="p-4 font-semibold">Stock</th>
-                                    <th className="p-4 font-semibold text-right">Acciones</th>
+                                    <th className="p-3 sm:p-4 font-semibold">Producto</th>
+                                    <th className="p-3 sm:p-4 font-semibold hidden sm:table-cell">Precio</th>
+                                    <th className="p-3 sm:p-4 font-semibold hidden md:table-cell">Costo</th>
+                                    <th className="p-3 sm:p-4 font-semibold hidden md:table-cell">Margen</th>
+                                    <th className="p-3 sm:p-4 font-semibold">Stock</th>
+                                    <th className="p-3 sm:p-4 font-semibold text-right">Acciones</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 {isLoading ? (
-                                    <SkeletonTable rows={6} cols={7} />
+                                    <SkeletonTable rows={6} cols={6} />
                                 ) : productosConCosto.length === 0 ? (
                                     <tr>
-                                        <td colSpan={7} className="py-20 text-center text-vr-gray">
+                                        <td colSpan={6} className="py-20 text-center text-vr-gray">
                                             <span className="text-4xl block mb-3">📦</span>
                                             <p className="font-medium">Sin productos aún. Agrega tu primer producto.</p>
                                         </td>
@@ -307,7 +292,6 @@ export default function InventarioPage() {
                                     const tipo = (prod as any).tipo as string;
                                     const esCombo = tipo === 'combo';
                                     const esInsumo = tipo === 'insumo';
-                                    // Stock cell: combos = púrpura (calculado), insumos = naranja (ingrediente), simples = rojo/verde
                                     const stockClass = esCombo
                                         ? 'bg-purple-500/10 text-purple-300'
                                         : esInsumo
@@ -317,40 +301,48 @@ export default function InventarioPage() {
                                         : 'bg-vr-green/15 text-vr-green';
                                     return (
                                     <tr key={prod.id} className="border-b border-navy-3/50 hover:bg-navy-3/30 transition-colors">
-                                        <td className="p-4">
-                                            <span className={`px-2 py-1 rounded text-[10px] font-black uppercase ${esCombo ? 'bg-purple-500/15 text-purple-400' : esInsumo ? 'bg-vr-orange/15 text-vr-orange' : 'bg-gold/15 text-gold'}`}>
+                                        <td className="p-3 sm:p-4">
+                                            <span className="font-bold text-white text-sm block">{prod.nombre}</span>
+                                            {/* Type badge inline on mobile */}
+                                            <span className={`mt-1 inline-block px-1.5 py-0.5 rounded text-[10px] font-black uppercase ${esCombo ? 'bg-purple-500/15 text-purple-400' : esInsumo ? 'bg-vr-orange/15 text-vr-orange' : 'bg-gold/15 text-gold'}`}>
                                                 {tipo || 'simple'}
                                             </span>
+                                            {/* Price on mobile */}
+                                            <span className="sm:hidden ml-2 text-xs font-mono text-vr-green">
+                                                {esInsumo ? '' : formatDOP(prod.precio_venta)}
+                                            </span>
                                         </td>
-                                        <td className="p-4 font-bold text-white">{prod.nombre}</td>
-                                        <td className="p-4 font-medium font-mono text-vr-green">{esInsumo ? '-' : formatDOP(prod.precio_venta)}</td>
-                                        <td className="p-4 text-vr-gray font-mono">{formatDOP(prod.costo)} {esCombo && <span className="text-[10px] italic ml-1">(calc)</span>}</td>
-                                        <td className="p-4 font-bold font-mono">
+                                        <td className="p-3 sm:p-4 font-medium font-mono text-vr-green text-sm hidden sm:table-cell">{esInsumo ? '-' : formatDOP(prod.precio_venta)}</td>
+                                        <td className="p-3 sm:p-4 text-vr-gray font-mono text-sm hidden md:table-cell">{formatDOP(prod.costo)} {esCombo && <span className="text-[10px] italic ml-1">(calc)</span>}</td>
+                                        <td className="p-3 sm:p-4 font-bold font-mono text-sm hidden md:table-cell">
                                             {esInsumo ? '-' : (
                                                 <span className={(prod.precio_venta - prod.costo) > 0 ? 'text-vr-green' : 'text-vr-red'}>
                                                     {prod.precio_venta > 0 ? ((prod.precio_venta - prod.costo) / prod.precio_venta * 100).toFixed(0) : '0'}%
                                                 </span>
                                             )}
                                         </td>
-                                        <td className="p-4">
+                                        <td className="p-3 sm:p-4">
                                             <span className={`px-2 py-1 rounded-md text-sm font-bold font-mono ${stockClass}`}>
                                                 {parseFloat(Number(prod.stock_actual).toFixed(3))}
                                                 {esCombo && <span className="text-[10px] ml-1 opacity-60">calc.</span>}
                                                 {esInsumo && <span className="text-[10px] ml-1 opacity-60">ing.</span>}
                                             </span>
                                         </td>
-                                        <td className="p-4 text-right space-x-3">
-                                            {!esCombo && (
-                                                <button onClick={() => abrirModalAjuste(prod)} className="text-vr-green hover:text-vr-green/80 text-sm font-bold transition-colors">Ajuste</button>
-                                            )}
-                                            <button onClick={() => abrirModalEditar(prod)} className="text-gold hover:text-gold-2 text-sm font-bold transition-colors">Editar</button>
-                                            <button onClick={() => eliminarProducto(prod.id)} className="text-vr-red hover:text-vr-red/80 text-sm font-bold transition-colors">Eliminar</button>
+                                        <td className="p-3 sm:p-4 text-right">
+                                            <div className="flex items-center justify-end gap-2 sm:gap-3">
+                                                {!esCombo && (
+                                                    <button onClick={() => abrirModalAjuste(prod)} className="text-vr-green hover:text-vr-green/80 text-xs sm:text-sm font-bold transition-colors whitespace-nowrap">Ajuste</button>
+                                                )}
+                                                <button onClick={() => abrirModalEditar(prod)} className="text-gold hover:text-gold-2 text-xs sm:text-sm font-bold transition-colors">Editar</button>
+                                                <button onClick={() => eliminarProducto(prod.id)} className="text-vr-red hover:text-vr-red/80 text-xs sm:text-sm font-bold transition-colors hidden sm:inline">Eliminar</button>
+                                            </div>
                                         </td>
                                     </tr>
                                     );
                                 })}
                             </tbody>
                         </table>
+                        </div>
                         <Pagination
                             pagina={pagina}
                             totalPaginas={totalPaginas}
@@ -361,19 +353,18 @@ export default function InventarioPage() {
                     </div>
                 </div>
 
-                {/* MODAL AJUSTE DE STOCK */}
+                {/* MODAL AJUSTE DE STOCK — full screen on mobile */}
                 {isAjusteOpen && productoAjustando && (
-                    <div className="fixed inset-0 bg-black/70 backdrop-blur-md z-50 flex items-center justify-center p-4 animate-fade-in">
-                        <div className="bg-navy-2 w-full max-w-sm rounded-2xl border border-navy-3 shadow-2xl overflow-hidden animate-scale-in">
-                            <div className="p-6 border-b border-navy-3 flex justify-between items-center">
+                    <div className="fixed inset-0 bg-black/70 backdrop-blur-md z-50 flex items-end sm:items-center justify-center sm:p-4 animate-fade-in">
+                        <div className="bg-navy-2 w-full sm:max-w-sm rounded-t-2xl sm:rounded-2xl border border-navy-3 shadow-2xl overflow-hidden animate-scale-in">
+                            <div className="p-4 sm:p-6 border-b border-navy-3 flex justify-between items-center">
                                 <div>
                                     <h2 className="text-xl font-display font-bold text-white">Ajuste de Stock</h2>
                                     <p className="text-sm text-vr-gray mt-0.5 truncate">{productoAjustando.nombre}</p>
                                 </div>
                                 <button onClick={() => setIsAjusteOpen(false)} className="text-vr-gray hover:text-white font-bold text-xl transition-colors">✕</button>
                             </div>
-                            <form onSubmit={guardarAjuste} className="p-6 space-y-5">
-                                {/* Tipo de ajuste */}
+                            <form onSubmit={guardarAjuste} className="p-4 sm:p-6 space-y-5">
                                 <div>
                                     <label className="block text-sm font-bold text-vr-gray mb-2">Tipo de Ajuste</label>
                                     <div className="grid grid-cols-3 gap-2">
@@ -384,25 +375,23 @@ export default function InventarioPage() {
                                         ] as const).map(({ key, label, color }) => (
                                             <button key={key} type="button"
                                                 onClick={() => setTipoAjuste(key)}
-                                                className={`py-2 rounded-lg border font-bold text-sm transition-all ${tipoAjuste === key ? color : 'border-navy-3 text-vr-gray hover:text-white'}`}>
+                                                className={`py-2.5 rounded-lg border font-bold text-sm transition-all ${tipoAjuste === key ? color : 'border-navy-3 text-vr-gray hover:text-white'}`}>
                                                 {label}
                                             </button>
                                         ))}
                                     </div>
                                     <p className="text-xs text-vr-gray mt-2">
-                                        {tipoAjuste === 'entrada' && 'Suma unidades al stock actual (mercancía recibida).'}
-                                        {tipoAjuste === 'merma' && 'Resta unidades al stock actual (pérdida, deterioro).'}
-                                        {tipoAjuste === 'conteo' && 'Establece el stock exacto según conteo físico.'}
+                                        {tipoAjuste === 'entrada' && 'Suma unidades al stock actual.'}
+                                        {tipoAjuste === 'merma' && 'Resta unidades al stock actual.'}
+                                        {tipoAjuste === 'conteo' && 'Establece el stock según conteo físico.'}
                                     </p>
                                 </div>
 
-                                {/* Stock actual (referencia) */}
                                 <div className="flex justify-between items-center bg-navy-3 rounded-xl px-4 py-3">
                                     <span className="text-sm text-vr-gray font-bold">Stock actual</span>
                                     <span className="font-mono font-black text-white text-lg">{parseFloat(Number(productoAjustando.stock_actual).toFixed(3))}</span>
                                 </div>
 
-                                {/* Cantidad */}
                                 <div>
                                     <label className="block text-sm font-bold text-vr-gray mb-1.5">
                                         {tipoAjuste === 'conteo' ? 'Nuevo stock físico' : 'Cantidad'}
@@ -417,7 +406,6 @@ export default function InventarioPage() {
                                     />
                                 </div>
 
-                                {/* Vista previa del resultado */}
                                 {cantidadAjuste !== '' && !isNaN(parseFloat(cantidadAjuste)) && (
                                     <div className="flex justify-between items-center bg-navy rounded-xl px-4 py-3 border border-navy-3">
                                         <span className="text-sm text-vr-gray font-bold">Resultado</span>
@@ -429,32 +417,31 @@ export default function InventarioPage() {
                                     </div>
                                 )}
 
-                                <div className="pt-2 flex justify-end gap-3">
-                                    <button type="button" onClick={() => setIsAjusteOpen(false)} className="px-6 py-3 font-bold text-vr-gray hover:text-white transition-colors">Cancelar</button>
-                                    <button type="submit" className="px-6 py-3 bg-gold-gradient text-navy font-extrabold rounded-xl hover:brightness-110 transition-all">Aplicar</button>
+                                <div className="flex gap-3">
+                                    <button type="button" onClick={() => setIsAjusteOpen(false)} className="flex-1 py-3 font-bold text-vr-gray hover:text-white border border-navy-3 rounded-xl transition-colors">Cancelar</button>
+                                    <button type="submit" className="flex-1 py-3 bg-gold-gradient text-navy font-extrabold rounded-xl hover:brightness-110 transition-all">Aplicar</button>
                                 </div>
                             </form>
                         </div>
                     </div>
                 )}
 
-                {/* MODAL ORIGINAL CON SOPORTE DE RECETAS */}
+                {/* MODAL PRODUCTO — full screen on mobile */}
                 {isModalOpen && (
-                    <div className="fixed inset-0 bg-black/70 backdrop-blur-md z-50 flex items-center justify-center p-4 animate-fade-in">
-                        <div className="bg-navy-2 w-full max-w-lg rounded-2xl border border-navy-3 shadow-2xl overflow-hidden max-h-[90vh] flex flex-col animate-scale-in">
-                            <div className="p-6 border-b border-navy-3 flex justify-between items-center">
+                    <div className="fixed inset-0 bg-black/70 backdrop-blur-md z-50 flex items-end sm:items-center justify-center sm:p-4 animate-fade-in">
+                        <div className="bg-navy-2 w-full sm:max-w-lg rounded-t-2xl sm:rounded-2xl border border-navy-3 shadow-2xl overflow-hidden max-h-[95vh] sm:max-h-[90vh] flex flex-col animate-scale-in">
+                            <div className="p-4 sm:p-6 border-b border-navy-3 flex justify-between items-center">
                                 <h2 className="text-xl font-display font-bold text-white">{productoEditando ? 'Editar Producto' : 'Nuevo Producto'}</h2>
                                 <button onClick={() => setIsModalOpen(false)} className="text-vr-gray hover:text-white font-bold text-xl transition-colors">✕</button>
                             </div>
 
-                            <form onSubmit={guardarProducto} className="p-6 space-y-4 overflow-y-auto">
-                                {/* Selector de Tipo */}
-                                <div className="mb-4">
+                            <form onSubmit={guardarProducto} className="p-4 sm:p-6 space-y-4 overflow-y-auto">
+                                <div>
                                     <label className="block text-sm font-bold text-vr-gray mb-2">Tipo de Producto</label>
                                     <div className="grid grid-cols-3 gap-2">
                                         {['simple', 'insumo', 'combo'].map((t) => (
                                             <button key={t} type="button" onClick={() => setFormData({ ...formData, tipo: t as any })}
-                                                className={`py-2 rounded-lg border font-bold capitalize transition-all ${formData.tipo === t ? 'border-gold bg-gold/15 text-gold' : 'border-navy-3 text-vr-gray hover:text-white'}`}>
+                                                className={`py-2.5 rounded-lg border font-bold capitalize transition-all text-sm ${formData.tipo === t ? 'border-gold bg-gold/15 text-gold' : 'border-navy-3 text-vr-gray hover:text-white'}`}>
                                                 {t === 'simple' ? 'Venta' : t}
                                             </button>
                                         ))}
@@ -466,7 +453,7 @@ export default function InventarioPage() {
                                     <input required type="text" className="w-full bg-navy-3 border border-navy-3 rounded-xl p-3 text-white focus:border-gold outline-none transition-all" value={formData.nombre} onChange={e => setFormData({ ...formData, nombre: e.target.value })} />
                                 </div>
 
-                                <div className="grid grid-cols-2 gap-4">
+                                <div className="grid grid-cols-2 gap-3">
                                     {formData.tipo !== 'insumo' ? (
                                         <div>
                                             <label className="block text-sm font-bold text-vr-gray mb-1.5">Precio Venta (RD$)</label>
@@ -474,8 +461,8 @@ export default function InventarioPage() {
                                         </div>
                                     ) : (
                                         <div>
-                                            <label className="block text-sm font-bold text-vr-gray mb-1.5">Precio Venta (RD$)</label>
-                                            <div className="w-full bg-navy-3/50 text-vr-gray font-bold rounded-xl p-3">No aplica</div>
+                                            <label className="block text-sm font-bold text-vr-gray mb-1.5">Precio Venta</label>
+                                            <div className="w-full bg-navy-3/50 text-vr-gray font-bold rounded-xl p-3 text-sm">No aplica</div>
                                         </div>
                                     )}
                                     {formData.tipo !== 'combo' ? (
@@ -496,26 +483,26 @@ export default function InventarioPage() {
                                     )}
                                 </div>
 
-                                <div className="grid grid-cols-3 gap-4">
+                                <div className="grid grid-cols-3 gap-3">
                                     {formData.tipo !== 'combo' ? (
                                         <div>
-                                            <label className="block text-sm font-bold text-vr-gray mb-1.5">Stock Actual</label>
+                                            <label className="block text-xs font-bold text-vr-gray mb-1.5">Stock Actual</label>
                                             <input type="number" step="any" className="w-full bg-navy-3 border border-navy-3 rounded-xl p-3 text-white font-mono focus:border-gold outline-none transition-all" value={formData.stock_actual} onChange={e => setFormData({ ...formData, stock_actual: e.target.value })} />
                                         </div>
                                     ) : (
                                         <div>
-                                            <label className="block text-sm font-bold text-vr-gray mb-1.5">Stock Max. Posible</label>
+                                            <label className="block text-xs font-bold text-vr-gray mb-1.5">Stock Posible</label>
                                             <div className="w-full bg-navy-3/50 border border-navy-3 text-vr-gray text-sm font-bold rounded-xl p-3 truncate">
-                                                {parseFloat(Number(formData.stock_actual).toFixed(3))} <span className="font-normal italic">(Calculado)</span>
+                                                {parseFloat(Number(formData.stock_actual).toFixed(3))} <span className="font-normal italic text-xs">(calc)</span>
                                             </div>
                                         </div>
                                     )}
                                     <div>
-                                        <label className="block text-sm font-bold text-vr-gray mb-1.5">Mínimo</label>
+                                        <label className="block text-xs font-bold text-vr-gray mb-1.5">Mínimo</label>
                                         <input type="number" step="any" className="w-full bg-navy-3 border border-navy-3 rounded-xl p-3 text-white font-mono focus:border-gold outline-none transition-all" value={formData.stock_minimo} onChange={e => setFormData({ ...formData, stock_minimo: e.target.value })} />
                                     </div>
                                     <div>
-                                        <label className="block text-sm font-bold text-vr-gray mb-1.5">ITBIS</label>
+                                        <label className="block text-xs font-bold text-vr-gray mb-1.5">ITBIS</label>
                                         <select className="w-full bg-navy-3 border border-navy-3 rounded-xl p-3 text-white focus:border-gold outline-none transition-all" value={formData.tasa_itbis} onChange={e => setFormData({ ...formData, tasa_itbis: e.target.value })}>
                                             <option value="0">0%</option>
                                             <option value="0.18">18%</option>
@@ -525,12 +512,12 @@ export default function InventarioPage() {
 
                                 {/* ARMADOR DE COMBOS */}
                                 {formData.tipo === 'combo' && (
-                                    <div className="mt-4 p-4 bg-purple-500/10 rounded-xl border border-purple-500/20">
+                                    <div className="p-4 bg-purple-500/10 rounded-xl border border-purple-500/20">
                                         <h3 className="text-sm font-bold text-purple-400 mb-3 uppercase tracking-wider italic">Composición del Combo</h3>
                                         <div className="relative mb-3">
-                                            <input type="text" placeholder="Añadir ingrediente..." className="w-full p-2 text-sm bg-navy-3 border border-navy-3 rounded-lg outline-none text-white focus:border-purple-400 transition-all" value={busquedaInsumo} onChange={(e) => setBusquedaInsumo(e.target.value)} />
+                                            <input type="text" placeholder="Añadir ingrediente..." className="w-full p-2.5 text-sm bg-navy-3 border border-navy-3 rounded-lg outline-none text-white focus:border-purple-400 transition-all" value={busquedaInsumo} onChange={(e) => setBusquedaInsumo(e.target.value)} />
                                             {busquedaInsumo && (
-                                                <div className="absolute z-50 w-full bg-navy shadow-xl rounded-lg mt-1 border border-navy-3">
+                                                <div className="absolute z-50 w-full bg-navy shadow-xl rounded-lg mt-1 border border-navy-3 max-h-48 overflow-y-auto">
                                                     {insumosDisponibles.filter(i => i.nombre.toLowerCase().includes(busquedaInsumo.toLowerCase())).map(ins => (
                                                         <button key={ins.id} type="button" onClick={() => {
                                                             if (!formData.ingredientes.find(x => x.insumo_id === ins.id)) {
@@ -545,14 +532,14 @@ export default function InventarioPage() {
                                         <div className="space-y-2">
                                             {formData.ingredientes.map((ing, index) => (
                                                 <div key={ing.insumo_id} className="flex items-center justify-between bg-navy-3 p-2 rounded-lg text-xs">
-                                                    <span className="font-bold text-white">{ing.nombre}</span>
-                                                    <div className="flex items-center gap-2">
+                                                    <span className="font-bold text-white truncate flex-1 mr-2">{ing.nombre}</span>
+                                                    <div className="flex items-center gap-2 shrink-0">
                                                         <input type="number" step="0.01" className="w-16 bg-transparent border-b border-purple-400 text-center outline-none text-white font-mono" value={ing.cantidad} onChange={e => {
                                                             const newIngs = [...formData.ingredientes];
                                                             newIngs[index].cantidad = parseFloat(e.target.value);
                                                             setFormData({ ...formData, ingredientes: newIngs });
                                                         }} />
-                                                        <button type="button" onClick={() => setFormData({ ...formData, ingredientes: formData.ingredientes.filter(i => i.insumo_id !== ing.insumo_id) })} className="text-vr-red font-bold">✕</button>
+                                                        <button type="button" onClick={() => setFormData({ ...formData, ingredientes: formData.ingredientes.filter(i => i.insumo_id !== ing.insumo_id) })} className="text-vr-red font-bold text-base">✕</button>
                                                     </div>
                                                 </div>
                                             ))}
@@ -560,9 +547,9 @@ export default function InventarioPage() {
                                     </div>
                                 )}
 
-                                <div className="pt-4 border-t border-navy-3 flex justify-end gap-3">
-                                    <button type="button" onClick={() => setIsModalOpen(false)} className="px-6 py-3 font-bold text-vr-gray hover:text-white transition-colors">Cancelar</button>
-                                    <button type="submit" className="px-6 py-3 bg-gold-gradient text-navy font-extrabold rounded-xl hover:brightness-110 transition-all">Guardar</button>
+                                <div className="pt-4 border-t border-navy-3 flex gap-3">
+                                    <button type="button" onClick={() => setIsModalOpen(false)} className="flex-1 py-3 font-bold text-vr-gray hover:text-white border border-navy-3 rounded-xl transition-colors">Cancelar</button>
+                                    <button type="submit" className="flex-1 py-3 bg-gold-gradient text-navy font-extrabold rounded-xl hover:brightness-110 transition-all">Guardar</button>
                                 </div>
                             </form>
                         </div>
@@ -572,4 +559,4 @@ export default function InventarioPage() {
         </div>
         </PinGuard>
     );
-}
+}

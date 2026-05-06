@@ -10,6 +10,10 @@ import {
 import TopBar from '@/components/shared/TopBar';
 import OfflineBanner from '@/components/shared/OfflineBanner';
 import Link from 'next/link';
+import { SkeletonKPIGrid } from '@/components/ui/Skeleton';
+import { useLiveQuery } from 'dexie-react-hooks';
+import { db } from '@/lib/db/dexie';
+import { useConfigStore } from '@/store/useConfigStore';
 import {
     BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
     PieChart, Pie, Cell, Legend
@@ -42,7 +46,15 @@ function getRango(periodo: Periodo): { desde: number; hasta: number } {
 }
 
 export default function DashboardPage() {
+    const { negocioId } = useConfigStore();
     const [periodo, setPeriodo] = useState<Periodo>('hoy');
+
+    // Detect loading state — undefined = still querying IndexedDB
+    const ventasRaw = useLiveQuery(
+        () => negocioId ? db.ventas.where('negocio_id').equals(negocioId).limit(1).toArray() : [],
+        [negocioId]
+    );
+    const isLoading = ventasRaw === undefined;
     // Memoize so desde/hasta don't change on every render (useLiveQuery uses them as deps)
     const { desde, hasta } = useMemo(() => getRango(periodo), [periodo]);
 
@@ -170,6 +182,9 @@ export default function DashboardPage() {
                     </header>
 
                     {/* KPI Cards */}
+                    {isLoading ? (
+                        <div className="mb-6"><SkeletonKPIGrid /></div>
+                    ) : (
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
                         <div className="bg-navy-2 p-5 rounded-2xl border border-navy-3 relative overflow-hidden glow-gold">
                             <div className="relative z-10">
@@ -197,6 +212,7 @@ export default function DashboardPage() {
                             <p className="mt-1 text-vr-gray text-xs">{clientes.length} clientes</p>
                         </div>
                     </div>
+                    )}
 
                     {/* Charts Row */}
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">

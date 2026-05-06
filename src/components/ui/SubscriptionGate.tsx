@@ -3,7 +3,7 @@
 import { useConfigStore } from '@/store/useConfigStore';
 import { MessageCircle, ShoppingCart } from 'lucide-react';
 
-const WHATSAPP_NUMBER = '18091234567'; // TODO: Reemplazar con el número real de VentaRD
+const WHATSAPP_NUMBER = '18294515303';
 const WHATSAPP_MSG = encodeURIComponent('Hola, quiero activar mi cuenta de VentaRD');
 
 export default function SubscriptionGate({ children }: { children: React.ReactNode }) {

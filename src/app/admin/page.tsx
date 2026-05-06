@@ -202,55 +202,55 @@ export default function AdminDashboard() {
             <div className="min-h-screen bg-navy flex flex-col">
                 <TopBar />
                 <OfflineBanner />
-                <div className="flex-1 p-8">
+                <div className="flex-1 p-4 sm:p-8">
                 <div className="max-w-6xl mx-auto">
-                <div className="flex justify-between items-center mb-8">
+                <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 mb-6 sm:mb-8">
                     <div>
-                        <h1 className="text-3xl font-display font-extrabold text-white">Panel Administrativo</h1>
-                        <p className="text-vr-gray mt-1">Dueño: {user?.email}</p>
+                        <h1 className="text-2xl sm:text-3xl font-display font-extrabold text-white">Panel Administrativo</h1>
+                        <p className="text-vr-gray mt-1 text-sm truncate max-w-xs">{user?.email}</p>
                     </div>
-                    <div className="flex gap-3">
-                        <Link href="/select-branch" className="px-5 py-3 bg-navy-2 border border-navy-3 text-vr-gray font-bold rounded-xl hover:text-white hover:border-navy-4 transition-all">
-                            Ir al POS Físico
+                    <div className="flex flex-wrap gap-2">
+                        <Link href="/select-branch" className="px-4 py-2.5 bg-navy-2 border border-navy-3 text-vr-gray font-bold rounded-xl hover:text-white hover:border-navy-4 transition-all text-sm">
+                            Ir al POS
                         </Link>
-                        <button onClick={cerrarSesion} className="px-5 py-3 bg-navy-3 border border-navy-4 text-white font-bold rounded-xl hover:bg-navy-4 transition-all">
+                        <button onClick={cerrarSesion} className="px-4 py-2.5 bg-navy-3 border border-navy-4 text-white font-bold rounded-xl hover:bg-navy-4 transition-all text-sm">
                             Cerrar Sesión
                         </button>
-                        <button onClick={desvincularDispositivo} className="px-5 py-3 bg-vr-red/10 border border-vr-red/20 text-vr-red font-bold rounded-xl hover:bg-vr-red/20 transition-all flex items-center gap-2">
-                            <span>⚠️</span> Desvincular Dispositivo
+                        <button onClick={desvincularDispositivo} className="px-4 py-2.5 bg-vr-red/10 border border-vr-red/20 text-vr-red font-bold rounded-xl hover:bg-vr-red/20 transition-all flex items-center gap-2 text-sm">
+                            <span>⚠️</span> <span className="hidden sm:inline">Desvincular</span>
                         </button>
                     </div>
                 </div>
 
                 {/* Banner de Rescate Local */}
-                <div className="mb-8 bg-gold/5 border border-gold/15 rounded-2xl p-4 flex justify-between items-center">
+                <div className="mb-6 sm:mb-8 bg-gold/5 border border-gold/15 rounded-2xl p-4 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
                     <div>
-                        <h3 className="text-gold font-bold">¿Faltan ventas de antes de limpiar la base de datos?</h3>
-                        <p className="text-sm text-vr-gray">Presiona aquí para enlazar tus ventas locales a esta nueva cuenta y resubirlas a la nube.</p>
+                        <h3 className="text-gold font-bold text-sm sm:text-base">¿Faltan ventas de antes de limpiar la base de datos?</h3>
+                        <p className="text-xs sm:text-sm text-vr-gray">Presiona aquí para enlazar tus ventas locales y resubirlas a la nube.</p>
                     </div>
-                    <button onClick={repararBaseDatosLocal} className="px-4 py-2 bg-gold-gradient text-navy font-bold rounded-lg hover:brightness-110 transition-all">
+                    <button onClick={repararBaseDatosLocal} className="px-4 py-2 bg-gold-gradient text-navy font-bold rounded-lg hover:brightness-110 transition-all text-sm shrink-0">
                         Forzar Resincronización
                     </button>
                 </div>
 
                 {/* Métricas Globales */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-                    <div className="bg-navy-2 border border-navy-3 p-6 rounded-2xl glow-gold">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 sm:gap-6 mb-6 sm:mb-8">
+                    <div className="bg-navy-2 border border-navy-3 p-4 sm:p-6 rounded-2xl glow-gold">
                         <p className="text-xs font-bold text-vr-gray uppercase tracking-wider">Ingresos Globales</p>
-                        <h3 className="text-4xl font-black font-mono mt-2 text-gold">{formatDOP(totalIngresos)}</h3>
+                        <h3 className="text-2xl sm:text-4xl font-black font-mono mt-2 text-gold truncate">{formatDOP(totalIngresos)}</h3>
                     </div>
-                    <div className="bg-navy-2 border border-navy-3 p-6 rounded-2xl">
+                    <div className="bg-navy-2 border border-navy-3 p-4 sm:p-6 rounded-2xl">
                         <p className="text-xs font-bold text-vr-gray uppercase tracking-wider">Total Ventas</p>
-                        <h3 className="text-4xl font-black font-mono mt-2 text-white">{ventas.length}</h3>
+                        <h3 className="text-2xl sm:text-4xl font-black font-mono mt-2 text-white">{ventas.length}</h3>
                     </div>
-                    <div className="bg-navy-2 border border-navy-3 p-6 rounded-2xl">
+                    <div className="bg-navy-2 border border-navy-3 p-4 sm:p-6 rounded-2xl">
                         <p className="text-xs font-bold text-vr-gray uppercase tracking-wider">Sucursales Activas</p>
-                        <h3 className="text-4xl font-black font-mono mt-2 text-white">{sucursales.length}</h3>
+                        <h3 className="text-2xl sm:text-4xl font-black font-mono mt-2 text-white">{sucursales.length}</h3>
                     </div>
                 </div>
 
                 {/* SÚPER DASHBOARD DE INTELIGENCIA */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6 mb-6 sm:mb-8">
                     {/* Top 5 Vendidos */}
                     <div className="bg-navy-2 rounded-2xl border border-navy-3 p-6">
                         <h2 className="text-lg font-display font-bold text-white mb-4 flex items-center gap-2">🔥 Top 5 Más Vendidos</h2>
@@ -325,7 +325,7 @@ export default function AdminDashboard() {
 
                 {/* Gestión de Sucursales */}
                 <div className="bg-navy-2 rounded-2xl border border-navy-3 overflow-hidden">
-                    <div className="p-6 border-b border-navy-3 flex justify-between items-center">
+                    <div className="p-4 sm:p-6 border-b border-navy-3 flex justify-between items-center">
                         <h2 className="text-lg font-display font-bold text-white">Mis Sucursales</h2>
                         <button 
                             onClick={() => setIsModalOpen(true)} 
@@ -336,12 +336,13 @@ export default function AdminDashboard() {
                             + Nueva Sucursal
                         </button>
                     </div>
+                    <div className="overflow-x-auto">
                     <table className="w-full text-left border-collapse">
                         <thead>
                             <tr className="border-b border-navy-3 text-vr-gray text-xs uppercase tracking-wider">
-                                <th className="p-4 font-semibold">Nombre</th>
-                                <th className="p-4 font-semibold">Dirección</th>
-                                <th className="p-4 font-semibold text-right">Ingresos Aportados</th>
+                                <th className="p-3 sm:p-4 font-semibold">Nombre</th>
+                                <th className="p-3 sm:p-4 font-semibold hidden sm:table-cell">Dirección</th>
+                                <th className="p-3 sm:p-4 font-semibold text-right">Ingresos</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -353,36 +354,40 @@ export default function AdminDashboard() {
                                     const aportado = ventasSucursal.reduce((acc, v) => acc + v.total, 0);
                                     return (
                                         <tr key={suc.id} className="border-t border-navy-3/50 hover:bg-navy-3/30 transition-colors">
-                                            <td className="p-4 font-bold text-white">{suc.nombre}</td>
-                                            <td className="p-4 text-vr-gray">{suc.direccion || '-'}</td>
-                                            <td className="p-4 text-right font-black font-mono text-vr-green">{formatDOP(aportado)}</td>
+                                            <td className="p-3 sm:p-4">
+                                                <span className="font-bold text-white block">{suc.nombre}</span>
+                                                <span className="sm:hidden text-xs text-vr-gray">{suc.direccion || '-'}</span>
+                                            </td>
+                                            <td className="p-3 sm:p-4 text-vr-gray hidden sm:table-cell">{suc.direccion || '-'}</td>
+                                            <td className="p-3 sm:p-4 text-right font-black font-mono text-vr-green">{formatDOP(aportado)}</td>
                                         </tr>
                                     );
                                 })
                             )}
                         </tbody>
                     </table>
+                    </div>
                 </div>
 
                 {/* Cambio de PIN */}
-                <div className="mt-8 bg-navy-2 rounded-2xl border border-navy-3 overflow-hidden">
-                    <div className="p-6 border-b border-navy-3">
+                <div className="mt-6 sm:mt-8 bg-navy-2 rounded-2xl border border-navy-3 overflow-hidden">
+                    <div className="p-4 sm:p-6 border-b border-navy-3">
                         <h2 className="text-lg font-display font-bold text-white">Seguridad</h2>
                         <p className="text-sm text-vr-gray">Cambia el PIN de acceso para proteger el POS.</p>
                     </div>
-                    <form onSubmit={cambiarPin} className="p-6 flex items-end gap-4">
+                    <form onSubmit={cambiarPin} className="p-4 sm:p-6 flex flex-col sm:flex-row sm:items-end gap-4">
                         <div>
                             <label className="block text-sm font-bold text-vr-gray mb-1">Nuevo PIN (4 dígitos)</label>
                             <input
                                 type="password" maxLength={4} minLength={4} required
                                 value={newPin} onChange={e => setNewPin(e.target.value.replace(/[^0-9]/g, ''))}
-                                className="w-48 bg-navy-3 border border-navy-3 rounded-xl p-3 text-white focus:border-gold outline-none tracking-widest text-center text-xl font-mono"
+                                className="w-full sm:w-48 bg-navy-3 border border-navy-3 rounded-xl p-3 text-white focus:border-gold outline-none tracking-widest text-center text-xl font-mono"
                                 placeholder="****"
                             />
                         </div>
                         <button type="submit" disabled={isPinSaving || newPin.length !== 4 || !isOnline}
                             title={!isOnline ? "Requiere conexión a internet" : ""}
-                            className="px-6 py-3 bg-gold-gradient text-navy font-bold rounded-xl hover:brightness-110 disabled:opacity-30 transition-all h-[52px]"
+                            className="w-full sm:w-auto px-6 py-3 bg-gold-gradient text-navy font-bold rounded-xl hover:brightness-110 disabled:opacity-30 transition-all"
                         >
                             {isPinSaving ? 'Guardando...' : 'Cambiar PIN'}
                         </button>
@@ -391,8 +396,8 @@ export default function AdminDashboard() {
 
                 {/* MODAL CREAR SUCURSAL */}
                 {isModalOpen && (
-                    <div className="fixed inset-0 bg-black/70 backdrop-blur-md z-50 flex items-center justify-center p-4 animate-fade-in">
-                        <div className="bg-navy-2 w-full max-w-md rounded-2xl border border-navy-3 shadow-2xl overflow-hidden animate-scale-in">
+                    <div className="fixed inset-0 bg-black/70 backdrop-blur-md z-50 flex items-end sm:items-center justify-center sm:p-4 animate-fade-in">
+                        <div className="bg-navy-2 w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl border border-navy-3 shadow-2xl overflow-hidden animate-scale-in">
                             <div className="p-6 border-b border-navy-3 flex justify-between items-center">
                                 <h2 className="text-xl font-display font-bold text-white">Crear Sucursal</h2>
                                 <button onClick={() => setIsModalOpen(false)} className="text-vr-gray hover:text-white font-bold text-xl transition-colors">✕</button>

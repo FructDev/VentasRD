@@ -72,15 +72,15 @@ export default function ConfiguracionPage() {
         <PinGuard>
             <div className="min-h-screen bg-navy flex flex-col">
                 <TopBar />
-                <div className="flex-1 p-8">
+                <div className="flex-1 p-4 sm:p-8">
                     <div className="max-w-3xl mx-auto">
-                        <div className="mb-8">
-                            <h1 className="text-3xl font-display font-black text-white">Configuración del Negocio</h1>
+                        <div className="mb-6 sm:mb-8">
+                            <h1 className="text-2xl sm:text-3xl font-display font-black text-white">Configuración del Negocio</h1>
                             <p className="text-vr-gray mt-2">Personaliza la información que aparece en los tickets y reportes.</p>
                         </div>
 
                         <div className="bg-navy-2 rounded-2xl border border-navy-3 overflow-hidden shadow-2xl">
-                            <form onSubmit={handleSave} className="p-8 space-y-6">
+                            <form onSubmit={handleSave} className="p-4 sm:p-8 space-y-6">
                                 
                                 {/* Información Básica */}
                                 <div>
@@ -140,10 +140,10 @@ export default function ConfiguracionPage() {
                                 </div>
 
                                 <div className="pt-6 border-t border-navy-3 flex justify-end">
-                                    <button 
+                                    <button
                                         type="submit" disabled={loading || !isOnline}
                                         title={!isOnline ? "Requiere conexión a internet para guardar" : ""}
-                                        className="px-8 py-3 bg-gold-gradient text-navy font-extrabold rounded-xl hover:brightness-110 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                                        className="w-full sm:w-auto px-8 py-3 bg-gold-gradient text-navy font-extrabold rounded-xl hover:brightness-110 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
                                     >
                                         {loading ? 'Guardando...' : 'Guardar Cambios'}
                                     </button>

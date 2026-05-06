@@ -115,4 +115,5 @@ export interface SucursalLocal {
     negocio_id: string;
     nombre: string;
     direccion?: string | null;
+    fecha_creacion?: number;
 }
