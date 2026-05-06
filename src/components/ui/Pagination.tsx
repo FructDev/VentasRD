@@ -9,7 +9,7 @@ interface PaginationProps {
 }
 
 export default function Pagination({ pagina, totalPaginas, onCambiar, totalItems, itemsPorPagina }: PaginationProps) {
-    if (totalPaginas <= 1) return null;
+    if (totalItems === 0) return null;
 
     const desde = (pagina - 1) * itemsPorPagina + 1;
     const hasta = Math.min(pagina * itemsPorPagina, totalItems);

@@ -285,9 +285,13 @@ export default function POSPage() {
                     <span className="font-semibold text-white line-clamp-2 text-sm group-hover:text-gold-2 transition-colors">{producto.nombre}</span>
                     <div className="flex justify-between items-end mt-2">
                       <span className="text-lg font-bold font-mono text-gold">{formatDOP(producto.precio_venta)}</span>
-                      <span className={`text-xs font-medium ${getStockColor(producto)}`}>
-                        {producto.stock_actual} uds
-                      </span>
+                      {producto.tipo === 'combo' ? (
+                        <span className="text-[10px] font-bold text-purple-400 bg-purple-400/10 px-1.5 py-0.5 rounded">combo</span>
+                      ) : (
+                        <span className={`text-xs font-medium ${getStockColor(producto)}`}>
+                          {producto.stock_actual} uds
+                        </span>
+                      )}
                     </div>
                   </button>
                 ))

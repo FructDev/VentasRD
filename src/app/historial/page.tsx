@@ -1,7 +1,7 @@
 // src/app/historial/page.tsx
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { db } from '@/lib/db/dexie';
 import { useVentasTenant, useVentaDetallesTenant, useDevolucionesTenant, useClientesTenant } from '@/lib/db/tenantQuery';
 import { useConfigStore } from '@/store/useConfigStore';
@@ -93,10 +93,12 @@ export default function HistorialPage() {
     }, [clientes]);
 
     const ventasFiltradas = useMemo(() => {
-        setPagina(1); // reset al cambiar filtro
         if (filtroMetodo === 'todos') return ventas;
         return ventas.filter(v => v.metodo_pago === filtroMetodo);
     }, [ventas, filtroMetodo]);
+
+    // Resetear página al cambiar filtro (fuera del useMemo para no causar re-renders)
+    useEffect(() => { setPagina(1); }, [filtroMetodo]);
 
     const ventasPaginadas = useMemo(() => {
         const inicio = (pagina - 1) * ITEMS_POR_PAGINA;
