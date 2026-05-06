@@ -2,23 +2,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 
-async function verifyAdmin(req: NextRequest) {
-    const token = req.headers.get('Authorization')?.replace('Bearer ', '');
-    if (!token) return null;
-
-    const admin = createAdminClient();
-    const { data: { user } } = await admin.auth.getUser(token);
-    if (!user) return null;
-
-    const superadminEmail = process.env.SUPERADMIN_EMAIL;
-    if (!superadminEmail || user.email !== superadminEmail) return null;
-
-    return user;
+function verifyAdmin(req: NextRequest): boolean {
+    const secret = req.headers.get('x-superadmin-secret');
+    const expected = process.env.SUPERADMIN_SECRET;
+    return !!expected && secret === expected;
 }
 
 export async function GET(req: NextRequest) {
-    const user = await verifyAdmin(req);
-    if (!user) return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
+    if (!verifyAdmin(req)) return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
 
     const admin = createAdminClient();
 
