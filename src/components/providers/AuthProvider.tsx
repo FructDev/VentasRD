@@ -7,7 +7,7 @@ import { useRouter, usePathname } from 'next/navigation';
 import PinScreen from '@/components/ui/PinScreen';
 import SubscriptionGate from '@/components/ui/SubscriptionGate';
 
-const RUTAS_PUBLICAS = ['/login', '/registro', '/landing', '/offline', '/pin', '/recuperar-contrasena', '/actualizar-contrasena'];
+const RUTAS_PUBLICAS = ['/login', '/registro', '/landing', '/offline', '/pin', '/recuperar-contrasena', '/actualizar-contrasena', '/superadmin'];
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
     const router = useRouter();
