@@ -126,7 +126,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                         
                         // FASE 5: Control de Sucursal Físico
                         // Si no ha seleccionado sucursal, lo obligamos a menos que esté en el dashboard admin o ya eligiendo
-                        if (!sucursalId && pathname !== '/select-branch' && !pathname.startsWith('/admin')) {
+                        if (!sucursalId && pathname !== '/select-branch' && !pathname.startsWith('/admin') && !pathname.startsWith('/superadmin')) {
                             router.push('/select-branch');
                         }
                     }
