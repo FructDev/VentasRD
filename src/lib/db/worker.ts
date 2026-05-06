@@ -176,6 +176,16 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                 setSyncTs('cajas', maxTs(cloudCajas));
             }
 
+            // ── 1.I  Devoluciones ─────────────────────────────────────────────
+            const lastDevTs = getSyncTs('devoluciones');
+            const { data: cloudDevs, error: pullDevErr } = await withTimeout(() =>
+                supabase.from('devoluciones').select('*').eq('negocio_id', negocioId).gt('fecha_creacion', lastDevTs)
+            );
+            if (!pullDevErr && cloudDevs && cloudDevs.length > 0) {
+                await db.devoluciones.bulkPut(cloudDevs.map(d => ({ ...d, estado_sincronizacion: 1 })));
+                setSyncTs('devoluciones', maxCreacionTs(cloudDevs));
+            }
+
             // ══════════════════════════════════════════════════════════════════
             // 2. PUSH — Subir a la nube
             // ══════════════════════════════════════════════════════════════════

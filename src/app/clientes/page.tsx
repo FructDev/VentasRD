@@ -3,6 +3,7 @@
 
 import { useMemo, useState } from 'react';
 import { db } from '@/lib/db/dexie';
+import { useLiveQuery } from 'dexie-react-hooks';
 import { useClientesTenant, useTransaccionesFiadoTenant } from '@/lib/db/tenantQuery';
 import { useConfigStore } from '@/store/useConfigStore';
 import { ClienteLocal } from '@/types/database';
@@ -11,11 +12,18 @@ import { v4 as uuidv4 } from 'uuid';
 import TopBar from '@/components/shared/TopBar';
 import OfflineBanner from '@/components/shared/OfflineBanner';
 import Pagination from '@/components/ui/Pagination';
+import { SkeletonTable } from '@/components/ui/Skeleton';
 
 export default function ClientesPage() {
     const { negocioId, showToast, negocioNombre } = useConfigStore();
     const clientes = useClientesTenant();
     const transacciones = useTransaccionesFiadoTenant();
+
+    const clientesRaw = useLiveQuery(
+        () => negocioId ? db.clientes.where('negocio_id').equals(negocioId).limit(1).toArray() : [],
+        [negocioId]
+    );
+    const isLoading = clientesRaw === undefined;
 
     const clientesConSaldo = useMemo(() => {
         return clientes.map(cliente => {
@@ -122,17 +130,24 @@ export default function ClientesPage() {
                     <div className="grid grid-cols-2 gap-3 sm:gap-4 mb-4 sm:mb-8">
                         <div className="p-3 sm:p-5 rounded-2xl border border-vr-red/20 bg-vr-red/5">
                             <p className="text-xs font-bold text-vr-red uppercase tracking-wider leading-tight">Por Cobrar</p>
-                            <h3 className="text-xl sm:text-3xl font-black font-mono mt-1 text-vr-red truncate">{formatDOP(totalCuentasPorCobrar)}</h3>
+                            {isLoading
+                                ? <div className="h-8 w-28 bg-navy-3 rounded-lg animate-pulse mt-1" />
+                                : <h3 className="text-xl sm:text-3xl font-black font-mono mt-1 text-vr-red truncate">{formatDOP(totalCuentasPorCobrar)}</h3>
+                            }
                         </div>
                         <div className="p-3 sm:p-5 rounded-2xl border border-navy-3 bg-navy-2">
                             <p className="text-xs font-bold text-vr-gray uppercase tracking-wider leading-tight">Con Deuda</p>
-                            <h3 className="text-xl sm:text-3xl font-black font-mono mt-1 text-white">{clientesConDeuda}</h3>
+                            {isLoading
+                                ? <div className="h-8 w-12 bg-navy-3 rounded-lg animate-pulse mt-1" />
+                                : <h3 className="text-xl sm:text-3xl font-black font-mono mt-1 text-white">{clientesConDeuda}</h3>
+                            }
                         </div>
                     </div>
 
                     {/* Tabla */}
                     <div className="bg-navy-2 rounded-2xl border border-navy-3 overflow-hidden">
                         <div className="overflow-x-auto">
+                        {isLoading ? <SkeletonTable rows={6} cols={5} /> : (
                         <table className="w-full text-left border-collapse">
                             <thead>
                                 <tr className="border-b border-navy-3 text-vr-gray text-xs uppercase tracking-wider">
@@ -200,6 +215,7 @@ export default function ClientesPage() {
                                 )}
                             </tbody>
                         </table>
+                        )}
                         </div>
                         <Pagination
                             pagina={pagina}
