@@ -54,7 +54,7 @@ export const TicketVenta = forwardRef<HTMLDivElement, TicketProps>(({
                         </p>
                     </div>
                 </>
-            )
+            )}
 
             <div className="border-b border-dashed border-black mb-2"></div>
 
