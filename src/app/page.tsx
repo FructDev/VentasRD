@@ -219,7 +219,6 @@ export default function POSPage() {
       setUltimoTicketNum(await getNextTicketNumber(negocioId) - 1);
       setUltimoNcf(ncfGenerado);
       setVentaExitosa(true);
-      setTimeout(() => { handlePrint(); }, 100);
 
     } catch (error) {
       console.error("Error en la transacción de venta:", error);
@@ -456,7 +455,7 @@ export default function POSPage() {
                     onClick={() => { handlePrint(); }}
                     className="flex-1 py-3 bg-navy-3 text-white font-bold rounded-xl border border-navy-4 hover:bg-navy-4 transition-all text-sm"
                   >
-                    🖨️ Reimprimir
+                    🖨️ Imprimir ticket
                   </button>
                 </div>
                 <button
