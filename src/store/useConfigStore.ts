@@ -2,6 +2,14 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { User } from '@supabase/supabase-js';
 
+interface NcfConfig {
+    habilitado: boolean;
+    tipo: 'B02' | 'B01'; // B02 = consumidor final, B01 = crédito fiscal
+    desde: number;       // Inicio del rango autorizado
+    hasta: number;       // Fin del rango autorizado
+    actual: number;      // Último número emitido (0 = ninguno aún)
+}
+
 interface ConfigState {
     negocioId: string | null;
     negocioNombre: string | null;
@@ -19,6 +27,8 @@ interface ConfigState {
     // Plan / suscripcion
     planActivo: boolean;
     trialHasta: number | null; // timestamp ms
+    // NCF / Comprobantes Fiscales
+    ncf: NcfConfig;
     setConnection: (status: boolean) => void;
     setOfflineUnlock: (status: boolean) => void;
     setAuth: (user: User | null, negocioId?: string | null, negocioNombre?: string | null, pinAdmin?: string | null, whatsapp?: string | null, rnc?: string | null, direccion?: string | null, mensaje?: string | null) => void;
@@ -26,6 +36,9 @@ interface ConfigState {
     setSucursal: (sucursalId: string | null) => void;
     setAdminMode: (status: boolean) => void;
     showToast: (message: string, type?: 'success' | 'error' | 'info') => void;
+    setNcfConfig: (config: Partial<NcfConfig>) => void;
+    /** Consume el siguiente NCF disponible. Devuelve el string formateado o null si está deshabilitado/agotado. */
+    consumirNcf: () => string | null;
     cerrarSesionUsuario: () => void;
     desconectarDispositivo: () => void;
 }
@@ -48,6 +61,19 @@ export const useConfigStore = create<ConfigState>()(
             toast: null,
             planActivo: false,
             trialHasta: null,
+            ncf: { habilitado: false, tipo: 'B02', desde: 1, hasta: 0, actual: 0 },
+
+            setNcfConfig: (config) => set(state => ({ ncf: { ...state.ncf, ...config } })),
+
+            consumirNcf: () => {
+                const state = useConfigStore.getState();
+                const { habilitado, tipo, desde, hasta, actual } = state.ncf;
+                if (!habilitado) return null;
+                const siguiente = actual === 0 ? desde : actual + 1;
+                if (siguiente > hasta) return null; // rango agotado
+                useConfigStore.setState(s => ({ ncf: { ...s.ncf, actual: siguiente } }));
+                return `${tipo}${String(siguiente).padStart(8, '0')}`;
+            },
 
             setConnection: (status) => set({ isOnline: status }),
             setPlan: (planActivo, trialHasta) => set({ planActivo, trialHasta }),
@@ -103,6 +129,7 @@ export const useConfigStore = create<ConfigState>()(
                 negocioMensajeTicket: state.negocioMensajeTicket,
                 planActivo: state.planActivo,
                 trialHasta: state.trialHasta,
+                ncf: state.ncf,
             }),
         }
     )

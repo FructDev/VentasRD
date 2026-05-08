@@ -12,16 +12,18 @@ interface TicketProps {
     montoRecibido: string;
     devuelta: number;
     nombreNegocio?: string;
+    rnc?: string;
     direccion?: string;
     telefono?: string;
     numeroTicket?: number;
     mensajePie?: string;
+    ncf?: string; // Número de Comprobante Fiscal (ej: B0200000001)
 }
 
 export const TicketVenta = forwardRef<HTMLDivElement, TicketProps>(({
     items, subtotal, itbis, descuento = 0, total, metodoPago, montoRecibido, devuelta,
-    nombreNegocio = 'Mi Negocio', direccion = 'Ciudad, RD', telefono = '809-000-0000',
-    numeroTicket, mensajePie
+    nombreNegocio = 'Mi Negocio', rnc, direccion = 'Ciudad, RD', telefono = '809-000-0000',
+    numeroTicket, mensajePie, ncf
 }, ref) => {
 
     const fechaActual = new Date().toLocaleString('es-DO');
@@ -33,11 +35,26 @@ export const TicketVenta = forwardRef<HTMLDivElement, TicketProps>(({
             {/* Cabecera del Negocio */}
             <div className="text-center mb-4">
                 <h1 className="text-xl font-bold uppercase">{nombreNegocio}</h1>
+                {rnc && <p className="text-xs">RNC: {rnc}</p>}
                 <p className="text-xs">{direccion}</p>
                 <p className="text-xs">Tel: {telefono}</p>
                 <p className="text-xs mt-2">Fecha: {fechaActual}</p>
                 <p className="text-xs font-bold mt-1">Ticket #: {ticketNum}</p>
             </div>
+
+            {/* NCF */}
+            {ncf && (
+                <>
+                    <div className="border-b border-dashed border-black mb-2"></div>
+                    <div className="text-center mb-2">
+                        <p className="text-[10px] font-bold uppercase tracking-widest">Comprobante Fiscal</p>
+                        <p className="text-base font-bold tracking-wider">{ncf}</p>
+                        <p className="text-[10px]">
+                            {ncf.startsWith('B01') ? 'Crédito Fiscal' : 'Consumidor Final'}
+                        </p>
+                    </div>
+                </>
+            )
 
             <div className="border-b border-dashed border-black mb-2"></div>
 

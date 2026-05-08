@@ -25,6 +25,7 @@ export interface VentaLocal {
     negocio_id: string;
     sucursal_id?: string;
     numero_ticket?: number; // Secuencial por negocio
+    ncf?: string;           // Comprobante Fiscal (ej: B0200000001)
     total: number;
     metodo_pago: 'efectivo' | 'tarjeta' | 'transferencia' | 'fiado' | 'mixto';
     monto_efectivo?: number;      // Para metodo_pago === 'mixto'

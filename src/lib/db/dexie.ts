@@ -47,7 +47,20 @@ export class VentaRDDatabase extends Dexie {
         this.version(12).stores({
             devoluciones: 'id, negocio_id, venta_id, fecha_creacion, estado_sincronizacion',
         });
+
+        // v13: campo ncf en ventas
+        this.version(13).stores({
+            ventas: 'id, negocio_id, estado_sincronizacion, fecha_creacion, numero_ticket, ncf',
+        });
     }
+}
+
+/**
+ * Formatea un número de secuencia como NCF completo.
+ * Ej: tipo='B02', secuencia=5 → 'B0200000005'
+ */
+export function formatNcf(tipo: string, secuencia: number): string {
+    return `${tipo}${String(secuencia).padStart(8, '0')}`;
 }
 
 export const db = new VentaRDDatabase();

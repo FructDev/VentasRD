@@ -20,7 +20,7 @@ import { SkeletonProductGrid } from '@/components/ui/Skeleton';
 import { useLiveQuery } from 'dexie-react-hooks';
 
 export default function POSPage() {
-  const { negocioId, negocioNombre, sucursalId, showToast, negocioRnc, negocioDireccion, negocioMensajeTicket } = useConfigStore();
+  const { negocioId, negocioNombre, sucursalId, showToast, negocioRnc, negocioDireccion, negocioMensajeTicket, consumirNcf } = useConfigStore();
   const { items, subtotal, itbis, descuento, total, tipoDescuento, valorDescuento, addItem, clearCart, updateQuantity, setDescuento } = useCartStore();
 
   const [searchTerm, setSearchTerm] = useState('');
@@ -36,6 +36,7 @@ export default function POSPage() {
   const [isVentaLibreOpen, setIsVentaLibreOpen] = useState(false);
   const [isCajaOpen, setIsCajaOpen] = useState(false);
   const [ultimoTicketNum, setUltimoTicketNum] = useState<number | undefined>(undefined);
+  const [ultimoNcf, setUltimoNcf] = useState<string | undefined>(undefined);
   const [isCartOpen, setIsCartOpen] = useState(false); // mobile cart drawer
   const inputMontoRef = useRef<HTMLInputElement>(null);
 
@@ -128,6 +129,8 @@ export default function POSPage() {
     if (!negocioId) return;
 
     try {
+      const ncfGenerado = consumirNcf() || undefined;
+
       await db.transaction('rw', [db.ventas, db.venta_detalles, db.productos, db.composiciones, db.transacciones_fiado], async () => {
         const idVenta = uuidv4();
         const ticketNum = await getNextTicketNumber(negocioId);
@@ -137,6 +140,7 @@ export default function POSPage() {
           negocio_id: negocioId,
           sucursal_id: sucursalId || undefined,
           numero_ticket: ticketNum,
+          ncf: ncfGenerado,
           total: total,
           metodo_pago: metodoPago,
           ...(metodoPago === 'mixto' && {
@@ -211,6 +215,7 @@ export default function POSPage() {
       });
 
       setUltimoTicketNum(await getNextTicketNumber(negocioId) - 1);
+      setUltimoNcf(ncfGenerado);
       setVentaExitosa(true);
       setTimeout(() => { handlePrint(); }, 100);
 
@@ -303,8 +308,9 @@ export default function POSPage() {
           <TicketVenta
             ref={ticketRef} items={items} subtotal={subtotal} itbis={itbis} descuento={descuento} total={total}
             metodoPago={metodoPago} montoRecibido={montoRecibido} devuelta={devuelta}
-            nombreNegocio={negocioNombre || 'VentaRD'} numeroTicket={ultimoTicketNum}
-            mensajePie={negocioMensajeTicket || undefined}
+            nombreNegocio={negocioNombre || 'VentaRD'} rnc={negocioRnc || undefined}
+            numeroTicket={ultimoTicketNum} mensajePie={negocioMensajeTicket || undefined}
+            ncf={ultimoNcf}
           />
         </div>
 
