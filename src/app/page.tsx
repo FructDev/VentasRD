@@ -20,7 +20,7 @@ import { SkeletonProductGrid } from '@/components/ui/Skeleton';
 import { useLiveQuery } from 'dexie-react-hooks';
 
 export default function POSPage() {
-  const { negocioId, negocioNombre, sucursalId, showToast, negocioRnc, negocioDireccion, negocioMensajeTicket, consumirNcf } = useConfigStore();
+  const { negocioId, negocioNombre, sucursalId, showToast, negocioRnc, negocioDireccion, negocioMensajeTicket, consumirNcf, ncf: ncfConfig } = useConfigStore();
   const { items, subtotal, itbis, descuento, total, tipoDescuento, valorDescuento, addItem, clearCart, updateQuantity, setDescuento } = useCartStore();
 
   const [searchTerm, setSearchTerm] = useState('');
@@ -37,6 +37,7 @@ export default function POSPage() {
   const [isCajaOpen, setIsCajaOpen] = useState(false);
   const [ultimoTicketNum, setUltimoTicketNum] = useState<number | undefined>(undefined);
   const [ultimoNcf, setUltimoNcf] = useState<string | undefined>(undefined);
+  const [emitirNcf, setEmitirNcf] = useState(false);
   const [isCartOpen, setIsCartOpen] = useState(false); // mobile cart drawer
   const inputMontoRef = useRef<HTMLInputElement>(null);
 
@@ -99,6 +100,7 @@ export default function POSPage() {
     setMontoTransferenciaMixto('');
     setVentaExitosa(false);
     setClienteSeleccionadoId('');
+    setEmitirNcf(false);
     setIsCartOpen(false);
     setIsCheckoutOpen(true);
   };
@@ -129,7 +131,7 @@ export default function POSPage() {
     if (!negocioId) return;
 
     try {
-      const ncfGenerado = consumirNcf() || undefined;
+      const ncfGenerado = emitirNcf ? consumirNcf() || undefined : undefined;
 
       await db.transaction('rw', [db.ventas, db.venta_detalles, db.productos, db.composiciones, db.transacciones_fiado], async () => {
         const idVenta = uuidv4();
@@ -650,7 +652,27 @@ export default function POSPage() {
                   )}
                 </div>
 
-                <div className="p-4 sm:p-6 bg-navy border-t border-navy-3">
+                <div className="p-4 sm:p-6 bg-navy border-t border-navy-3 space-y-3">
+                  {/* Toggle NCF — solo aparece si el negocio tiene NCF configurado */}
+                  {ncfConfig.habilitado && (
+                    <button
+                      type="button"
+                      onClick={() => setEmitirNcf(v => !v)}
+                      className={`w-full flex items-center justify-between px-4 py-3 rounded-xl border transition-all ${
+                        emitirNcf
+                          ? 'bg-blue-500/10 border-blue-400/30 text-blue-300'
+                          : 'bg-navy-2 border-navy-3 text-vr-gray'
+                      }`}
+                    >
+                      <span className="text-sm font-bold">
+                        {emitirNcf ? '✓ Emitir comprobante fiscal' : 'Sin comprobante fiscal'}
+                      </span>
+                      <div className={`relative w-10 h-5 rounded-full transition-colors flex-shrink-0 ${emitirNcf ? 'bg-blue-400' : 'bg-navy-3'}`}>
+                        <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${emitirNcf ? 'translate-x-5' : ''}`} />
+                      </div>
+                    </button>
+                  )}
+
                   <button
                     onClick={procesarVentaBD} disabled={!esMontoValido}
                     className="w-full bg-gold-gradient text-navy text-lg sm:text-xl font-extrabold py-4 sm:py-5 rounded-xl hover:brightness-110 transition-all disabled:opacity-30 disabled:cursor-not-allowed flex justify-center items-center gap-2"
