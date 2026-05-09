@@ -13,6 +13,7 @@ const navItems = [
     { href: '/inventario', label: 'Inventario', icon: '📦' },
     { href: '/clientes', label: 'Clientes', icon: '👥' },
     { href: '/dashboard', label: 'Resumen', icon: '📊' },
+    { href: '/reportes', label: 'Reportes', icon: '📁', requiresAdmin: true },
     { href: '/configuracion', label: 'Ajustes', icon: '⚙️', requiresAdmin: true },
     { href: '/admin', label: 'Admin', icon: '🛠️', requiresAdmin: true },
 ];
