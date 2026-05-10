@@ -164,7 +164,16 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                 supabase.from('ventas').select('*').eq('negocio_id', negocioId).gt('fecha_creacion', lastVentasTs)
             );
             if (!pullVentasErr && cloudVentas && cloudVentas.length > 0) {
-                await db.ventas.bulkPut(cloudVentas.map(v => ({ ...v, estado_sincronizacion: 1 })));
+                // Merge with local to preserve fields not yet in Supabase (e.g. ncf)
+                const ventasMerged = await Promise.all(cloudVentas.map(async v => {
+                    const local = await db.ventas.get(v.id);
+                    return {
+                        ...v,
+                        ncf: v.ncf ?? local?.ncf ?? null,
+                        estado_sincronizacion: 1,
+                    };
+                }));
+                await db.ventas.bulkPut(ventasMerged);
                 setSyncTs('ventas', maxCreacionTs(cloudVentas));
             }
 
@@ -218,6 +227,8 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                         // Pagos mixtos
                         ...(venta.monto_efectivo != null && { monto_efectivo: venta.monto_efectivo }),
                         ...(venta.monto_transferencia != null && { monto_transferencia: venta.monto_transferencia }),
+                        // NCF
+                        ...(venta.ncf && { ncf: venta.ncf }),
                         // Fiado
                         ...(venta.cliente_id && { cliente_id: venta.cliente_id }),
                     })
@@ -271,20 +282,23 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                 if (!prodError) {
                     let stockSyncOk = true;
                     if (sucursalId) {
-                        const { error: stockError } = await withTimeout(() =>
-                            supabase.from('inventario_sucursales').upsert(
-                                prodPendientes.map(p => ({
-                                    sucursal_id: sucursalId,
-                                    producto_id: p.id,
-                                    stock_actual: p.stock_actual,
-                                    stock_minimo: p.stock_minimo,
-                                    fecha_actualizacion: p.fecha_actualizacion || Date.now(),
-                                })),
-                                { onConflict: 'sucursal_id,producto_id' }
-                            )
+                        const items = prodPendientes.map(p => ({
+                            sucursal_id: sucursalId,
+                            producto_id: p.id,
+                            stock_actual: p.stock_actual,
+                            stock_minimo: p.stock_minimo,
+                            estado_sincronizacion: 1,
+                            fecha_actualizacion: p.fecha_actualizacion || Date.now(),
+                        }));
+                        const res = await withTimeout(() =>
+                            fetch('/api/sync/inventario', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ items }),
+                            }).then(r => r.json())
                         );
-                        if (stockError) {
-                            console.error('[sync] inventario_sucursales error:', stockError.message);
+                        if (!res.ok) {
+                            console.error('[sync] inventario_sucursales error:', res.error);
                             stockSyncOk = false;
                         }
                     }

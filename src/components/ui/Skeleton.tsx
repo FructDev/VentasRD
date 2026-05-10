@@ -3,16 +3,20 @@
 /** Fila de tabla con celdas pulsantes */
 export function SkeletonTableRow({ cols = 5 }: { cols?: number }) {
     return (
-        <tr>
-            {Array.from({ length: cols }).map((_, i) => (
-                <td key={i} className="p-4">
-                    <div
-                        className="h-4 bg-navy-3 rounded-md animate-pulse"
-                        style={{ width: `${60 + Math.random() * 30}%` }}
-                    />
-                </td>
-            ))}
-        </tr>
+        <table>
+            <tbody>
+                <tr>
+                    {Array.from({ length: cols }).map((_, i) => (
+                        <td key={i} className="p-4">
+                            <div
+                                className="h-4 bg-navy-3 rounded-md animate-pulse"
+                                style={{ width: `${60 + Math.random() * 30}%` }}
+                            />
+                        </td>
+                    ))}
+                </tr>
+            </tbody>
+        </table>
     );
 }
 

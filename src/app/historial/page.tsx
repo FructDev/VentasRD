@@ -1,7 +1,7 @@
 // src/app/historial/page.tsx
 'use client';
 
-import { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { db } from '@/lib/db/dexie';
 import { useVentasTenant, useVentaDetallesTenant, useDevolucionesTenant, useClientesTenant } from '@/lib/db/tenantQuery';
 import { useConfigStore } from '@/store/useConfigStore';
@@ -84,6 +84,13 @@ export default function HistorialPage() {
         clientes.forEach(c => m.set(c.id, c.nombre));
         return m;
     }, [clientes]);
+
+    const productosArr = useLiveQuery(() => db.productos.toArray(), []) || [];
+    const prodNombres = useMemo(() => {
+        const m = new Map<string, string>();
+        productosArr.forEach(p => m.set(p.id, p.nombre));
+        return m;
+    }, [productosArr]);
 
     const ventasFiltradas = useMemo(() => {
         if (filtroMetodo === 'todos') return ventas;
@@ -287,9 +294,8 @@ export default function HistorialPage() {
                                             const items = detallesPorVenta.get(venta.id) || [];
 
                                             return (
-                                                <>
+                                                <React.Fragment key={venta.id}>
                                                     <tr
-                                                        key={venta.id}
                                                         className="border-b border-navy-3/50 hover:bg-navy-3/20 transition-colors cursor-pointer"
                                                         onClick={() => setVentaExpandida(isExpanded ? null : venta.id)}
                                                     >
@@ -329,7 +335,7 @@ export default function HistorialPage() {
                                                     </tr>
 
                                                     {isExpanded && (
-                                                        <tr key={`${venta.id}-detail`} className="bg-navy/40">
+                                                        <tr className="bg-navy/40">
                                                             <td colSpan={5} className="px-4 sm:px-6 py-3">
                                                                 {items.length === 0 ? (
                                                                     <p className="text-xs text-vr-gray italic">Sin detalles disponibles</p>
@@ -337,10 +343,16 @@ export default function HistorialPage() {
                                                                     <div className="space-y-1">
                                                                         {items.map(d => (
                                                                             <div key={d.id} className="flex justify-between text-xs text-vr-gray">
-                                                                                <span>{d.cantidad}x <span className="text-white font-medium">producto</span></span>
+                                                                                <span>{d.cantidad}x <span className="text-white font-medium">{prodNombres.get(d.producto_id) || 'Producto eliminado'}</span></span>
                                                                                 <span className="font-mono">{formatDOP(d.subtotal)}</span>
                                                                             </div>
                                                                         ))}
+                                                                        {venta.ncf && (
+                                                                            <div className="mt-2 pt-2 border-t border-navy-3 flex items-center gap-2 text-xs">
+                                                                                <span className="text-vr-gray">NCF:</span>
+                                                                                <span className="font-mono font-bold text-blue-300">{venta.ncf}</span>
+                                                                            </div>
+                                                                        )}
                                                                         {venta.metodo_pago === 'mixto' && (
                                                                             <div className="mt-2 pt-2 border-t border-navy-3 flex flex-wrap gap-3 text-xs">
                                                                                 {venta.monto_efectivo != null && <span className="text-vr-green">Efectivo: {formatDOP(venta.monto_efectivo)}</span>}
@@ -352,7 +364,7 @@ export default function HistorialPage() {
                                                             </td>
                                                         </tr>
                                                     )}
-                                                </>
+                                                </React.Fragment>
                                             );
                                         })}
                                     </tbody>
