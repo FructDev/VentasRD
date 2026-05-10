@@ -103,10 +103,23 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                     );
                     if (stockData) stockData.forEach(s => cloudStockMap.set(s.producto_id, s));
                 }
-                const productosAInsertar = cloudProducts.map(p => {
-                    const ls = cloudStockMap.get(p.id);
-                    return { ...p, stock_actual: ls?.stock_actual ?? 0, stock_minimo: ls?.stock_minimo ?? 0, estado_sincronizacion: 1 };
-                });
+                // Para cada producto, si NO hay entrada en inventario_sucursales para esta
+                // sucursal, conservar el stock local en lugar de sobreescribir con 0.
+                const productosAInsertar = await Promise.all(cloudProducts.map(async p => {
+                    const cloudStock = cloudStockMap.get(p.id);
+                    if (cloudStock) {
+                        // Hay dato confiable de la nube → usar siempre
+                        return { ...p, stock_actual: cloudStock.stock_actual, stock_minimo: cloudStock.stock_minimo, estado_sincronizacion: 1 };
+                    }
+                    // Sin dato en la nube → preservar stock local si existe
+                    const local = await db.productos.get(p.id);
+                    return {
+                        ...p,
+                        stock_actual: local?.stock_actual ?? 0,
+                        stock_minimo: local?.stock_minimo ?? 0,
+                        estado_sincronizacion: 1,
+                    };
+                }));
                 await db.productos.bulkPut(productosAInsertar);
                 setSyncTs('productos', maxTs(cloudProducts));
             }
@@ -256,8 +269,9 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                     )
                 );
                 if (!prodError) {
+                    let stockSyncOk = true;
                     if (sucursalId) {
-                        await withTimeout(() =>
+                        const { error: stockError } = await withTimeout(() =>
                             supabase.from('inventario_sucursales').upsert(
                                 prodPendientes.map(p => ({
                                     sucursal_id: sucursalId,
@@ -269,8 +283,15 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                                 { onConflict: 'sucursal_id,producto_id' }
                             )
                         );
+                        if (stockError) {
+                            console.error('[sync] inventario_sucursales error:', stockError.message);
+                            stockSyncOk = false;
+                        }
                     }
-                    await db.productos.bulkPut(prodPendientes.map(p => ({ ...p, estado_sincronizacion: 1 })));
+                    // Solo marcar como sincronizado si el stock también subió correctamente
+                    if (stockSyncOk) {
+                        await db.productos.bulkPut(prodPendientes.map(p => ({ ...p, estado_sincronizacion: 1 })));
+                    }
                 }
             }
 

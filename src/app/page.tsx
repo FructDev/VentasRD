@@ -131,6 +131,22 @@ export default function POSPage() {
     if (!negocioId) return;
 
     try {
+      // ── Validación de stock antes de procesar ────────────────────────────
+      for (const item of items) {
+        const receta = await db.composiciones.where('producto_padre_id').equals(item.id).toArray();
+        if (receta.length === 0) {
+          // Producto simple/insumo — verificar stock disponible
+          const producto = await db.productos.get(item.id);
+          if (producto && producto.stock_actual < item.cantidad) {
+            showToast(
+              `Stock insuficiente: ${producto.nombre} (disponible: ${producto.stock_actual < 0 ? 0 : producto.stock_actual})`,
+              'error'
+            );
+            return;
+          }
+        }
+      }
+
       const ncfGenerado = emitirNcf ? consumirNcf() || undefined : undefined;
 
       await db.transaction('rw', [db.ventas, db.venta_detalles, db.productos, db.composiciones, db.transacciones_fiado], async () => {
