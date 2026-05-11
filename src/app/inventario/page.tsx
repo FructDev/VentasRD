@@ -336,7 +336,7 @@ export default function InventarioPage() {
                                                     <button onClick={() => abrirModalAjuste(prod)} className="text-vr-green hover:text-vr-green/80 text-xs sm:text-sm font-bold transition-colors whitespace-nowrap">Ajuste</button>
                                                 )}
                                                 <button onClick={() => abrirModalEditar(prod)} className="text-gold hover:text-gold-2 text-xs sm:text-sm font-bold transition-colors">Editar</button>
-                                                <button onClick={() => eliminarProducto(prod.id)} className="text-vr-red hover:text-vr-red/80 text-xs sm:text-sm font-bold transition-colors hidden sm:inline">Eliminar</button>
+                                                <button onClick={() => eliminarProducto(prod.id)} className="text-vr-red hover:text-vr-red/80 text-xs sm:text-sm font-bold transition-colors">Eliminar</button>
                                             </div>
                                         </td>
                                     </tr>
