@@ -1,4 +1,4 @@
-import { create } from 'zustand';
+import { create, StateCreator } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { User } from '@supabase/supabase-js';
 
@@ -43,9 +43,7 @@ interface ConfigState {
     desconectarDispositivo: () => void;
 }
 
-export const useConfigStore = create<ConfigState>()(
-    persist(
-        (set) => ({
+const configCreator: StateCreator<ConfigState> = (set) => ({
             negocioId: null,
             negocioNombre: null,
             sucursalId: null,
@@ -114,23 +112,24 @@ export const useConfigStore = create<ConfigState>()(
                 negocioMensajeTicket: null,
                 isAdminMode: false,
                 isOfflineUnlocked: false,
-            }),
         }),
-        {
-            name: 'ventard-config',
-            partialize: (state) => ({
-                negocioId: state.negocioId,
-                negocioNombre: state.negocioNombre,
-                sucursalId: state.sucursalId,
-                pinAdmin: state.pinAdmin,
-                negocioWhatsapp: state.negocioWhatsapp,
-                negocioRnc: state.negocioRnc,
-                negocioDireccion: state.negocioDireccion,
-                negocioMensajeTicket: state.negocioMensajeTicket,
-                planActivo: state.planActivo,
-                trialHasta: state.trialHasta,
-                ncf: state.ncf,
-            }),
-        }
-    )
+});
+
+export const useConfigStore = create<ConfigState>()(
+    persist(configCreator, {
+        name: 'ventard-config',
+        partialize: (state) => ({
+            negocioId: state.negocioId,
+            negocioNombre: state.negocioNombre,
+            sucursalId: state.sucursalId,
+            pinAdmin: state.pinAdmin,
+            negocioWhatsapp: state.negocioWhatsapp,
+            negocioRnc: state.negocioRnc,
+            negocioDireccion: state.negocioDireccion,
+            negocioMensajeTicket: state.negocioMensajeTicket,
+            planActivo: state.planActivo,
+            trialHasta: state.trialHasta,
+            ncf: state.ncf,
+        }),
+    })
 );
