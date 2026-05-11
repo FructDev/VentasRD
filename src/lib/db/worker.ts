@@ -129,18 +129,21 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                 setSyncTs('productos', maxTs(cloudProducts));
             }
 
-            // ── 1.B.2  Reconciliación de eliminaciones (una vez por sesión) ──
-            // Detecta productos borrados en otros dispositivos que no aparecen
-            // en el pull incremental porque ya no existen en Supabase.
-            const RECON_KEY = 'vrd_prod_recon';
-            if (!sessionStorage.getItem(RECON_KEY)) {
+            // ── 1.B.2  Reconciliación de eliminaciones (cada 5 min) ──────────
+            // El pull incremental no puede detectar borrados (el registro ya no
+            // existe en Supabase). Esta reconciliación descarga todos los IDs de
+            // la nube y elimina localmente los que ya no aparecen.
+            const RECON_KEY = 'vrd_prod_recon_ts';
+            const RECON_INTERVAL = 5 * 60 * 1000; // 5 minutos
+            const lastRecon = parseInt(localStorage.getItem(RECON_KEY) || '0', 10);
+            if (Date.now() - lastRecon > RECON_INTERVAL) {
                 const { data: allIds } = await withTimeout(() =>
                     supabase.from('productos').select('id').eq('negocio_id', negocioId)
                 );
                 if (allIds) {
                     const cloudIds = new Set(allIds.map((r: { id: string }) => r.id));
                     const locales = await db.productos.where('negocio_id').equals(negocioId).toArray();
-                    // Productos en local que no existen en la nube y no están pendientes de subirse
+                    // Solo eliminar los que están sincronizados (estado=1) y ya no existen en la nube
                     const obsoletos = locales.filter(p => !p.eliminado && p.estado_sincronizacion === 1 && !cloudIds.has(p.id));
                     if (obsoletos.length > 0) {
                         await db.productos.bulkDelete(obsoletos.map(p => p.id));
@@ -149,7 +152,7 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                         ));
                     }
                 }
-                sessionStorage.setItem(RECON_KEY, '1');
+                localStorage.setItem(RECON_KEY, String(Date.now()));
             }
 
             // ── 1.C  Composiciones ────────────────────────────────────────────
@@ -300,10 +303,11 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                     supabase.from('productos').delete().eq('id', p.id)
                 );
                 if (!delProdErr) {
-                    // También limpiar sus composiciones en Supabase
-                    await withTimeout(() =>
-                        supabase.from('composiciones').delete().eq('producto_padre_id', p.id)
-                    );
+                    // Limpiar tablas relacionadas en Supabase
+                    await Promise.all([
+                        withTimeout(() => supabase.from('composiciones').delete().eq('producto_padre_id', p.id)),
+                        withTimeout(() => supabase.from('inventario_sucursales').delete().eq('producto_id', p.id)),
+                    ]);
                     // Hard-delete local ahora que está confirmado en la nube
                     await db.productos.delete(p.id);
                     await db.composiciones.where('producto_padre_id').equals(p.id).delete();
