@@ -3,11 +3,6 @@
 // inventory records. The service role key MUST stay server-side only.
 import { createClient } from '@supabase/supabase-js';
 
-const supabaseAdmin = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
-
 interface StockItem {
     sucursal_id: string;
     producto_id: string;
@@ -19,6 +14,11 @@ interface StockItem {
 
 export async function POST(request: Request) {
     try {
+        const supabaseAdmin = createClient(
+            process.env.NEXT_PUBLIC_SUPABASE_URL!,
+            process.env.SUPABASE_SERVICE_ROLE_KEY!
+        );
+
         const { items }: { items: StockItem[] } = await request.json();
 
         if (!items || items.length === 0) {
