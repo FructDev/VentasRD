@@ -16,6 +16,7 @@ export interface ProductoLocal {
     stock_minimo: number;
     tasa_itbis: number; // Ej: 0.18, 0.16, 0.0
     tipo: 'simple' | 'insumo' | 'combo';
+    eliminado?: boolean;
     estado_sincronizacion?: 0 | 1;
     fecha_actualizacion?: number;
 }

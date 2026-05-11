@@ -181,9 +181,11 @@ export default function InventarioPage() {
 
     const eliminarProducto = async (id: string) => {
         if (confirm("¿Estás seguro de eliminar este producto?")) {
+            const ahora = Date.now();
             await db.transaction('rw', db.productos, db.composiciones, async () => {
-                await db.productos.delete(id);
-                await db.composiciones.where('producto_padre_id').equals(id).delete();
+                // Soft delete: ocultar en UI y marcar para eliminar en Supabase al próximo sync
+                await db.productos.update(id, { eliminado: true, estado_sincronizacion: 0, fecha_actualizacion: ahora });
+                // Las composiciones huérfanas se limpian en el worker cuando el producto sea confirmado borrado
             });
         }
     };

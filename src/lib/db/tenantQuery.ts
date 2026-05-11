@@ -14,7 +14,7 @@ export function useProductosTenant(incluirInsumos = true) {
     return useLiveQuery(
         () => negocioId
             ? db.productos.where('negocio_id').equals(negocioId)
-                .filter(p => incluirInsumos || p.tipo !== 'insumo')
+                .filter(p => !p.eliminado && (incluirInsumos || p.tipo !== 'insumo'))
                 .toArray()
             : [],
         [negocioId, incluirInsumos]
@@ -31,10 +31,12 @@ export function useComposicionesTenant() {
     return useLiveQuery(
         async () => {
             if (!negocioId) return [];
-            const productosIds = await db.productos
+            // Excluir productos eliminados para no mostrar composiciones huérfanas
+            const productosActivos = await db.productos
                 .where('negocio_id').equals(negocioId)
-                .primaryKeys() as string[];
-            const productosSet = new Set(productosIds);
+                .filter(p => !p.eliminado)
+                .toArray();
+            const productosSet = new Set(productosActivos.map(p => p.id));
             const all = await db.composiciones.toArray();
             return all.filter(c => productosSet.has(c.producto_padre_id));
         },
@@ -132,7 +134,7 @@ export function useProductosBajoStockTenant() {
     return useLiveQuery(
         () => negocioId
             ? db.productos.where('negocio_id').equals(negocioId)
-                .filter(p => p.stock_actual <= p.stock_minimo)
+                .filter(p => !p.eliminado && p.stock_actual <= p.stock_minimo)
                 .toArray()
             : [],
         [negocioId]

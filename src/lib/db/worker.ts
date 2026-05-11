@@ -103,17 +103,11 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                     );
                     if (stockData) stockData.forEach(s => cloudStockMap.set(s.producto_id, s));
                 }
-                // Para cada producto, si NO hay entrada en inventario_sucursales para esta
-                // sucursal, conservar el stock local en lugar de sobreescribir con 0.
                 const productosAInsertar = await Promise.all(cloudProducts.map(async p => {
                     const cloudStock = cloudStockMap.get(p.id);
                     if (cloudStock) {
-                        // Hay dato confiable de la nube → usar siempre
                         return { ...p, stock_actual: cloudStock.stock_actual, stock_minimo: cloudStock.stock_minimo, estado_sincronizacion: 1 };
                     }
-                    // Sin dato en inventario_sucursales → usar stock del campo en productos
-                    // (fallback cuando el push de inventario_sucursales falló, ej: env var faltante).
-                    // Si tampoco hay ahí, preservar stock local; si es dispositivo nuevo, queda p.stock_actual.
                     const local = await db.productos.get(p.id);
                     return {
                         ...p,
@@ -122,8 +116,40 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                         estado_sincronizacion: 1,
                     };
                 }));
-                await db.productos.bulkPut(productosAInsertar);
+                // Separar los que vienen eliminados de la nube para borrarlos localmente
+                const activos = productosAInsertar.filter(p => !p.eliminado);
+                const eliminados = productosAInsertar.filter(p => p.eliminado);
+                if (activos.length > 0) await db.productos.bulkPut(activos);
+                if (eliminados.length > 0) {
+                    await db.productos.bulkDelete(eliminados.map(p => p.id));
+                    await Promise.all(eliminados.map(p =>
+                        db.composiciones.where('producto_padre_id').equals(p.id).delete()
+                    ));
+                }
                 setSyncTs('productos', maxTs(cloudProducts));
+            }
+
+            // ── 1.B.2  Reconciliación de eliminaciones (una vez por sesión) ──
+            // Detecta productos borrados en otros dispositivos que no aparecen
+            // en el pull incremental porque ya no existen en Supabase.
+            const RECON_KEY = 'vrd_prod_recon';
+            if (!sessionStorage.getItem(RECON_KEY)) {
+                const { data: allIds } = await withTimeout(() =>
+                    supabase.from('productos').select('id').eq('negocio_id', negocioId)
+                );
+                if (allIds) {
+                    const cloudIds = new Set(allIds.map((r: { id: string }) => r.id));
+                    const locales = await db.productos.where('negocio_id').equals(negocioId).toArray();
+                    // Productos en local que no existen en la nube y no están pendientes de subirse
+                    const obsoletos = locales.filter(p => !p.eliminado && p.estado_sincronizacion === 1 && !cloudIds.has(p.id));
+                    if (obsoletos.length > 0) {
+                        await db.productos.bulkDelete(obsoletos.map(p => p.id));
+                        await Promise.all(obsoletos.map(p =>
+                            db.composiciones.where('producto_padre_id').equals(p.id).delete()
+                        ));
+                    }
+                }
+                sessionStorage.setItem(RECON_KEY, '1');
             }
 
             // ── 1.C  Composiciones ────────────────────────────────────────────
@@ -265,10 +291,30 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
 
             // ── 2.C  Productos & inventario ───────────────────────────────────
             const prodPendientes = await db.productos.where('estado_sincronizacion').equals(0).toArray();
-            if (prodPendientes.length > 0) {
+            const prodAEliminar = prodPendientes.filter(p => p.eliminado);
+            const prodAUpsert   = prodPendientes.filter(p => !p.eliminado);
+
+            // Eliminar de Supabase los productos borrados localmente
+            for (const p of prodAEliminar) {
+                const { error: delProdErr } = await withTimeout(() =>
+                    supabase.from('productos').delete().eq('id', p.id)
+                );
+                if (!delProdErr) {
+                    // También limpiar sus composiciones en Supabase
+                    await withTimeout(() =>
+                        supabase.from('composiciones').delete().eq('producto_padre_id', p.id)
+                    );
+                    // Hard-delete local ahora que está confirmado en la nube
+                    await db.productos.delete(p.id);
+                    await db.composiciones.where('producto_padre_id').equals(p.id).delete();
+                }
+            }
+
+            // Upsert productos nuevos/editados
+            if (prodAUpsert.length > 0) {
                 const { error: prodError } = await withTimeout(() =>
                     supabase.from('productos').upsert(
-                        prodPendientes.map(p => ({
+                        prodAUpsert.map(p => ({
                             id: p.id,
                             negocio_id: p.negocio_id,
                             nombre: p.nombre,
@@ -290,7 +336,7 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                 if (!prodError) {
                     let stockSyncOk = true;
                     if (sucursalId) {
-                        const items = prodPendientes.map(p => ({
+                        const items = prodAUpsert.map(p => ({
                             sucursal_id: sucursalId,
                             producto_id: p.id,
                             stock_actual: p.stock_actual,
@@ -310,9 +356,8 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                             stockSyncOk = false;
                         }
                     }
-                    // Solo marcar como sincronizado si el stock también subió correctamente
                     if (stockSyncOk) {
-                        await db.productos.bulkPut(prodPendientes.map(p => ({ ...p, estado_sincronizacion: 1 })));
+                        await db.productos.bulkPut(prodAUpsert.map(p => ({ ...p, estado_sincronizacion: 1 })));
                     }
                 }
             }
