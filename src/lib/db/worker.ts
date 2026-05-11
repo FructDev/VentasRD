@@ -111,12 +111,14 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                         // Hay dato confiable de la nube → usar siempre
                         return { ...p, stock_actual: cloudStock.stock_actual, stock_minimo: cloudStock.stock_minimo, estado_sincronizacion: 1 };
                     }
-                    // Sin dato en la nube → preservar stock local si existe
+                    // Sin dato en inventario_sucursales → usar stock del campo en productos
+                    // (fallback cuando el push de inventario_sucursales falló, ej: env var faltante).
+                    // Si tampoco hay ahí, preservar stock local; si es dispositivo nuevo, queda p.stock_actual.
                     const local = await db.productos.get(p.id);
                     return {
                         ...p,
-                        stock_actual: local?.stock_actual ?? 0,
-                        stock_minimo: local?.stock_minimo ?? 0,
+                        stock_actual: local?.stock_actual ?? p.stock_actual ?? 0,
+                        stock_minimo: local?.stock_minimo ?? p.stock_minimo ?? 0,
                         estado_sincronizacion: 1,
                     };
                 }));
@@ -275,6 +277,12 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                             costo: p.costo,
                             tasa_itbis: p.tasa_itbis,
                             tipo: p.tipo,
+                            // Subir stock también a productos como fallback multi-dispositivo.
+                            // inventario_sucursales es la verdad por sucursal, pero si ese push
+                            // falla (env var faltante en producción), el otro dispositivo al menos
+                            // ve el stock correcto via este campo.
+                            stock_actual: p.stock_actual,
+                            stock_minimo: p.stock_minimo,
                             fecha_actualizacion: p.fecha_actualizacion || Date.now(),
                         }))
                     )

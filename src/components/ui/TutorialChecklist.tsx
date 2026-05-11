@@ -65,7 +65,7 @@ export default function TutorialChecklist() {
     const CIRC = 56.55;
 
     return (
-        <div className="fixed bottom-6 right-4 z-50 flex flex-col items-end gap-2">
+        <div className="fixed bottom-6 left-4 z-50 flex flex-col items-start gap-2">
             {open && (
                 <div className="w-72 bg-navy-2 border border-navy-3 rounded-2xl shadow-2xl overflow-hidden animate-fade-in">
                     {/* Header */}
