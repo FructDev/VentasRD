@@ -1,9 +1,10 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, Suspense } from 'react';
 import { supabase } from '@/lib/supabase/client';
 import Link from 'next/link';
 import { useConfigStore } from '@/store/useConfigStore';
+import { useSearchParams } from 'next/navigation';
 import { ShoppingCart, Check, WifiOff } from 'lucide-react';
 
 const FEATURES = [
@@ -11,6 +12,17 @@ const FEATURES = [
     'Sincroniza automáticamente cuando vuelve la señal',
     'Historial, inventario y fiados en un solo lugar',
 ];
+
+function ConfirmedBanner() {
+    const searchParams = useSearchParams();
+    if (searchParams.get('confirmed') !== 'true') return null;
+    return (
+        <div className="mb-6 flex items-center gap-3 px-4 py-3 bg-vr-green/10 border border-vr-green/25 rounded-xl text-vr-green text-sm font-bold">
+            <span className="text-base">✅</span>
+            <span>¡Correo confirmado! Ya puedes iniciar sesión.</span>
+        </div>
+    );
+}
 
 export default function LoginPage() {
     const { isOnline } = useConfigStore();
@@ -103,6 +115,10 @@ export default function LoginPage() {
                         <h1 className="text-2xl font-display font-black text-white mb-1">Inicia sesión</h1>
                         <p className="text-vr-gray text-sm">Bienvenido de vuelta a tu punto de venta</p>
                     </div>
+
+                    <Suspense>
+                        <ConfirmedBanner />
+                    </Suspense>
 
                     <form onSubmit={handleLogin} className="space-y-4">
                         <div>

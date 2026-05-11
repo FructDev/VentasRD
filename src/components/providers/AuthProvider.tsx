@@ -7,7 +7,7 @@ import { useRouter, usePathname } from 'next/navigation';
 import PinScreen from '@/components/ui/PinScreen';
 import SubscriptionGate from '@/components/ui/SubscriptionGate';
 
-const RUTAS_PUBLICAS = ['/login', '/registro', '/landing', '/offline', '/pin', '/recuperar-contrasena', '/actualizar-contrasena', '/superadmin'];
+const RUTAS_PUBLICAS = ['/login', '/registro', '/landing', '/offline', '/pin', '/recuperar-contrasena', '/actualizar-contrasena', '/superadmin', '/auth/confirm', '/onboarding', '/select-branch'];
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
     const router = useRouter();
@@ -82,7 +82,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                     }
                 }
 
-                // 3. AUTO-SANACIÓN: Si no tiene, se lo creamos en este instante (solo si hay internet y realmente es nulo)
+                // 3. AUTO-SANACIÓN: Si no tiene negocio, crearlo ahora
                 if (!negocio && !error) {
                     console.log("Creando negocio faltante...");
                     const trialHasta = Date.now() + 30 * 24 * 60 * 60 * 1000; // 30 días
@@ -91,9 +91,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                         .insert({ dueño_id: user.id, nombre: 'Mi Negocio', pin_admin: '1234', plan_activo: false, trial_hasta: trialHasta })
                         .select('id, nombre, onboarding_completado, pin_admin, whatsapp_dueno, rnc, direccion, mensaje_ticket, plan_activo, trial_hasta')
                         .single();
-                    
+
                     if (insertError) throw insertError;
                     negocio = nuevoNegocio;
+                }
+
+                // 3.B AUTO-TRIAL: Si el negocio existe pero no tiene trial ni plan activo
+                // (puede pasar si un trigger de Supabase creó el negocio sin trial_hasta)
+                if (negocio && !negocio.plan_activo && !negocio.trial_hasta) {
+                    const trialHasta = Date.now() + 30 * 24 * 60 * 60 * 1000;
+                    await supabase
+                        .from('negocios')
+                        .update({ trial_hasta: trialHasta })
+                        .eq('id', negocio.id);
+                    negocio = { ...negocio, trial_hasta: trialHasta };
                 }
 
                 // 4. Guardar en el estado global

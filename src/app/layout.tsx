@@ -5,6 +5,7 @@ import "./globals.css";
 import { SyncProvider } from "@/components/providers/SyncProvider";
 import { AuthProvider } from "@/components/providers/AuthProvider";
 import GlobalToast from "@/components/ui/GlobalToast";
+import TutorialChecklist from "@/components/ui/TutorialChecklist";
 import { ErrorBoundary } from "@/components/ui/ErrorBoundary";
 
 const syne = Syne({
@@ -63,6 +64,7 @@ export default function RootLayout({
             <AuthProvider>
               {children}
               <GlobalToast />
+              <TutorialChecklist />
             </AuthProvider>
           </SyncProvider>
         </ErrorBoundary>
