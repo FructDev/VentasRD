@@ -1,7 +1,7 @@
 // src/app/inventario/page.tsx
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useMemo, useState, lazy, Suspense } from 'react';
 import { db } from '@/lib/db/dexie';
 import { useProductosTenant, useComposicionesTenant } from '@/lib/db/tenantQuery';
 import { useConfigStore } from '@/store/useConfigStore';
@@ -14,6 +14,8 @@ import TopBar from '@/components/shared/TopBar';
 import OfflineBanner from '@/components/shared/OfflineBanner';
 import { SkeletonTable } from '@/components/ui/Skeleton';
 import Pagination from '@/components/ui/Pagination';
+
+const BarcodeScanner = lazy(() => import('@/components/ui/BarcodeScanner'));
 
 export default function InventarioPage() {
     const { negocioId } = useConfigStore();
@@ -58,6 +60,7 @@ export default function InventarioPage() {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [productoEditando, setProductoEditando] = useState<ProductoLocal | null>(null);
     const [busquedaInsumo, setBusquedaInsumo] = useState('');
+    const [isScannerOpen, setIsScannerOpen] = useState(false);
 
     const [isAjusteOpen, setIsAjusteOpen] = useState(false);
     const [productoAjustando, setProductoAjustando] = useState<ProductoLocal | null>(null);
@@ -460,13 +463,29 @@ export default function InventarioPage() {
                                         Código de Barras
                                         <span className="ml-2 text-[10px] font-normal text-vr-gray/60 uppercase tracking-wide">(opcional)</span>
                                     </label>
-                                    <input
-                                        type="text"
-                                        placeholder="Escribe o escanea con el lector…"
-                                        className="w-full bg-navy-3 border border-navy-3 rounded-xl p-3 text-white font-mono placeholder-vr-gray/40 focus:border-gold outline-none transition-all"
-                                        value={formData.codigo_barras}
-                                        onChange={e => setFormData({ ...formData, codigo_barras: e.target.value })}
-                                    />
+                                    <div className="flex gap-2">
+                                        <input
+                                            type="text"
+                                            placeholder="Escribe o escanea con el lector…"
+                                            className="flex-1 bg-navy-3 border border-navy-3 rounded-xl p-3 text-white font-mono placeholder-vr-gray/40 focus:border-gold outline-none transition-all"
+                                            value={formData.codigo_barras}
+                                            onChange={e => setFormData({ ...formData, codigo_barras: e.target.value })}
+                                        />
+                                        <button
+                                            type="button"
+                                            onClick={() => setIsScannerOpen(true)}
+                                            title="Escanear con cámara"
+                                            className="px-3.5 bg-navy-3 border border-navy-3 rounded-xl text-vr-gray hover:text-gold hover:border-gold/50 transition-all flex items-center"
+                                        >
+                                            <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                                                <path d="M3 7V5a2 2 0 0 1 2-2h2" /><path d="M17 3h2a2 2 0 0 1 2 2v2" />
+                                                <path d="M21 17v2a2 2 0 0 1-2 2h-2" /><path d="M7 21H5a2 2 0 0 1-2-2v-2" />
+                                                <line x1="7" y1="12" x2="7" y2="12.01" /><line x1="12" y1="12" x2="17" y2="12" />
+                                                <line x1="7" y1="8" x2="7" y2="16" /><line x1="12" y1="8" x2="12" y2="16" />
+                                                <line x1="17" y1="8" x2="17" y2="16" />
+                                            </svg>
+                                        </button>
+                                    </div>
                                 </div>
 
                                 <div className="grid grid-cols-2 gap-3">
@@ -573,6 +592,18 @@ export default function InventarioPage() {
                 )}
             </div>
         </div>
+        {/* Scanner de cámara — carga lazy solo cuando se abre */}
+        {isScannerOpen && (
+            <Suspense fallback={null}>
+                <BarcodeScanner
+                    onScan={(code) => {
+                        setFormData(prev => ({ ...prev, codigo_barras: code }));
+                        setIsScannerOpen(false);
+                    }}
+                    onClose={() => setIsScannerOpen(false)}
+                />
+            </Suspense>
+        )}
         </PinGuard>
     );
 }
