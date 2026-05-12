@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { BrowserMultiFormatReader } from '@zxing/browser';
+import { BrowserMultiFormatReader, IScannerControls } from '@zxing/browser';
 import { NotFoundException } from '@zxing/library';
 
 interface BarcodeScannerProps {
@@ -13,7 +13,7 @@ export default function BarcodeScanner({ onScan, onClose }: BarcodeScannerProps)
     const videoRef = useRef<HTMLVideoElement>(null);
     const [error, setError] = useState<string | null>(null);
     const [scanned, setScanned] = useState(false);
-    const readerRef = useRef<BrowserMultiFormatReader | null>(null);
+    const controlsRef = useRef<IScannerControls | null>(null);
 
     useEffect(() => {
         let mounted = true;
@@ -21,7 +21,6 @@ export default function BarcodeScanner({ onScan, onClose }: BarcodeScannerProps)
         const iniciar = async () => {
             try {
                 const reader = new BrowserMultiFormatReader();
-                readerRef.current = reader;
 
                 const devices = await BrowserMultiFormatReader.listVideoInputDevices();
                 if (devices.length === 0) {
@@ -34,14 +33,13 @@ export default function BarcodeScanner({ onScan, onClose }: BarcodeScannerProps)
                     /back|rear|environment/i.test(d.label)
                 ) ?? devices[devices.length - 1];
 
-                await reader.decodeFromVideoDevice(
+                const controls = await reader.decodeFromVideoDevice(
                     camaraTrasera.deviceId,
                     videoRef.current!,
                     (result, err) => {
-                        if (!mounted || scanned) return;
+                        if (!mounted) return;
                         if (result) {
                             setScanned(true);
-                            // Vibrar si el dispositivo lo soporta
                             if ('vibrate' in navigator) navigator.vibrate(80);
                             onScan(result.getText());
                         } else if (err && !(err instanceof NotFoundException)) {
@@ -49,6 +47,7 @@ export default function BarcodeScanner({ onScan, onClose }: BarcodeScannerProps)
                         }
                     }
                 );
+                controlsRef.current = controls;
             } catch (e: any) {
                 if (!mounted) return;
                 if (e?.name === 'NotAllowedError') {
@@ -65,7 +64,7 @@ export default function BarcodeScanner({ onScan, onClose }: BarcodeScannerProps)
 
         return () => {
             mounted = false;
-            readerRef.current?.reset();
+            controlsRef.current?.stop();
         };
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
@@ -113,10 +112,10 @@ export default function BarcodeScanner({ onScan, onClose }: BarcodeScannerProps)
                         <div className="relative z-10 flex flex-col items-center">
                             <div className="w-72 h-44 relative">
                                 {/* Corner brackets */}
-                                <span className="absolute top-0 left-0 w-8 h-8 border-t-3 border-l-3 border-gold rounded-tl-lg" style={{ borderWidth: '3px' }} />
-                                <span className="absolute top-0 right-0 w-8 h-8 border-t-3 border-r-3 border-gold rounded-tr-lg" style={{ borderWidth: '3px' }} />
-                                <span className="absolute bottom-0 left-0 w-8 h-8 border-b-3 border-l-3 border-gold rounded-bl-lg" style={{ borderWidth: '3px' }} />
-                                <span className="absolute bottom-0 right-0 w-8 h-8 border-b-3 border-r-3 border-gold rounded-br-lg" style={{ borderWidth: '3px' }} />
+                                <span className="absolute top-0 left-0 w-8 h-8 border-gold rounded-tl-lg" style={{ borderWidth: '3px', borderTopStyle: 'solid', borderLeftStyle: 'solid' }} />
+                                <span className="absolute top-0 right-0 w-8 h-8 border-gold rounded-tr-lg" style={{ borderWidth: '3px', borderTopStyle: 'solid', borderRightStyle: 'solid' }} />
+                                <span className="absolute bottom-0 left-0 w-8 h-8 border-gold rounded-bl-lg" style={{ borderWidth: '3px', borderBottomStyle: 'solid', borderLeftStyle: 'solid' }} />
+                                <span className="absolute bottom-0 right-0 w-8 h-8 border-gold rounded-br-lg" style={{ borderWidth: '3px', borderBottomStyle: 'solid', borderRightStyle: 'solid' }} />
 
                                 {/* Scan line animation */}
                                 {!scanned && (
