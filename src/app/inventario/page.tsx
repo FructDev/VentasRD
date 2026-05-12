@@ -455,6 +455,20 @@ export default function InventarioPage() {
                                     <input required type="text" className="w-full bg-navy-3 border border-navy-3 rounded-xl p-3 text-white focus:border-gold outline-none transition-all" value={formData.nombre} onChange={e => setFormData({ ...formData, nombre: e.target.value })} />
                                 </div>
 
+                                <div>
+                                    <label className="block text-sm font-bold text-vr-gray mb-1.5">
+                                        Código de Barras
+                                        <span className="ml-2 text-[10px] font-normal text-vr-gray/60 uppercase tracking-wide">(opcional)</span>
+                                    </label>
+                                    <input
+                                        type="text"
+                                        placeholder="Escribe o escanea con el lector…"
+                                        className="w-full bg-navy-3 border border-navy-3 rounded-xl p-3 text-white font-mono placeholder-vr-gray/40 focus:border-gold outline-none transition-all"
+                                        value={formData.codigo_barras}
+                                        onChange={e => setFormData({ ...formData, codigo_barras: e.target.value })}
+                                    />
+                                </div>
+
                                 <div className="grid grid-cols-2 gap-3">
                                     {formData.tipo !== 'insumo' ? (
                                         <div>
