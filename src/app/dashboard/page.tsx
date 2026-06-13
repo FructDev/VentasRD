@@ -48,8 +48,12 @@ function getRango(periodo: Periodo): { desde: number; hasta: number } {
 }
 
 export default function DashboardPage() {
-    const { negocioId } = useConfigStore();
+    const { negocioId, rolUsuario, nombreUsuario } = useConfigStore();
     const [periodo, setPeriodo] = useState<Periodo>('hoy');
+
+    // El vendedor ve un panel restringido: solo SUS ventas, sin ganancias,
+    // gastos, fiados ni datos de otros vendedores (información del dueño).
+    const esVendedor = rolUsuario === 'vendedor';
 
     // Detect loading state — undefined = still querying IndexedDB
     const ventasRaw = useLiveQuery(
@@ -72,9 +76,15 @@ export default function DashboardPage() {
     const transacciones = useTransaccionesFiadoTenant();
     const gastosPeriodo = useGastosRangoTenant(desde, hasta);
 
+    // Ventas que ve el usuario: el vendedor solo las suyas; el dueño/admin todas
+    const ventasVista = useMemo(
+        () => esVendedor ? ventasPeriodo.filter(v => v.vendedor_nombre === nombreUsuario) : ventasPeriodo,
+        [esVendedor, ventasPeriodo, nombreUsuario]
+    );
+
     // === KPIs CALCULADOS ===
-    const totalVentas = ventasPeriodo.reduce((acc, v) => acc + v.total, 0);
-    const ticketPromedio = ventasPeriodo.length > 0 ? totalVentas / ventasPeriodo.length : 0;
+    const totalVentas = ventasVista.reduce((acc, v) => acc + v.total, 0);
+    const ticketPromedio = ventasVista.length > 0 ? totalVentas / ventasVista.length : 0;
 
     // Ganancia bruta del período (precio_venta - costo) * cantidad
     const gananciaBruta = useMemo(() => {
@@ -130,7 +140,7 @@ export default function DashboardPage() {
         if (periodo === 'hoy') {
             const horas: Record<number, number> = {};
             for (let i = 6; i < 24; i++) horas[i] = 0;
-            ventasPeriodo.forEach(v => {
+            ventasVista.forEach(v => {
                 const hora = new Date(v.fecha_creacion).getHours();
                 horas[hora] = (horas[hora] || 0) + v.total;
             });
@@ -140,19 +150,19 @@ export default function DashboardPage() {
         } else {
             // Agrupar por día
             const dias: Record<string, number> = {};
-            ventasPeriodo.forEach(v => {
+            ventasVista.forEach(v => {
                 const d = new Date(v.fecha_creacion);
                 const key = `${d.getDate()}/${d.getMonth() + 1}`;
                 dias[key] = (dias[key] || 0) + v.total;
             });
             return Object.entries(dias).map(([hora, ventas]) => ({ hora, ventas: Math.round(ventas) }));
         }
-    }, [ventasPeriodo, periodo]);
+    }, [ventasVista, periodo]);
 
     // Data: Ventas por método de pago
     const ventasPorMetodo = useMemo(() => {
         const metodos: Record<string, number> = {};
-        ventasPeriodo.forEach(v => { metodos[v.metodo_pago] = (metodos[v.metodo_pago] || 0) + v.total; });
+        ventasVista.forEach(v => { metodos[v.metodo_pago] = (metodos[v.metodo_pago] || 0) + v.total; });
         const labels: Record<string, string> = { efectivo: 'Efectivo', tarjeta: 'Tarjeta', transferencia: 'Transferencia', fiado: 'Fiado' };
         return Object.entries(metodos).map(([m, monto]) => ({ name: labels[m] || m, value: Math.round(monto) }));
     }, [ventasPeriodo]);
@@ -168,8 +178,8 @@ export default function DashboardPage() {
                 <div className="max-w-6xl mx-auto">
                     <header className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 mb-6">
                         <div>
-                            <h1 className="text-2xl md:text-3xl font-display font-extrabold text-white">Dashboard</h1>
-                            <p className="text-vr-gray font-medium mt-1 text-sm">Resumen de tu negocio</p>
+                            <h1 className="text-2xl md:text-3xl font-display font-extrabold text-white">{esVendedor ? 'Mis Ventas' : 'Dashboard'}</h1>
+                            <p className="text-vr-gray font-medium mt-1 text-sm">{esVendedor ? 'Tu desempeño' : 'Resumen de tu negocio'}</p>
                         </div>
                         <div className="flex items-center gap-3">
                             {/* Period selector */}
@@ -201,23 +211,24 @@ export default function DashboardPage() {
                         </div>
                     </header>
 
-                    {/* Resumen de ayer — aparece una vez al día */}
-                    <ResumenDiario />
+                    {/* Resumen de ayer — solo para el dueño/admin (tiene ganancia y fiados) */}
+                    {!esVendedor && <ResumenDiario />}
 
                     {/* KPI Cards */}
                     {isLoading ? (
                         <div className="mb-6"><SkeletonKPIGrid /></div>
                     ) : (
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                    <div className={`grid grid-cols-2 gap-4 mb-6 ${esVendedor ? 'md:grid-cols-2 max-w-xl' : 'md:grid-cols-4'}`}>
                         <div className="bg-navy-2 p-5 rounded-2xl border border-navy-3 relative overflow-hidden glow-gold">
                             <div className="relative z-10">
                                 <p className="text-vr-gray font-bold uppercase text-[10px] tracking-widest">Vendido</p>
                                 <h2 className="text-2xl font-black font-mono mt-2 text-gold">{formatDOP(totalVentas)}</h2>
-                                <p className="mt-1 text-vr-green text-xs font-bold">↑ {ventasPeriodo.length} transacciones</p>
+                                <p className="mt-1 text-vr-green text-xs font-bold">↑ {ventasVista.length} transacciones</p>
                             </div>
                             <div className="absolute -right-4 -bottom-4 w-16 h-16 bg-gold/5 rounded-full"></div>
                         </div>
 
+                        {!esVendedor && (
                         <div className="bg-navy-2 p-5 rounded-2xl border border-navy-3">
                             <p className="text-vr-gray font-bold uppercase text-[10px] tracking-widest">Ganancia Neta</p>
                             {(() => {
@@ -235,17 +246,20 @@ export default function DashboardPage() {
                                 );
                             })()}
                         </div>
+                        )}
 
                         <div className="bg-navy-2 p-5 rounded-2xl border border-navy-3">
                             <p className="text-vr-gray font-bold uppercase text-[10px] tracking-widest">Ticket Promedio</p>
                             <h2 className="text-2xl font-black font-mono mt-2 text-white">{formatDOP(ticketPromedio)}</h2>
                         </div>
 
+                        {!esVendedor && (
                         <div className={`bg-navy-2 p-5 rounded-2xl border ${balanceFiados > 0 ? 'border-vr-orange/30' : 'border-navy-3'}`}>
                             <p className="text-vr-gray font-bold uppercase text-[10px] tracking-widest">Te Deben (Fiados)</p>
                             <h2 className={`text-2xl font-black font-mono mt-2 ${balanceFiados > 0 ? 'text-vr-orange' : 'text-vr-green'}`}>{formatDOP(balanceFiados)}</h2>
                             <p className="mt-1 text-vr-gray text-xs">{clientes.length} clientes</p>
                         </div>
+                        )}
                     </div>
                     )}
 
@@ -253,7 +267,7 @@ export default function DashboardPage() {
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
                         <div className="lg:col-span-2 bg-navy-2 p-6 rounded-2xl border border-navy-3">
                             <h3 className="text-white font-display font-bold mb-4">{chartLabel}</h3>
-                            {ventasPeriodo.length === 0 ? (
+                            {ventasVista.length === 0 ? (
                                 <div className="h-48 flex items-center justify-center text-vr-gray text-sm">
                                     <span>Sin datos aún — las ventas aparecerán aquí en tiempo real</span>
                                 </div>
@@ -297,7 +311,8 @@ export default function DashboardPage() {
                         </div>
                     </div>
 
-                    {/* BI Row */}
+                    {/* BI Row + Consejo — datos del negocio, solo dueño/admin */}
+                    {!esVendedor && (<>
                     <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-6 mb-6">
                         <div className="bg-navy-2 p-6 rounded-2xl border border-navy-3">
                             <h3 className="text-white font-display font-bold mb-3">Por Vendedor</h3>
@@ -400,6 +415,7 @@ export default function DashboardPage() {
                                 : "Aún no hay ventas en este período. ¡Prepárate revisando el inventario!"}
                         </p>
                     </div>
+                    </>)}
                 </div>
             </div>
         </div>

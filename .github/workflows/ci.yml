@@ -77,3 +77,6 @@ jobs:
 
       - name: Smoke de cierre de sesión (cajero)
         run: node scripts/smoke-logout.mjs
+
+      - name: Smoke de roles (vendedor restringido vs admin)
+        run: node scripts/smoke-roles.mjs

@@ -14,6 +14,7 @@ import { useReactToPrint } from 'react-to-print';
 import { TicketVenta } from '@/components/TicketVenta';
 import { CartItem } from '@/store/useCartStore';
 import PinGuard from '@/components/ui/PinGuard';
+import ConfirmModal from '@/components/ui/ConfirmModal';
 import TopBar from '@/components/shared/TopBar';
 import OfflineBanner from '@/components/shared/OfflineBanner';
 import { SkeletonTable } from '@/components/ui/Skeleton';
@@ -47,7 +48,8 @@ interface ItemDevolucion {
 }
 
 export default function HistorialPage() {
-    const { negocioId, showToast, negocioNombre, negocioRnc, negocioDireccion, negocioTelefono, negocioMensajeTicket, negocioLogo, impresion } = useConfigStore();
+    const { negocioId, showToast, negocioNombre, negocioRnc, negocioDireccion, negocioTelefono, negocioMensajeTicket, negocioLogo, impresion, rolUsuario } = useConfigStore();
+    const [confirmDevolucionPin, setConfirmDevolucionPin] = useState(false);
     const ventasRaw = useLiveQuery(
         () => negocioId ? db.ventas.where('negocio_id').equals(negocioId).limit(1).toArray() : [],
         [negocioId]
@@ -574,7 +576,11 @@ export default function HistorialPage() {
                                     Cancelar
                                 </button>
                                 <button
-                                    onClick={confirmarDevolucion}
+                                    onClick={() => {
+                                        // Devolución = dinero que sale: si no es admin, pedir autorización
+                                        if (rolUsuario === 'admin') confirmarDevolucion();
+                                        else setConfirmDevolucionPin(true);
+                                    }}
                                     disabled={procesando || montoDevolucion === 0}
                                     className="flex-1 py-3 bg-vr-red/80 hover:bg-vr-red text-white font-extrabold rounded-xl transition-all disabled:opacity-40"
                                 >
@@ -584,6 +590,18 @@ export default function HistorialPage() {
                         </div>
                     </div>
                 )}
+
+                {/* Autorización del administrador para devoluciones de empleados */}
+                <ConfirmModal
+                    isOpen={confirmDevolucionPin}
+                    title="Autorizar devolución"
+                    mensaje="Una devolución reintegra dinero y repone stock. Requiere la autorización del administrador."
+                    confirmLabel="Autorizar y devolver"
+                    requierePinAdmin
+                    procesando={procesando}
+                    onConfirm={() => { setConfirmDevolucionPin(false); confirmarDevolucion(); }}
+                    onClose={() => setConfirmDevolucionPin(false)}
+                />
             </div>
         </PinGuard>
     );
