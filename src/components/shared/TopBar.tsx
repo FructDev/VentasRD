@@ -6,21 +6,23 @@ import { usePathname } from 'next/navigation';
 import { useConfigStore } from '@/store/useConfigStore';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '@/lib/db/dexie';
+import { ACCESOS } from '@/lib/acceso';
 
 const navItems = [
-    { href: '/', label: 'Ventas', icon: '💰' },
-    { href: '/historial', label: 'Historial', icon: '🗒️' },
-    { href: '/inventario', label: 'Inventario', icon: '📦' },
-    { href: '/clientes', label: 'Clientes', icon: '👥' },
-    { href: '/dashboard', label: 'Resumen', icon: '📊' },
-    { href: '/reportes', label: 'Reportes', icon: '📁', requiresAdmin: true },
-    { href: '/configuracion', label: 'Ajustes', icon: '⚙️', requiresAdmin: true },
-    { href: '/admin', label: 'Admin', icon: '🛠️', requiresAdmin: true },
+    { href: '/',              label: 'Ventas',     icon: '💰' },
+    { href: '/historial',     label: 'Historial',  icon: '🗒️' },
+    { href: '/inventario',    label: 'Inventario', icon: '📦' },
+    { href: '/clientes',      label: 'Clientes',   icon: '👥' },
+    { href: '/gastos',        label: 'Gastos',     icon: '💸' },
+    { href: '/dashboard',     label: 'Resumen',    icon: '📊' },
+    { href: '/reportes',      label: 'Reportes',   icon: '📁' },
+    { href: '/configuracion', label: 'Ajustes',    icon: '⚙️' },
+    { href: '/admin',         label: 'Admin',      icon: '🛠️', soloAdmin: true },
 ];
 
 export default function TopBar() {
     const pathname = usePathname();
-    const { isOnline, isAdminMode, negocioNombre } = useConfigStore();
+    const { isOnline, isAdminMode, negocioNombre, rolUsuario, nombreUsuario } = useConfigStore();
 
     const ventasPendientes = useLiveQuery(
         () => db.ventas.where('estado_sincronizacion').equals(0).count(),
@@ -44,7 +46,9 @@ export default function TopBar() {
             <nav className="flex items-center gap-0.5 sm:gap-1 mx-1 sm:mx-4 overflow-x-auto scrollbar-none">
                 {navItems.map(item => {
                     const isActive = pathname === item.href;
-                    if (item.requiresAdmin && !isAdminMode) return null;
+                    const rutasPermitidas = ACCESOS[rolUsuario] ?? ACCESOS.cajero;
+                    if (!rutasPermitidas.includes(item.href)) return null;
+                    if (item.soloAdmin && !isAdminMode) return null;
 
                     return (
                         <Link
@@ -67,6 +71,16 @@ export default function TopBar() {
 
             {/* Estado derecho */}
             <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
+                {/* Badge de usuario si es empleado */}
+                {nombreUsuario && (
+                    <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 bg-navy-3 border border-navy-3 rounded-lg">
+                        <span className="text-xs font-bold text-white truncate max-w-[80px]">{nombreUsuario}</span>
+                        <span className={`text-[10px] font-black px-1.5 py-0.5 rounded ${
+                            rolUsuario === 'vendedor' ? 'bg-vr-green/20 text-vr-green' : 'bg-blue-400/20 text-blue-400'
+                        }`}>{rolUsuario === 'vendedor' ? 'Vendedor' : 'Cajero'}</span>
+                    </div>
+                )}
+
                 {/* Ventas Pendientes */}
                 {ventasPendientes > 0 && (
                     <div className="flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-1.5 bg-gold/10 border border-gold/20 rounded-lg">

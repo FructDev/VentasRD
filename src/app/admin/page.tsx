@@ -8,13 +8,14 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { v4 as uuidv4 } from 'uuid';
 import PinGuard from '@/components/ui/PinGuard';
+import ConfirmModal from '@/components/ui/ConfirmModal';
 import { db } from '@/lib/db/dexie';
-import { formatDOP } from '@/lib/utils';
+import { formatDOP, hashPin } from '@/lib/utils';
 import TopBar from '@/components/shared/TopBar';
 import OfflineBanner from '@/components/shared/OfflineBanner';
 
 export default function AdminDashboard() {
-    const { negocioId, negocioNombre, sucursalId, user, isOnline, setSucursal, setAuth, showToast, cerrarSesionUsuario, desconectarDispositivo } = useConfigStore();
+    const { negocioId, negocioNombre, sucursalId, user, isOnline, setSucursal, setAuth, setPinAdmin, showToast, cerrarSesionUsuario, desconectarDispositivo } = useConfigStore();
     const router = useRouter();
 
     const [sucursales, setSucursales] = useState<any[]>([]);
@@ -110,13 +111,15 @@ export default function AdminDashboard() {
         if (!negocioId || newPin.length !== 4) return;
         
         setIsPinSaving(true);
+        // Guardar siempre hasheado (nunca texto plano en la BD)
+        const pinHasheado = await hashPin(newPin);
         const { error } = await supabase
             .from('negocios')
-            .update({ pin_admin: newPin })
+            .update({ pin_admin: pinHasheado })
             .eq('id', negocioId);
-            
+
         if (!error) {
-            setAuth(user, negocioId, negocioNombre, newPin);
+            setPinAdmin(pinHasheado);
             showToast("PIN actualizado correctamente", "success");
             setNewPin('');
         } else {
@@ -165,9 +168,9 @@ export default function AdminDashboard() {
         }
     };
 
+    const [confirmDesvincular, setConfirmDesvincular] = useState(false);
+
     const desvincularDispositivo = async () => {
-        if (!confirm('⚠️ ¡PELIGRO!\n\nEstás a punto de desvincular este dispositivo del negocio. Todas las ventas no sincronizadas y configuraciones locales se perderán irreversiblemente.\n\n¿Estás absolutamente seguro de continuar?')) return;
-        
         try {
             await supabase.auth.signOut();
             // Borramos la base de datos local
@@ -216,7 +219,7 @@ export default function AdminDashboard() {
                         <button onClick={cerrarSesion} className="px-4 py-2.5 bg-navy-3 border border-navy-4 text-white font-bold rounded-xl hover:bg-navy-4 transition-all text-sm">
                             Cerrar Sesión
                         </button>
-                        <button onClick={desvincularDispositivo} className="px-4 py-2.5 bg-vr-red/10 border border-vr-red/20 text-vr-red font-bold rounded-xl hover:bg-vr-red/20 transition-all flex items-center gap-2 text-sm">
+                        <button onClick={() => setConfirmDesvincular(true)} className="px-4 py-2.5 bg-vr-red/10 border border-vr-red/20 text-vr-red font-bold rounded-xl hover:bg-vr-red/20 transition-all flex items-center gap-2 text-sm">
                             <span>⚠️</span> <span className="hidden sm:inline">Desvincular</span>
                         </button>
                     </div>
@@ -420,6 +423,16 @@ export default function AdminDashboard() {
                 )}
             </div>
             </div>
+
+            {/* Confirmación de desvinculación (acción destructiva) */}
+            <ConfirmModal
+                isOpen={confirmDesvincular}
+                title="⚠️ Desvincular dispositivo"
+                mensaje={<>Todas las <span className="font-bold text-white">ventas no sincronizadas</span> y configuraciones locales de este dispositivo se perderán <span className="font-bold text-vr-red">irreversiblemente</span>. ¿Estás absolutamente seguro?</>}
+                confirmLabel="Sí, desvincular"
+                onConfirm={() => { setConfirmDesvincular(false); desvincularDispositivo(); }}
+                onClose={() => setConfirmDesvincular(false)}
+            />
         </div>
         </PinGuard>
     );

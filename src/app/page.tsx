@@ -1,27 +1,30 @@
 // src/app/page.tsx
 'use client';
 
-import { useState, useEffect, useRef, useMemo } from 'react';
-import { useConfigStore } from '@/store/useConfigStore';
+import { useState, useEffect, useRef, useMemo, lazy, Suspense } from 'react';
+import { useConfigStore, getDispositivoId } from '@/store/useConfigStore';
 import { useCartStore } from '@/store/useCartStore';
 import { ProductoLocal } from '@/types/database';
-import { formatDOP } from '@/lib/utils';
+import { formatDOP, formatTicket } from '@/lib/utils';
 import Fuse from 'fuse.js';
 import { useReactToPrint } from 'react-to-print';
 import { TicketVenta } from '@/components/TicketVenta';
 import { db, getNextTicketNumber } from '@/lib/db/dexie';
+import { registrarMovimientoStock } from '@/lib/db/stock';
 import { useProductosTenant, useClientesTenant, useTransaccionesFiadoTenant } from '@/lib/db/tenantQuery';
 import { v4 as uuidv4 } from 'uuid';
 import TopBar from '@/components/shared/TopBar';
+const BarcodeScanner = lazy(() => import('@/components/ui/BarcodeScanner'));
 import OfflineBanner from '@/components/shared/OfflineBanner';
 import VentaLibreModal from '@/components/shared/VentaLibreModal';
 import CajaModal from '@/components/shared/CajaModal';
+import ConfirmModal from '@/components/ui/ConfirmModal';
 import { SkeletonProductGrid } from '@/components/ui/Skeleton';
 import { useLiveQuery } from 'dexie-react-hooks';
 
 export default function POSPage() {
-  const { negocioId, negocioNombre, sucursalId, showToast, negocioRnc, negocioDireccion, negocioMensajeTicket, consumirNcf, ncf: ncfConfig } = useConfigStore();
-  const { items, subtotal, itbis, descuento, total, tipoDescuento, valorDescuento, addItem, clearCart, updateQuantity, setDescuento } = useCartStore();
+  const { negocioId, negocioNombre, sucursalId, showToast, negocioRnc, negocioTelefono, negocioDireccion, negocioMensajeTicket, negocioLogo, nombreUsuario, rolUsuario, consumirNcf, ncf: ncfConfig, impresion, dispositivoId } = useConfigStore();
+  const { items, subtotal, itbis, descuento, total, tipoDescuento, valorDescuento, addItem, addItemConSerial, clearCart, updateQuantity, setDescuento, setCliente, clienteActivoId, tipoPrecios } = useCartStore();
 
   const [searchTerm, setSearchTerm] = useState('');
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -37,12 +40,57 @@ export default function POSPage() {
   const [isCajaOpen, setIsCajaOpen] = useState(false);
   const [ultimoTicketNum, setUltimoTicketNum] = useState<number | undefined>(undefined);
   const [ultimoNcf, setUltimoNcf] = useState<string | undefined>(undefined);
+  const [ultimaVentaId, setUltimaVentaId] = useState<string | null>(null);
+  const [anulando, setAnulando] = useState(false);
+  const [confirmAnularOpen, setConfirmAnularOpen] = useState(false);
   const [emitirNcf, setEmitirNcf] = useState(false);
   const [isCartOpen, setIsCartOpen] = useState(false); // mobile cart drawer
+  const [busquedaCliente, setBusquedaCliente] = useState('');
+  const [mostrarDropdownCliente, setMostrarDropdownCliente] = useState(false);
+
+  // Modal selector de serial
+  const [productoParaSerial, setProductoParaSerial] = useState<ProductoLocal | null>(null);
+  const [busquedaSerial, setBusquedaSerial] = useState('');
+  const [scannerSerialPOS, setScannerSerialPOS] = useState(false);
   const inputMontoRef = useRef<HTMLInputElement>(null);
 
   const ticketRef = useRef<HTMLDivElement>(null);
   const handlePrint = useReactToPrint({ contentRef: ticketRef });
+
+  // Imprime por la vía configurada: ESC/POS directo o diálogo del navegador.
+  // Recibe el número de ticket/ncf como argumento porque al auto-imprimir
+  // el estado de React aún no se ha actualizado.
+  const imprimirTicket = async (ticketNum?: number, ncfVenta?: string) => {
+    if (impresion.modoImpresion === 'directa') {
+      try {
+        const { imprimirVentaDirecta } = await import('@/lib/print/tickets');
+        await imprimirVentaDirecta({
+          items: items.map(i => ({ cantidad: i.cantidad, nombre: i.nombre, precio: i.precio_venta })),
+          subtotal, itbis, descuento, total,
+          metodoPago,
+          montoRecibido: metodoPago === 'efectivo' ? parseFloat(montoRecibido || '0') : total,
+          devuelta: metodoPago === 'efectivo' ? devuelta : 0,
+          negocio: {
+            nombre: negocioNombre || 'VentaRD',
+            rnc: negocioRnc || undefined,
+            direccion: negocioDireccion || undefined,
+            telefono: negocioTelefono || undefined,
+          },
+          numeroTicket: ticketNum ?? ultimoTicketNum,
+          cajaCodigo: dispositivoId || undefined,
+          ncf: ncfVenta ?? ultimoNcf,
+          vendedor: nombreUsuario || undefined,
+          mensajePie: negocioMensajeTicket || undefined,
+          logoUrl: negocioLogo || undefined,
+        }, impresion);
+        return;
+      } catch (e) {
+        console.error('[print] impresión directa falló, usando navegador:', e);
+        showToast('Impresora directa no disponible — usando impresión del navegador.', 'info');
+      }
+    }
+    handlePrint();
+  };
 
   const productosRaw = useLiveQuery(
     () => negocioId ? db.productos.where('negocio_id').equals(negocioId).limit(1).toArray() : [],
@@ -54,11 +102,25 @@ export default function POSPage() {
   const clientes = useClientesTenant();
   const transacciones = useTransaccionesFiadoTenant();
 
+  // Seriales disponibles del producto seleccionado para el modal
+  const serialesDisponibles = useLiveQuery(async () => {
+    if (!productoParaSerial) return [];
+    return db.seriales
+      .where('producto_id').equals(productoParaSerial.id)
+      .filter(s => s.estado === 'disponible')
+      .toArray();
+  }, [productoParaSerial]) ?? [];
+
   const fuse = useMemo(() => new Fuse(productosEnDB, { keys: ['nombre', 'codigo_barras'], threshold: 0.4, ignoreLocation: true }), [productosEnDB]);
   const productosFiltrados = useMemo(() => {
     if (!searchTerm) return productosEnDB;
     return fuse.search(searchTerm).map(result => result.item);
   }, [searchTerm, fuse, productosEnDB]);
+
+  // ¿Hay números NCF disponibles para emitir? (bloques reservados o secuencia legada)
+  const ncfDisponible =
+    ncfConfig.bloques.some(b => b.proximo <= b.hasta) ||
+    (!ncfConfig.sembrado && (ncfConfig.actual === 0 ? ncfConfig.desde : ncfConfig.actual + 1) <= ncfConfig.hasta);
 
   const devuelta = parseFloat(montoRecibido || '0') - total;
   const totalMixto = parseFloat(montoEfectivoMixto || '0') + parseFloat(montoTransferenciaMixto || '0');
@@ -99,7 +161,8 @@ export default function POSPage() {
     setMontoEfectivoMixto('');
     setMontoTransferenciaMixto('');
     setVentaExitosa(false);
-    setClienteSeleccionadoId('');
+    // Pre-popular fiado con el cliente activo del carrito si existe
+    setClienteSeleccionadoId(clienteActivoId ?? '');
     setEmitirNcf(false);
     setIsCartOpen(false);
     setIsCheckoutOpen(true);
@@ -149,16 +212,20 @@ export default function POSPage() {
 
       const ncfGenerado = emitirNcf ? consumirNcf() || undefined : undefined;
 
-      await db.transaction('rw', [db.ventas, db.venta_detalles, db.productos, db.composiciones, db.transacciones_fiado], async () => {
-        const idVenta = uuidv4();
-        const ticketNum = await getNextTicketNumber(negocioId);
+      const cajaCodigo = getDispositivoId();
+      const idVenta = uuidv4();
+
+      await db.transaction('rw', [db.ventas, db.venta_detalles, db.productos, db.composiciones, db.transacciones_fiado, db.movimientos_stock], async () => {
+        const ticketNum = await getNextTicketNumber(negocioId, cajaCodigo);
 
         await db.ventas.add({
           id: idVenta,
           negocio_id: negocioId,
           sucursal_id: sucursalId || undefined,
           numero_ticket: ticketNum,
+          caja_codigo: cajaCodigo,
           ncf: ncfGenerado,
+          ...(nombreUsuario && { vendedor_nombre: nombreUsuario }),
           total: total,
           metodo_pago: metodoPago,
           ...(metodoPago === 'mixto' && {
@@ -206,35 +273,53 @@ export default function POSPage() {
             .toArray();
 
           if (receta.length > 0) {
+            // Combo: descontar cada insumo según la receta
             for (const ingrediente of receta) {
-              const insumoEnAlmacen = await db.productos.get(ingrediente.insumo_id);
-              if (insumoEnAlmacen) {
-                const cantidadARestar = ingrediente.cantidad_necesaria * item.cantidad;
-                const newStock = parseFloat((insumoEnAlmacen.stock_actual - cantidadARestar).toFixed(3));
-                await db.productos.update(ingrediente.insumo_id, {
-                  stock_actual: newStock,
-                  estado_sincronizacion: 0,
-                  fecha_actualizacion: Date.now()
-                });
-              }
-            }
-          } else {
-            const productoSimple = await db.productos.get(item.id);
-            if (productoSimple) {
-              const newStock = parseFloat((productoSimple.stock_actual - item.cantidad).toFixed(3));
-              await db.productos.update(item.id, {
-                stock_actual: newStock,
-                estado_sincronizacion: 0,
-                fecha_actualizacion: Date.now()
+              await registrarMovimientoStock({
+                productoId: ingrediente.insumo_id,
+                tipo: 'venta',
+                delta: -(ingrediente.cantidad_necesaria * item.cantidad),
+                referenciaId: idVenta,
               });
             }
+          } else {
+            await registrarMovimientoStock({
+              productoId: item.id,
+              tipo: 'venta',
+              delta: -item.cantidad,
+              referenciaId: idVenta,
+            });
           }
         }
       });
 
-      setUltimoTicketNum(await getNextTicketNumber(negocioId) - 1);
+      // Marcar seriales como vendidos (fuera de la transacción principal para no bloquearla)
+      const serialesVendidos = items.filter(i => i.serial_id);
+      if (serialesVendidos.length > 0) {
+        await Promise.all(serialesVendidos.map(i =>
+          db.seriales.update(i.serial_id!, {
+            estado: 'vendido',
+            venta_id: idVenta,
+            fecha_venta: Date.now(),
+            estado_sincronizacion: 0,
+            fecha_actualizacion: Date.now(),
+          })
+        ));
+      }
+
+      const ticketNumFinal = await getNextTicketNumber(negocioId, cajaCodigo) - 1;
+      setUltimoTicketNum(ticketNumFinal);
+      // Persistir el último ticket emitido (sobrevive a la purga de datos viejos)
+      useConfigStore.setState({ ultimoTicket: ticketNumFinal });
       setUltimoNcf(ncfGenerado);
+      setUltimaVentaId(idVenta);
       setVentaExitosa(true);
+
+      // Impresión automática al confirmar (pequeño delay para que React
+      // renderice el ticket oculto con el número de ticket actualizado)
+      if (impresion.autoImprimir) {
+        setTimeout(() => imprimirTicket(ticketNumFinal, ncfGenerado), 400);
+      }
 
     } catch (error) {
       console.error("Error en la transacción de venta:", error);
@@ -242,10 +327,116 @@ export default function POSPage() {
     }
   };
 
+  // Anula la venta recién hecha: devolución total auditable (queda en historial),
+  // repone el stock, revierte el cargo de fiado y libera los seriales.
+  const anularUltimaVenta = async () => {
+    if (!negocioId || !ultimaVentaId || anulando) return;
+    setAnulando(true);
+    try {
+      const idDevolucion = uuidv4();
+      await db.transaction('rw', [db.devoluciones, db.productos, db.composiciones, db.transacciones_fiado, db.movimientos_stock], async () => {
+        await db.devoluciones.add({
+          id: idDevolucion,
+          negocio_id: negocioId,
+          venta_id: ultimaVentaId,
+          items_devueltos: items.map(i => ({ producto_id: i.id, cantidad: i.cantidad, precio_unitario: i.precio_venta })),
+          monto_devuelto: total,
+          razon: `Venta anulada en caja${nombreUsuario ? ` por ${nombreUsuario}` : ''}`,
+          fecha_creacion: Date.now(),
+          estado_sincronizacion: 0,
+        });
+
+        // Reponer stock (combos vía receta)
+        for (const item of items) {
+          const receta = await db.composiciones.where('producto_padre_id').equals(item.id).toArray();
+          if (receta.length > 0) {
+            for (const ing of receta) {
+              await registrarMovimientoStock({
+                productoId: ing.insumo_id,
+                tipo: 'devolucion',
+                delta: ing.cantidad_necesaria * item.cantidad,
+                referenciaId: idDevolucion,
+              });
+            }
+          } else {
+            await registrarMovimientoStock({
+              productoId: item.id,
+              tipo: 'devolucion',
+              delta: item.cantidad,
+              referenciaId: idDevolucion,
+            });
+          }
+        }
+
+        // Revertir el cargo de fiado con un abono automático
+        if (metodoPago === 'fiado' && clienteSeleccionadoId) {
+          await db.transacciones_fiado.add({
+            id: uuidv4(),
+            negocio_id: negocioId,
+            cliente_id: clienteSeleccionadoId,
+            venta_id: ultimaVentaId,
+            tipo: 'abono',
+            monto: total,
+            concepto: 'Venta anulada en caja',
+            fecha_creacion: Date.now(),
+            estado_sincronizacion: 0,
+            fecha_actualizacion: Date.now(),
+          });
+        }
+      });
+
+      // Liberar los seriales vendidos en esta venta
+      const conSerial = items.filter(i => i.serial_id);
+      if (conSerial.length > 0) {
+        await Promise.all(conSerial.map(i =>
+          db.seriales.update(i.serial_id!, {
+            estado: 'disponible',
+            venta_id: null,
+            fecha_venta: null,
+            estado_sincronizacion: 0,
+            fecha_actualizacion: Date.now(),
+          })
+        ));
+      }
+
+      setConfirmAnularOpen(false);
+      setVentaExitosa(false);
+      setIsCheckoutOpen(false);
+      setUltimaVentaId(null);
+      clearCart();
+      setSearchTerm('');
+      showToast('Venta anulada — el stock fue repuesto.', 'info');
+      searchInputRef.current?.focus();
+    } catch (e) {
+      console.error('[anular]', e);
+      showToast('No se pudo anular la venta. Hazlo desde Historial → Devolver.', 'error');
+    } finally {
+      setAnulando(false);
+    }
+  };
+
   const getStockColor = (producto: ProductoLocal) => {
     if (producto.stock_actual <= 0) return 'text-vr-red';
     if (producto.stock_actual <= producto.stock_minimo) return 'text-vr-orange';
     return 'text-vr-gray';
+  };
+
+  // Cliente activo derivado de la lista de clientes
+  const clienteActivo = clientes.find(c => c.id === clienteActivoId) ?? null;
+  const clientesFiltrados = busquedaCliente.trim()
+    ? clientes.filter(c => c.nombre.toLowerCase().includes(busquedaCliente.toLowerCase()))
+    : clientes.slice(0, 8);
+
+  const seleccionarCliente = (cliente: typeof clientes[0]) => {
+    setCliente(cliente.id, (cliente.tipo_precio ?? 1) as 1 | 2 | 3);
+    setBusquedaCliente('');
+    setMostrarDropdownCliente(false);
+  };
+
+  const quitarCliente = () => {
+    setCliente(null, 1);
+    setBusquedaCliente('');
+    setMostrarDropdownCliente(false);
   };
 
   // Cart panel content - shared between desktop sidebar and mobile drawer
@@ -258,6 +449,65 @@ export default function POSPage() {
           <button onClick={clearCart} className="text-xs text-vr-red hover:bg-vr-red/10 px-2 sm:px-3 py-1 rounded-lg transition-colors font-bold">Limpiar</button>
           <button onClick={() => setIsCartOpen(false)} className="lg:hidden text-vr-gray hover:text-white font-bold text-xl px-1 transition-colors">✕</button>
         </div>
+      </div>
+
+      {/* Selector de cliente para pricing */}
+      <div className="px-3 sm:px-4 pt-2.5 pb-1 border-b border-navy-3/50 relative">
+        {clienteActivo ? (
+          <div className="flex items-center justify-between bg-navy-3/60 rounded-xl px-3 py-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="text-lg">👤</span>
+              <div className="min-w-0">
+                <p className="text-sm font-bold text-white truncate">{clienteActivo.nombre}</p>
+                <div className="flex items-center gap-1.5 mt-0.5">
+                  <span className="text-[10px] font-black bg-gold/20 text-gold px-1.5 py-0.5 rounded">
+                    Precio {tipoPrecios}
+                  </span>
+                  {clienteActivo.al_por_mayor && (
+                    <span className="text-[10px] font-black bg-vr-green/15 text-vr-green px-1.5 py-0.5 rounded">Mayor</span>
+                  )}
+                </div>
+              </div>
+            </div>
+            <button onClick={quitarCliente} className="text-vr-gray hover:text-vr-red text-lg font-bold px-1 transition-colors shrink-0">✕</button>
+          </div>
+        ) : (
+          <div className="relative">
+            <input
+              type="text"
+              placeholder="+ Cliente (precio especial)"
+              className="w-full text-xs bg-navy-3/40 border border-navy-3 rounded-xl px-3 py-2 text-vr-gray placeholder-vr-gray/50 focus:border-gold/50 focus:text-white outline-none transition-all"
+              value={busquedaCliente}
+              onChange={e => { setBusquedaCliente(e.target.value); setMostrarDropdownCliente(true); }}
+              onFocus={() => setMostrarDropdownCliente(true)}
+              onBlur={() => setTimeout(() => setMostrarDropdownCliente(false), 150)}
+            />
+            {mostrarDropdownCliente && clientes.length > 0 && (
+              <div className="absolute z-50 w-full bg-navy border border-navy-3 rounded-xl mt-1 shadow-xl max-h-48 overflow-y-auto">
+                {clientesFiltrados.length === 0 ? (
+                  <p className="text-vr-gray text-xs p-3 text-center">Sin resultados</p>
+                ) : clientesFiltrados.map(c => (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onMouseDown={() => seleccionarCliente(c)}
+                    className="w-full text-left px-3 py-2.5 hover:bg-navy-3 transition-colors border-b border-navy-3/50 last:border-0 flex items-center justify-between gap-2"
+                  >
+                    <span className="text-sm font-bold text-white truncate">{c.nombre}</span>
+                    <div className="flex items-center gap-1 shrink-0">
+                      {c.al_por_mayor && (
+                        <span className="text-[10px] font-black bg-vr-green/15 text-vr-green px-1 py-0.5 rounded">Mayor</span>
+                      )}
+                      {(c.tipo_precio ?? 1) > 1 && (
+                        <span className="text-[10px] font-black bg-gold/15 text-gold px-1 py-0.5 rounded">P{c.tipo_precio}</span>
+                      )}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-3">
@@ -273,6 +523,9 @@ export default function POSPage() {
             <div key={item.id} className="flex justify-between items-start border-b border-navy-3/50 pb-3 animate-fade-in">
               <div className="flex-1 min-w-0 pr-2">
                 <h4 className="font-medium text-white text-sm truncate">{item.nombre}</h4>
+                {item.serial_numero && (
+                  <p className="text-[10px] font-mono text-gold/70 truncate">S/N: {item.serial_numero}</p>
+                )}
                 <div className="text-sm text-vr-gray flex items-center gap-2 mt-1">
                   <span className="font-mono font-semibold text-gold-2">{formatDOP(item.precio_venta)}</span>
                   <span>×</span>
@@ -326,8 +579,12 @@ export default function POSPage() {
             ref={ticketRef} items={items} subtotal={subtotal} itbis={itbis} descuento={descuento} total={total}
             metodoPago={metodoPago} montoRecibido={montoRecibido} devuelta={devuelta}
             nombreNegocio={negocioNombre || 'VentaRD'} rnc={negocioRnc || undefined}
+            direccion={negocioDireccion || undefined} telefono={negocioTelefono || undefined}
             numeroTicket={ultimoTicketNum} mensajePie={negocioMensajeTicket || undefined}
+            cajaCodigo={dispositivoId || undefined}
             ncf={ultimoNcf}
+            logoUrl={negocioLogo || undefined}
+            vendedor={nombreUsuario || undefined}
           />
         </div>
 
@@ -365,14 +622,35 @@ export default function POSPage() {
               ) : (
                 productosFiltrados.map((producto) => (
                   <button
-                    key={producto.id} onClick={() => addItem(producto)}
-                    className="bg-navy-2 p-3 sm:p-4 rounded-xl border border-navy-3 hover:border-gold/40 hover:bg-navy-3 transition-all text-left flex flex-col justify-between h-24 sm:h-28 active:scale-[0.97] group"
+                    key={producto.id}
+                    onClick={() => {
+                      if (producto.serializable) {
+                        setProductoParaSerial(producto);
+                        setBusquedaSerial('');
+                      } else {
+                        addItem(producto);
+                      }
+                    }}
+                    className="bg-navy-2 p-3 sm:p-4 rounded-xl border border-navy-3 hover:border-gold/40 hover:bg-navy-3 transition-all text-left flex flex-col justify-between h-24 sm:h-28 active:scale-[0.97] group relative overflow-hidden"
                   >
-                    <span className="font-semibold text-white line-clamp-2 text-xs sm:text-sm group-hover:text-gold-2 transition-colors">{producto.nombre}</span>
+                    <div className="flex items-start gap-2">
+                      {producto.imagen_url && (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={producto.imagen_url}
+                          alt=""
+                          loading="lazy"
+                          className="w-10 h-10 sm:w-12 sm:h-12 rounded-lg object-cover bg-white shrink-0 border border-navy-3"
+                        />
+                      )}
+                      <span className="font-semibold text-white line-clamp-2 text-xs sm:text-sm group-hover:text-gold-2 transition-colors">{producto.nombre}</span>
+                    </div>
                     <div className="flex justify-between items-end mt-1">
                       <span className="text-base sm:text-lg font-bold font-mono text-gold">{formatDOP(producto.precio_venta)}</span>
                       {producto.tipo === 'combo' ? (
                         <span className="text-[10px] font-bold text-purple-400 bg-purple-400/10 px-1.5 py-0.5 rounded">combo</span>
+                      ) : producto.serializable ? (
+                        <span className="text-[10px] font-bold text-gold bg-gold/10 px-1.5 py-0.5 rounded">{producto.stock_actual} SN</span>
                       ) : (
                         <span className={`text-xs font-medium ${getStockColor(producto)}`}>
                           {producto.stock_actual} uds
@@ -436,7 +714,7 @@ export default function POSPage() {
               <div className="p-6 sm:p-10 text-center flex flex-col items-center justify-center">
                 <div className="w-16 h-16 sm:w-20 sm:h-20 bg-vr-green/15 text-vr-green rounded-full flex items-center justify-center text-3xl sm:text-4xl mb-4 sm:mb-5 border border-vr-green/30 animate-scale-in">✓</div>
                 <h2 className="text-2xl sm:text-3xl font-display font-black text-white mb-2">¡Venta Exitosa!</h2>
-                {ultimoTicketNum && <p className="text-vr-gray font-mono text-sm mb-4">Ticket #{String(ultimoTicketNum).padStart(5, '0')}</p>}
+                {ultimoTicketNum && <p className="text-vr-gray font-mono text-sm mb-4">Ticket #{formatTicket(ultimoTicketNum, dispositivoId || undefined)}</p>}
                 {metodoPago === 'efectivo' && (
                   <div className="bg-vr-green/10 border border-vr-green/20 rounded-xl px-6 py-3 mb-6">
                     <p className="text-sm text-vr-gray">Devuelta</p>
@@ -460,7 +738,7 @@ export default function POSPage() {
                     onClick={() => {
                       const encabezado = `${negocioNombre || 'VentaRD'}${negocioRnc ? `\nRNC: ${negocioRnc}` : ''}${negocioDireccion ? `\n${negocioDireccion}` : ''}`;
                       const pie = negocioMensajeTicket || '¡Gracias por su compra!';
-                      const resumen = `Ticket #${String(ultimoTicketNum).padStart(5, '0')}\n${encabezado}\n\n${items.map(i => `${i.cantidad}x ${i.nombre} — ${formatDOP(i.precio_venta * i.cantidad)}`).join('\n')}\n\nTotal: ${formatDOP(total)}\nPago: ${metodoPago}\n\n${pie}`;
+                      const resumen = `Ticket #${formatTicket(ultimoTicketNum, dispositivoId || undefined)}\n${encabezado}\n\n${items.map(i => `${i.cantidad}x ${i.nombre} — ${formatDOP(i.precio_venta * i.cantidad)}`).join('\n')}\n\nTotal: ${formatDOP(total)}\nPago: ${metodoPago}\n\n${pie}`;
                       window.open(`https://wa.me/?text=${encodeURIComponent(resumen)}`, '_blank');
                     }}
                     className="flex-1 py-3 bg-vr-green/15 text-vr-green font-bold rounded-xl border border-vr-green/20 hover:bg-vr-green/25 transition-all text-sm flex items-center justify-center gap-2"
@@ -468,7 +746,7 @@ export default function POSPage() {
                     📱 WhatsApp
                   </button>
                   <button
-                    onClick={() => { handlePrint(); }}
+                    onClick={() => { imprimirTicket(); }}
                     className="flex-1 py-3 bg-navy-3 text-white font-bold rounded-xl border border-navy-4 hover:bg-navy-4 transition-all text-sm"
                   >
                     🖨️ Imprimir ticket
@@ -478,13 +756,20 @@ export default function POSPage() {
                   onClick={() => {
                     setVentaExitosa(false);
                     setIsCheckoutOpen(false);
-                    clearCart();
+                    clearCart(); // clearCart ya resetea clienteActivoId y tipoPrecios
                     setSearchTerm('');
                     searchInputRef.current?.focus();
                   }}
                   className="mt-4 w-full max-w-sm py-4 bg-gold-gradient text-navy font-extrabold rounded-xl hover:brightness-110 transition-all text-lg"
                 >
                   Nueva Venta →
+                </button>
+                <button
+                  onClick={() => setConfirmAnularOpen(true)}
+                  disabled={anulando}
+                  className="mt-3 text-vr-red/70 hover:text-vr-red text-xs font-bold hover:bg-vr-red/10 px-4 py-2 rounded-lg transition-all disabled:opacity-50"
+                >
+                  ✕ Me equivoqué — anular esta venta
                 </button>
               </div>
             ) : (
@@ -668,8 +953,14 @@ export default function POSPage() {
                 </div>
 
                 <div className="p-4 sm:p-6 bg-navy border-t border-navy-3 space-y-3">
-                  {/* Toggle NCF — solo aparece si el negocio tiene NCF configurado */}
-                  {ncfConfig.habilitado && (
+                  {/* Aviso: NCF habilitado pero sin números disponibles en esta caja */}
+                  {ncfConfig.habilitado && !ncfDisponible && (
+                    <div className="w-full px-4 py-3 rounded-xl border border-vr-orange/30 bg-vr-orange/10 text-vr-orange text-sm font-bold text-center">
+                      Sin comprobantes fiscales disponibles — conéctate a internet para reservar más
+                    </div>
+                  )}
+                  {/* Toggle NCF — solo aparece si el negocio tiene NCF configurado y hay números */}
+                  {ncfConfig.habilitado && ncfDisponible && (
                     <button
                       type="button"
                       onClick={() => setEmitirNcf(v => !v)}
@@ -702,11 +993,110 @@ export default function POSPage() {
         </div>
       )}
 
+      {/* MODAL SELECTOR DE SERIAL */}
+      {productoParaSerial && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-md z-50 flex items-end sm:items-center justify-center sm:p-4 animate-fade-in">
+          <div className="bg-navy-2 w-full sm:max-w-sm rounded-t-2xl sm:rounded-2xl border border-navy-3 shadow-2xl overflow-hidden max-h-[80vh] flex flex-col animate-scale-in">
+            <div className="p-4 border-b border-navy-3 flex justify-between items-start">
+              <div>
+                <h2 className="text-base font-display font-bold text-white">Seleccionar serial</h2>
+                <p className="text-xs text-vr-gray mt-0.5 truncate max-w-[200px]">{productoParaSerial.nombre}</p>
+              </div>
+              <button onClick={() => setProductoParaSerial(null)} className="text-vr-gray hover:text-white font-bold text-xl transition-colors">✕</button>
+            </div>
+
+            <div className="p-3 border-b border-navy-3/50 flex gap-2">
+              <input
+                type="text"
+                autoFocus
+                placeholder="Buscar número de serie…"
+                className="flex-1 bg-navy-3 border border-navy-3 rounded-xl px-3 py-2.5 text-white text-sm font-mono placeholder-vr-gray/40 focus:border-gold outline-none transition-all"
+                value={busquedaSerial}
+                onChange={e => setBusquedaSerial(e.target.value)}
+              />
+              <button
+                onClick={() => setScannerSerialPOS(true)}
+                className="px-3 bg-navy-3 border border-navy-3 rounded-xl text-vr-gray hover:text-gold hover:border-gold/50 transition-all"
+                title="Escanear IMEI con cámara"
+              >
+                <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/>
+                  <path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/>
+                  <line x1="7" y1="12" x2="7" y2="12.01"/><line x1="12" y1="12" x2="17" y2="12"/>
+                  <line x1="7" y1="8" x2="7" y2="16"/><line x1="12" y1="8" x2="12" y2="16"/>
+                  <line x1="17" y1="8" x2="17" y2="16"/>
+                </svg>
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-2">
+              {serialesDisponibles.length === 0 ? (
+                <div className="py-10 text-center text-vr-gray">
+                  <p className="text-3xl mb-2">📦</p>
+                  <p className="text-sm font-medium">Sin seriales disponibles</p>
+                  <p className="text-xs mt-1">Registra una entrada en Inventario</p>
+                </div>
+              ) : (
+                serialesDisponibles
+                  .filter(s => !busquedaSerial || s.numero_serial.toLowerCase().includes(busquedaSerial.toLowerCase()))
+                  // Ocultar seriales ya en el carrito
+                  .filter(s => !items.some(i => i.serial_id === s.id))
+                  .map(serial => (
+                    <button
+                      key={serial.id}
+                      onClick={() => {
+                        addItemConSerial(productoParaSerial, serial.id, serial.numero_serial);
+                        setProductoParaSerial(null);
+                      }}
+                      className="w-full text-left px-4 py-3 rounded-xl hover:bg-navy-3 transition-colors border border-transparent hover:border-gold/20 mb-1 flex items-center justify-between group"
+                    >
+                      <span className="font-mono text-sm text-white group-hover:text-gold-2 transition-colors">{serial.numero_serial}</span>
+                      <span className="text-xs font-bold text-vr-green bg-vr-green/10 px-2 py-0.5 rounded">Disponible</span>
+                    </button>
+                  ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Scanner IMEI en el POS — busca y selecciona el serial automáticamente */}
+      {scannerSerialPOS && productoParaSerial && (
+        <Suspense fallback={null}>
+          <BarcodeScanner
+            onScan={(code) => {
+              const serial = serialesDisponibles.find(s => s.numero_serial === code);
+              if (serial) {
+                addItemConSerial(productoParaSerial, serial.id, serial.numero_serial);
+                setProductoParaSerial(null);
+              } else {
+                // No encontrado: dejar el código en el buscador para que el cajero vea
+                setBusquedaSerial(code);
+              }
+              setScannerSerialPOS(false);
+            }}
+            onClose={() => setScannerSerialPOS(false)}
+          />
+        </Suspense>
+      )}
+
       {/* MODAL VENTA LIBRE (F4) */}
       <VentaLibreModal isOpen={isVentaLibreOpen} onClose={() => setIsVentaLibreOpen(false)} />
 
       {/* MODAL APERTURA/CIERRE DE CAJA */}
       <CajaModal isOpen={isCajaOpen} onClose={() => setIsCajaOpen(false)} />
+
+      {/* CONFIRMACIÓN DE ANULACIÓN — el cajero necesita autorización del admin */}
+      <ConfirmModal
+        isOpen={confirmAnularOpen}
+        title="Anular esta venta"
+        mensaje="Se repondrá el stock y la venta quedará registrada como devolución en el historial."
+        confirmLabel="Anular venta"
+        requierePinAdmin={rolUsuario === 'cajero'}
+        procesando={anulando}
+        onConfirm={anularUltimaVenta}
+        onClose={() => setConfirmAnularOpen(false)}
+      />
     </div>
   );
 }
