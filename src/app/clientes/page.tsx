@@ -36,7 +36,7 @@ export default function ClientesPage() {
 
     const [isModalClienteOpen, setIsModalClienteOpen] = useState(false);
     const [clienteEditando, setClienteEditando] = useState<ClienteLocal | null>(null);
-    const [formDataCliente, setFormDataCliente] = useState({ nombre: '', telefono: '', limite_credito: '' });
+    const [formDataCliente, setFormDataCliente] = useState({ nombre: '', telefono: '', limite_credito: '', tipo_precio: '1', al_por_mayor: false });
 
     const [isModalAbonoOpen, setIsModalAbonoOpen] = useState(false);
     const [clienteParaAbono, setClienteParaAbono] = useState<any>(null);
@@ -45,13 +45,19 @@ export default function ClientesPage() {
 
     const abrirModalNuevoCliente = () => {
         setClienteEditando(null);
-        setFormDataCliente({ nombre: '', telefono: '', limite_credito: '0' });
+        setFormDataCliente({ nombre: '', telefono: '', limite_credito: '0', tipo_precio: '1', al_por_mayor: false });
         setIsModalClienteOpen(true);
     };
 
     const abrirModalEditarCliente = (cliente: ClienteLocal) => {
         setClienteEditando(cliente);
-        setFormDataCliente({ nombre: cliente.nombre, telefono: cliente.telefono || '', limite_credito: cliente.limite_credito.toString() });
+        setFormDataCliente({
+            nombre: cliente.nombre,
+            telefono: cliente.telefono || '',
+            limite_credito: cliente.limite_credito.toString(),
+            tipo_precio: String(cliente.tipo_precio ?? 1),
+            al_por_mayor: cliente.al_por_mayor ?? false,
+        });
         setIsModalClienteOpen(true);
     };
 
@@ -60,9 +66,15 @@ export default function ClientesPage() {
         if (!negocioId) return;
         const idCliente = clienteEditando ? clienteEditando.id : uuidv4();
         await db.clientes.put({
-            id: idCliente, negocio_id: negocioId, nombre: formDataCliente.nombre,
-            telefono: formDataCliente.telefono || null, limite_credito: parseFloat(formDataCliente.limite_credito) || 0,
-            estado_sincronizacion: 0, fecha_actualizacion: Date.now()
+            id: idCliente,
+            negocio_id: negocioId,
+            nombre: formDataCliente.nombre,
+            telefono: formDataCliente.telefono || null,
+            limite_credito: parseFloat(formDataCliente.limite_credito) || 0,
+            tipo_precio: parseInt(formDataCliente.tipo_precio) as 1 | 2 | 3,
+            al_por_mayor: formDataCliente.al_por_mayor,
+            estado_sincronizacion: 0,
+            fecha_actualizacion: Date.now(),
         });
         setIsModalClienteOpen(false);
         showToast(clienteEditando ? "Cliente actualizado" : "Cliente creado", "success");
@@ -100,6 +112,23 @@ export default function ClientesPage() {
 
     const totalCuentasPorCobrar = clientesConSaldo.reduce((acc, c) => acc + c.saldo_pendiente, 0);
     const clientesConDeuda = clientesConSaldo.filter(c => c.saldo_pendiente > 0).length;
+
+    // ¿A quién cobrar hoy? — deudores ordenados por días sin abonar (los más urgentes primero)
+    const cobrosPendientes = useMemo(() => {
+        const DIA = 24 * 60 * 60 * 1000;
+        return clientesConSaldo
+            .filter(c => c.saldo_pendiente > 0)
+            .map(c => {
+                const txs = transacciones.filter(t => t.cliente_id === c.id);
+                const ultimoAbono = txs.filter(t => t.tipo === 'abono').reduce((m, t) => Math.max(m, t.fecha_creacion), 0);
+                const primerCargo = txs.filter(t => t.tipo === 'cargo').reduce((m, t) => Math.min(m, t.fecha_creacion), Infinity);
+                const referencia = ultimoAbono > 0 ? ultimoAbono : primerCargo;
+                const dias = referencia === Infinity ? 0 : Math.floor((Date.now() - referencia) / DIA);
+                return { ...c, diasSinAbonar: dias };
+            })
+            .sort((a, b) => b.diasSinAbonar - a.diasSinAbonar || b.saldo_pendiente - a.saldo_pendiente)
+            .slice(0, 5);
+    }, [clientesConSaldo, transacciones]);
 
     const ITEMS_POR_PAGINA = 20;
     const [pagina, setPagina] = useState(1);
@@ -144,10 +173,49 @@ export default function ClientesPage() {
                         </div>
                     </div>
 
+                    {/* ¿A quién cobrar hoy? */}
+                    {cobrosPendientes.length > 0 && (
+                        <div className="bg-navy-2 rounded-2xl border border-vr-orange/20 overflow-hidden mb-4 sm:mb-6">
+                            <div className="px-4 py-3 border-b border-navy-3 flex items-center justify-between">
+                                <h2 className="text-sm font-display font-bold text-vr-orange">📢 ¿A quién cobrar hoy?</h2>
+                                <span className="text-[10px] font-bold text-vr-gray uppercase tracking-wider">Los más atrasados primero</span>
+                            </div>
+                            <div className="divide-y divide-navy-3/50">
+                                {cobrosPendientes.map(c => (
+                                    <div key={c.id} className="flex items-center gap-3 px-4 py-3 hover:bg-navy-3/20 transition-colors">
+                                        <div className="flex-1 min-w-0">
+                                            <p className="text-sm font-bold text-white truncate">{c.nombre}</p>
+                                            <p className="text-[11px] text-vr-gray">
+                                                {c.diasSinAbonar === 0
+                                                    ? 'Deuda reciente'
+                                                    : <span className={c.diasSinAbonar >= 30 ? 'text-vr-red font-bold' : c.diasSinAbonar >= 14 ? 'text-vr-orange font-bold' : ''}>
+                                                        {c.diasSinAbonar} día{c.diasSinAbonar === 1 ? '' : 's'} sin abonar
+                                                      </span>}
+                                            </p>
+                                        </div>
+                                        <span className="font-mono font-black text-vr-red text-sm shrink-0">{formatDOP(c.saldo_pendiente)}</span>
+                                        <button
+                                            onClick={() => enviarWhatsApp(c)}
+                                            disabled={!c.telefono}
+                                            title={c.telefono ? 'Enviar recordatorio por WhatsApp' : 'Sin teléfono registrado'}
+                                            className="px-3 py-1.5 bg-vr-green/10 text-vr-green font-bold rounded-lg hover:bg-vr-green/20 disabled:opacity-30 text-xs border border-vr-green/20 transition-all shrink-0 whitespace-nowrap"
+                                        >
+                                            📱 Cobrar
+                                        </button>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
                     {/* Tabla */}
                     <div className="bg-navy-2 rounded-2xl border border-navy-3 overflow-hidden">
                         <div className="overflow-x-auto">
-                        {isLoading ? <SkeletonTable rows={6} cols={5} /> : (
+                        {isLoading ? (
+                            <table className="w-full">
+                                <tbody><SkeletonTable rows={6} cols={5} /></tbody>
+                            </table>
+                        ) : (
                         <table className="w-full text-left border-collapse">
                             <thead>
                                 <tr className="border-b border-navy-3 text-vr-gray text-xs uppercase tracking-wider">
@@ -168,10 +236,16 @@ export default function ClientesPage() {
                                     clientesPaginados.map((cliente) => (
                                         <tr key={cliente.id} className="border-b border-navy-3/50 hover:bg-navy-3/30 transition-colors">
                                             <td className="p-3 sm:p-4">
-                                                <span className="font-bold text-white text-sm block">{cliente.nombre}</span>
-                                                {/* Edit inline link */}
+                                                <div className="flex items-center gap-2 flex-wrap">
+                                                    <span className="font-bold text-white text-sm">{cliente.nombre}</span>
+                                                    {cliente.al_por_mayor && (
+                                                        <span className="px-1.5 py-0.5 rounded text-[10px] font-black uppercase bg-vr-green/15 text-vr-green">Mayor</span>
+                                                    )}
+                                                    {(cliente.tipo_precio ?? 1) > 1 && (
+                                                        <span className="px-1.5 py-0.5 rounded text-[10px] font-black bg-gold/15 text-gold">P{cliente.tipo_precio}</span>
+                                                    )}
+                                                </div>
                                                 <button onClick={() => abrirModalEditarCliente(cliente)} className="text-xs text-gold hover:text-gold-2 transition-colors">Editar</button>
-                                                {/* Phone on mobile */}
                                                 {cliente.telefono && (
                                                     <span className="sm:hidden ml-2 text-xs text-vr-gray font-mono">{cliente.telefono}</span>
                                                 )}
@@ -248,6 +322,40 @@ export default function ClientesPage() {
                                         <input type="number" min="0" className="w-full bg-navy-3 border border-navy-3 rounded-xl p-3 text-white focus:border-gold outline-none transition-all font-mono" value={formDataCliente.limite_credito} onChange={e => setFormDataCliente({ ...formDataCliente, limite_credito: e.target.value })} />
                                         <p className="text-xs text-vr-gray mt-1">Deja 0 para crédito ilimitado</p>
                                     </div>
+
+                                    {/* Precio y tipo de cliente */}
+                                    <div className="p-3 bg-navy rounded-xl border border-navy-3 space-y-3">
+                                        <div>
+                                            <label className="block text-sm font-bold text-vr-gray mb-2">Precio asignado</label>
+                                            <div className="grid grid-cols-3 gap-2">
+                                                {([
+                                                    { val: '1', label: 'Precio 1', sub: 'Menudeo' },
+                                                    { val: '2', label: 'Precio 2', sub: 'Mayoreo' },
+                                                    { val: '3', label: 'Precio 3', sub: 'Especial' },
+                                                ] as const).map(({ val, label, sub }) => (
+                                                    <button
+                                                        key={val} type="button"
+                                                        onClick={() => setFormDataCliente({ ...formDataCliente, tipo_precio: val })}
+                                                        className={`py-2 px-1 rounded-xl border font-bold text-xs transition-all flex flex-col items-center gap-0.5 ${formDataCliente.tipo_precio === val ? 'border-gold bg-gold/15 text-gold' : 'border-navy-3 text-vr-gray hover:text-white'}`}
+                                                    >
+                                                        <span>{label}</span>
+                                                        <span className="font-normal opacity-70">{sub}</span>
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={() => setFormDataCliente({ ...formDataCliente, al_por_mayor: !formDataCliente.al_por_mayor })}
+                                            className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl border transition-all ${formDataCliente.al_por_mayor ? 'border-vr-green/40 bg-vr-green/10 text-vr-green' : 'border-navy-3 text-vr-gray'}`}
+                                        >
+                                            <span className="text-sm font-bold">Cliente al por mayor</span>
+                                            <div className={`relative w-9 h-5 rounded-full transition-colors ${formDataCliente.al_por_mayor ? 'bg-vr-green' : 'bg-navy-3'}`}>
+                                                <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${formDataCliente.al_por_mayor ? 'translate-x-4' : ''}`} />
+                                            </div>
+                                        </button>
+                                    </div>
+
                                     <div className="flex gap-3 pt-2">
                                         <button type="button" onClick={() => setIsModalClienteOpen(false)} className="flex-1 py-3 font-bold text-vr-gray hover:text-white border border-navy-3 rounded-xl transition-colors">Cancelar</button>
                                         <button type="submit" className="flex-1 py-3 bg-gold-gradient text-navy font-extrabold rounded-xl hover:brightness-110 transition-all">Guardar</button>
