@@ -188,6 +188,13 @@ export default function DashboardPage() {
                                     </button>
                                 ))}
                             </div>
+                            <button
+                                onClick={() => window.dispatchEvent(new Event('abrir-novedades'))}
+                                className="bg-navy-2 border border-gold/20 px-3 py-2 rounded-xl font-bold text-gold hover:bg-gold/10 transition-all text-sm whitespace-nowrap"
+                                title="Ver las novedades"
+                            >
+                                ✨ <span className="hidden sm:inline">Novedades</span>
+                            </button>
                             <Link href="/" className="bg-navy-2 border border-navy-3 px-4 py-2 rounded-xl font-bold text-vr-gray hover:text-white hover:border-navy-4 transition-all text-sm hidden sm:block">
                                 Ir a la Caja
                             </Link>
