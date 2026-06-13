@@ -128,6 +128,106 @@ export async function getReporteFiado(negocioId: string) {
     return { balances, totalDeuda, fmtDOP, fmtFecha };
 }
 
+// ── REPORTE 607 (DGII) ────────────────────────────────────────────────────────
+// Formato de Envío de Ventas de Bienes y Servicios. Incluye SOLO las ventas
+// con NCF del mes fiscal. El monto facturado va SIN ITBIS (base imponible).
+
+export interface Fila607 {
+    rncCliente: string;
+    tipoId: string;          // 1=RNC, 2=Cédula (vacío para consumidor final)
+    ncf: string;
+    ncfModificado: string;
+    tipoIngreso: string;     // 01 = Ingresos por operaciones
+    fechaComprobante: string; // AAAAMMDD
+    montoFacturado: number;  // base sin ITBIS
+    itbisFacturado: number;
+    // Formas de pago (montos)
+    efectivo: number;
+    chequeTransferencia: number;
+    tarjeta: number;
+    ventaCredito: number;
+}
+
+export async function getReporte607(negocioId: string, anio: number, mes: number) {
+    const desde = new Date(anio, mes - 1, 1).getTime();
+    const hasta = new Date(anio, mes, 0, 23, 59, 59, 999).getTime();
+
+    const ventas = await db.ventas
+        .where('[negocio_id+fecha_creacion]')
+        .between([negocioId, desde], [negocioId, hasta], true, true)
+        .filter(v => !!v.ncf)
+        .toArray();
+    ventas.sort((a, b) => a.fecha_creacion - b.fecha_creacion);
+
+    const ventaIds = ventas.map(v => v.id);
+    const detalles = ventaIds.length > 0
+        ? await db.venta_detalles.where('venta_id').anyOf(ventaIds).toArray()
+        : [];
+    const productoIds = [...new Set(detalles.map(d => d.producto_id))];
+    const productos = await db.productos.bulkGet(productoIds);
+    const prodMap = new Map(productos.filter(Boolean).map(p => [p!.id, p!]));
+
+    const filas: Fila607[] = ventas.map(v => {
+        const dets = detalles.filter(d => d.venta_id === v.id);
+
+        // Base e ITBIS reconstruidos desde los detalles (los precios del POS
+        // son base sin ITBIS; el impuesto se agrega encima)
+        let base = dets.reduce((s, d) => s + d.subtotal, 0);
+        let itbis = dets.reduce((s, d) => {
+            const prod = prodMap.get(d.producto_id);
+            return s + d.subtotal * (prod?.tasa_itbis ?? 0.18);
+        }, 0);
+
+        if (base + itbis <= 0) {
+            // Venta sin detalles (ej: venta libre) — asumir ITBIS 18% incluido
+            base = v.total / 1.18;
+            itbis = v.total - base;
+        } else if (Math.abs(base + itbis - v.total) > 0.01) {
+            // Hubo descuento a nivel de venta: escalar proporcionalmente
+            const factor = v.total / (base + itbis);
+            base *= factor;
+            itbis *= factor;
+        }
+
+        const fecha = new Date(v.fecha_creacion);
+        const fechaStr = `${fecha.getFullYear()}${String(fecha.getMonth() + 1).padStart(2, '0')}${String(fecha.getDate()).padStart(2, '0')}`;
+
+        // Formas de pago según clasificación DGII
+        let efectivo = 0, chequeTransferencia = 0, tarjeta = 0, ventaCredito = 0;
+        if (v.metodo_pago === 'efectivo') efectivo = v.total;
+        else if (v.metodo_pago === 'transferencia') chequeTransferencia = v.total;
+        else if (v.metodo_pago === 'tarjeta') tarjeta = v.total;
+        else if (v.metodo_pago === 'fiado') ventaCredito = v.total;
+        else if (v.metodo_pago === 'mixto') {
+            efectivo = v.monto_efectivo ?? 0;
+            chequeTransferencia = v.monto_transferencia ?? 0;
+        }
+
+        const r2 = (n: number) => Math.round(n * 100) / 100;
+        return {
+            rncCliente: '',           // B02 consumidor final: puede ir vacío
+            tipoId: '',
+            ncf: v.ncf!,
+            ncfModificado: '',
+            tipoIngreso: '01',
+            fechaComprobante: fechaStr,
+            montoFacturado: r2(base),
+            itbisFacturado: r2(itbis),
+            efectivo: r2(efectivo),
+            chequeTransferencia: r2(chequeTransferencia),
+            tarjeta: r2(tarjeta),
+            ventaCredito: r2(ventaCredito),
+        };
+    });
+
+    const totales = filas.reduce(
+        (acc, f) => ({ facturado: acc.facturado + f.montoFacturado, itbis: acc.itbis + f.itbisFacturado }),
+        { facturado: 0, itbis: 0 }
+    );
+
+    return { filas, totales, cantidad: filas.length, fmtDOP };
+}
+
 // ── NCF ───────────────────────────────────────────────────────────────────────
 
 export async function getReporteNcf(negocioId: string, desde: number, hasta: number) {

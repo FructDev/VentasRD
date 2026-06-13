@@ -5,7 +5,7 @@ import { useConfigStore } from '@/store/useConfigStore';
 import TopBar from '@/components/shared/TopBar';
 import PinGuard from '@/components/ui/PinGuard';
 import { FileSpreadsheet, FileText, TrendingUp, Package, Users, Receipt, Loader2, AlertCircle } from 'lucide-react';
-import { getReporteVentas, getReporteInventario, getReporteFiado, getReporteNcf } from '@/lib/exports/queries';
+import { getReporteVentas, getReporteInventario, getReporteFiado, getReporteNcf, getReporte607 } from '@/lib/exports/queries';
 import { descargarExcel } from '@/lib/exports/excel';
 import { descargarPdf } from '@/lib/exports/pdf';
 
@@ -83,6 +83,14 @@ export default function ReportesPage() {
     const [periodo, setPeriodo] = useState('mes');
     const [cargando, setCargando] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
+
+    // Mes fiscal para el 607 (por defecto el mes anterior, que es el que se declara)
+    const mesAnterior = (() => {
+        const d = new Date();
+        d.setMonth(d.getMonth() - 1);
+        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    })();
+    const [mes607, setMes607] = useState(mesAnterior);
 
     const negocio = { nombre: negocioNombre || 'Mi Negocio', rnc: negocioRnc, direccion: negocioDireccion };
 
@@ -327,6 +335,48 @@ export default function ReportesPage() {
         );
     });
 
+    // ── 607 DGII (Excel) ─────────────────────────────────────────────────────
+    const reporte607 = () => ejecutar('607', async () => {
+        const [anioStr, mesStr] = mes607.split('-');
+        const anio = parseInt(anioStr, 10);
+        const mes = parseInt(mesStr, 10);
+        const r = await getReporte607(negocioId!, anio, mes);
+
+        if (r.cantidad === 0) {
+            setError('No hay comprobantes fiscales (NCF) emitidos en ese mes.');
+            return;
+        }
+
+        const periodoFiscal = `${anioStr}${mesStr}`; // AAAAMM
+        descargarExcel(`607_${negocioRnc || 'RNC'}_${periodoFiscal}`, [
+            {
+                nombre: '607',
+                columnas: [
+                    'RNC/Cédula', 'Tipo Id', 'NCF', 'NCF Modificado', 'Tipo Ingreso',
+                    'Fecha Comprobante', 'Monto Facturado', 'ITBIS Facturado',
+                    'Efectivo', 'Cheque/Transf./Depósito', 'Tarjeta Débito/Crédito', 'Venta a Crédito',
+                ],
+                filas: r.filas.map(f => [
+                    f.rncCliente, f.tipoId, f.ncf, f.ncfModificado, f.tipoIngreso,
+                    f.fechaComprobante, f.montoFacturado, f.itbisFacturado,
+                    f.efectivo, f.chequeTransferencia, f.tarjeta, f.ventaCredito,
+                ]),
+            },
+            {
+                nombre: 'Resumen',
+                columnas: ['Concepto', 'Valor'],
+                filas: [
+                    ['Negocio', negocioNombre || ''],
+                    ['RNC', negocioRnc || ''],
+                    ['Período fiscal', periodoFiscal],
+                    ['Cantidad de registros', r.cantidad],
+                    ['Total monto facturado', r.totales.facturado],
+                    ['Total ITBIS facturado', r.totales.itbis],
+                ],
+            },
+        ]);
+    });
+
     const PERIODOS = [
         { key: 'hoy', label: 'Hoy' },
         { key: 'semana', label: '7 días' },
@@ -420,6 +470,48 @@ export default function ReportesPage() {
                                 />
                             )}
                         </div>
+
+                        {/* Reporte 607 DGII — tiene su propio selector de mes fiscal */}
+                        {ncfConfig.habilitado && (
+                            <div className="bg-navy-2 border border-vr-red/20 rounded-2xl p-5 mt-4">
+                                <div className="flex items-start gap-3 mb-4">
+                                    <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 bg-vr-red/10 text-vr-red">
+                                        <Receipt className="w-5 h-5" />
+                                    </div>
+                                    <div>
+                                        <h3 className="font-bold text-white text-base">Reporte 607 — DGII</h3>
+                                        <p className="text-xs text-vr-gray mt-0.5">
+                                            Formato oficial de ventas para subir a la Oficina Virtual de la DGII. Incluye solo ventas con NCF, con el monto sin ITBIS (base imponible).
+                                        </p>
+                                    </div>
+                                </div>
+                                <div className="flex flex-col sm:flex-row sm:items-end gap-3">
+                                    <div className="flex-1">
+                                        <label className="block text-xs font-bold text-vr-gray uppercase tracking-wider mb-1.5">Mes fiscal a declarar</label>
+                                        <input
+                                            type="month"
+                                            value={mes607}
+                                            max={mesAnterior}
+                                            onChange={e => { setMes607(e.target.value); setError(null); }}
+                                            className="w-full sm:w-48 bg-navy border border-navy-3 rounded-xl p-2.5 text-white focus:border-gold outline-none transition-all"
+                                        />
+                                    </div>
+                                    <button
+                                        onClick={reporte607}
+                                        disabled={cargando === '607'}
+                                        className="flex items-center justify-center gap-1.5 py-2.5 px-5 bg-vr-red/10 text-vr-red border border-vr-red/20 rounded-xl text-sm font-bold hover:bg-vr-red/20 transition-all disabled:opacity-40 whitespace-nowrap"
+                                    >
+                                        {cargando === '607' ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileSpreadsheet className="w-4 h-4" />}
+                                        Generar 607 (Excel)
+                                    </button>
+                                </div>
+                                {!negocioRnc && (
+                                    <p className="text-[11px] text-vr-orange mt-2.5">
+                                        ⚠️ No tienes RNC configurado. Agrégalo en Ajustes para que el archivo lo incluya.
+                                    </p>
+                                )}
+                            </div>
+                        )}
 
                         <p className="text-xs text-vr-gray/50 text-center mt-8">
                             Los reportes se generan localmente desde tu dispositivo. No se envían datos a ningún servidor externo.
