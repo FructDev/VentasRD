@@ -3,6 +3,7 @@ import { db } from './dexie';
 import { supabase } from '../supabase/client';
 import { useConfigStore } from '@/store/useConfigStore';
 import { productosConMovimientosPendientes } from './stock';
+import type { ProductoLocal } from '@/types/database';
 
 // ─── Singleton ────────────────────────────────────────────────────────────────
 // Garantiza que nunca corra más de un intervalo de sync a la vez,
@@ -183,8 +184,15 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                         }
                     }
 
+                    // Lectura en lote (1 operación en vez de N) para no trabar el
+                    // hilo principal cada 30s con catálogos grandes.
+                    const locales = await db.productos.bulkGet(allStocks.map(p => p.id));
+                    const localMap = new Map<string, ProductoLocal>();
+                    locales.forEach(l => { if (l) localMap.set(l.id, l); });
+
+                    const reconciliados: ProductoLocal[] = [];
                     for (const cloudProd of allStocks) {
-                        const local = await db.productos.get(cloudProd.id);
+                        const local = localMap.get(cloudProd.id);
                         if (!local) continue;
                         // No tocar productos con cambios locales pendientes
                         if (local.estado_sincronizacion === 0) continue;
@@ -196,12 +204,15 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                             : (cloudProd.stock_actual ?? local.stock_actual);
 
                         if (local.stock_actual !== stockCorrecto) {
-                            await db.productos.update(cloudProd.id, {
+                            reconciliados.push({
+                                ...local,
                                 stock_actual: stockCorrecto,
                                 fecha_actualizacion: cloudProd.fecha_actualizacion ?? local.fecha_actualizacion,
                             });
                         }
                     }
+                    // Escritura en lote (1 operación en vez de N)
+                    if (reconciliados.length > 0) await db.productos.bulkPut(reconciliados);
                 }
                 localStorage.setItem(STOCK_RECON_KEY, String(Date.now()));
             }
