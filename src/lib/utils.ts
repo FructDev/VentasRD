@@ -13,6 +13,16 @@ export function formatDOP(amount: number): string {
 }
 
 /**
+ * Formatea un número de ticket con su prefijo de caja.
+ * Ej: (42, 'C7K') → 'C7K-00042' | (42) → '00042' (tickets legados) | () → '-----'
+ */
+export function formatTicket(numero?: number, cajaCodigo?: string): string {
+  if (numero == null) return '-----';
+  const num = String(numero).padStart(5, '0');
+  return cajaCodigo ? `${cajaCodigo}-${num}` : num;
+}
+
+/**
  * Formatea un timestamp a fecha legible
  */
 export function formatDate(timestamp: number | string): string {

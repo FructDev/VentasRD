@@ -72,55 +72,53 @@ export function useTransaccionesFiadoTenant() {
 
 /**
  * Ventas de hoy del negocio actual.
+ * Usa el índice compuesto [negocio_id+fecha_creacion] — no carga la tabla completa.
  */
 export function useVentasHoyTenant() {
     const { negocioId } = useConfigStore();
     return useLiveQuery(
-        async () => {
+        () => {
             if (!negocioId) return [];
             const hoy = new Date().setHours(0, 0, 0, 0);
-            const ventas = await db.ventas
-                .where('negocio_id')
-                .equals(negocioId)
+            return db.ventas
+                .where('[negocio_id+fecha_creacion]')
+                .between([negocioId, hoy], [negocioId, Infinity])
                 .toArray();
-            return ventas.filter(v => v.fecha_creacion >= hoy);
         },
         [negocioId]
     ) || [];
 }
 
 /**
- * Ventas del período especificado del negocio actual.
+ * Ventas del período especificado del negocio actual (vía índice compuesto).
  */
 export function useVentasPeriodoTenant(dias: number) {
     const { negocioId } = useConfigStore();
     return useLiveQuery(
-        async () => {
+        () => {
             if (!negocioId) return [];
             const desde = Date.now() - (dias * 24 * 60 * 60 * 1000);
-            const ventas = await db.ventas
-                .where('negocio_id')
-                .equals(negocioId)
+            return db.ventas
+                .where('[negocio_id+fecha_creacion]')
+                .between([negocioId, desde], [negocioId, Infinity])
                 .toArray();
-            return ventas.filter(v => v.fecha_creacion >= desde);
         },
         [negocioId, dias]
     ) || [];
 }
 
 /**
- * Ventas en un rango de timestamps arbitrario del negocio actual.
+ * Ventas en un rango de timestamps arbitrario del negocio actual (vía índice compuesto).
  */
 export function useVentasRangoTenant(desde: number, hasta: number) {
     const { negocioId } = useConfigStore();
     return useLiveQuery(
-        async () => {
+        () => {
             if (!negocioId) return [];
-            const ventas = await db.ventas
-                .where('negocio_id')
-                .equals(negocioId)
+            return db.ventas
+                .where('[negocio_id+fecha_creacion]')
+                .between([negocioId, desde], [negocioId, hasta], true, true)
                 .toArray();
-            return ventas.filter(v => v.fecha_creacion >= desde && v.fecha_creacion <= hasta);
         },
         [negocioId, desde, hasta]
     ) || [];
@@ -156,6 +154,8 @@ export function useSucursalesTenant() {
 
 /**
  * Detalles de venta del negocio actual.
+ * ⚠️ Carga TODOS los detalles — usar solo en exportes/reportes puntuales.
+ * Para vistas, preferir useVentaDetallesPorVentas (consulta por índice).
  */
 export function useVentaDetallesTenant() {
     const { negocioId } = useConfigStore();
@@ -168,17 +168,57 @@ export function useVentaDetallesTenant() {
 }
 
 /**
+ * Detalles SOLO de las ventas indicadas (usa el índice venta_id).
+ * Escala con el período visible, no con la historia completa del negocio.
+ */
+export function useVentaDetallesPorVentas(ventaIds: string[]) {
+    // Clave estable: el array cambia de identidad en cada render
+    const clave = ventaIds.join(',');
+    return useLiveQuery(
+        async (): Promise<import('@/types/database').VentaDetalleLocal[]> =>
+            ventaIds.length > 0
+                ? db.venta_detalles.where('venta_id').anyOf(ventaIds).toArray()
+                : [],
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+        [clave]
+    ) || [];
+}
+
+/**
  * Ventas del negocio actual, ordenadas por fecha desc.
+ * Usa el índice compuesto: lee solo las `limite` más recientes, no toda la tabla.
  */
 export function useVentasTenant(limite = 100) {
     const { negocioId } = useConfigStore();
     return useLiveQuery(
-        async () => {
+        () => {
             if (!negocioId) return [];
-            const ventas = await db.ventas.where('negocio_id').equals(negocioId).toArray();
-            return ventas.sort((a, b) => b.fecha_creacion - a.fecha_creacion).slice(0, limite);
+            return db.ventas
+                .where('[negocio_id+fecha_creacion]')
+                .between([negocioId, -Infinity], [negocioId, Infinity])
+                .reverse()
+                .limit(limite)
+                .toArray();
         },
         [negocioId, limite]
+    ) || [];
+}
+
+/**
+ * Gastos del negocio actual en un rango de fechas (vía índice compuesto).
+ */
+export function useGastosRangoTenant(desde: number, hasta: number) {
+    const { negocioId } = useConfigStore();
+    return useLiveQuery(
+        async () => {
+            if (!negocioId) return [];
+            const gastos = await db.gastos
+                .where('[negocio_id+fecha_creacion]')
+                .between([negocioId, desde], [negocioId, hasta], true, true)
+                .toArray();
+            return gastos.filter(g => !g.eliminado);
+        },
+        [negocioId, desde, hasta]
     ) || [];
 }
 

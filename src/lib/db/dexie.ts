@@ -1,6 +1,6 @@
 // src/lib/db/dexie.ts
 import Dexie, { Table } from 'dexie';
-import { VentaLocal, ProductoLocal, ComposicionLocal, ClienteLocal, TransaccionFiadoLocal, VentaDetalleLocal, CajaLocal, SucursalLocal, DevolucionLocal } from '@/types/database';
+import { VentaLocal, ProductoLocal, ComposicionLocal, ClienteLocal, TransaccionFiadoLocal, VentaDetalleLocal, CajaLocal, SucursalLocal, DevolucionLocal, CorteCajaLocal, SerialLocal, MovimientoStockLocal, GastoLocal } from '@/types/database';
 
 export class VentaRDDatabase extends Dexie {
     ventas!: Table<VentaLocal>;
@@ -12,6 +12,10 @@ export class VentaRDDatabase extends Dexie {
     cajas!: Table<CajaLocal>;
     sucursales!: Table<SucursalLocal>;
     devoluciones!: Table<DevolucionLocal>;
+    cortes_caja!: Table<CorteCajaLocal>;
+    seriales!: Table<SerialLocal>;
+    movimientos_stock!: Table<MovimientoStockLocal>;
+    gastos!: Table<GastoLocal>;
 
     constructor() {
         super('VentaRD_Vault');
@@ -52,6 +56,33 @@ export class VentaRDDatabase extends Dexie {
         this.version(13).stores({
             ventas: 'id, negocio_id, estado_sincronizacion, fecha_creacion, numero_ticket, ncf',
         });
+
+        // v14: tabla de cortes de caja (X parcial / Z cierre)
+        this.version(14).stores({
+            cortes_caja: 'id, negocio_id, caja_id, tipo, fecha_creacion, estado_sincronizacion',
+        });
+
+        // v15: seriales (IMEI, números de serie por unidad)
+        this.version(15).stores({
+            seriales: 'id, negocio_id, producto_id, numero_serial, estado, estado_sincronizacion, fecha_actualizacion',
+        });
+
+        // v16: movimientos de stock (kardex) — el stock se sincroniza por deltas
+        // atómicos en vez de valores absolutos, eliminando pérdidas entre cajas.
+        this.version(16).stores({
+            movimientos_stock: 'id, negocio_id, producto_id, tipo, estado_sincronizacion, fecha_creacion',
+        });
+
+        // v17: índice compuesto [negocio_id+fecha_creacion] — las consultas por
+        // período usan el índice en vez de cargar la tabla completa a memoria.
+        this.version(17).stores({
+            ventas: 'id, negocio_id, estado_sincronizacion, fecha_creacion, numero_ticket, ncf, [negocio_id+fecha_creacion]',
+        });
+
+        // v18: gastos (salidas de dinero) — ganancia neta y cuadre de caja completo
+        this.version(18).stores({
+            gastos: 'id, negocio_id, categoria, estado_sincronizacion, fecha_creacion, [negocio_id+fecha_creacion]',
+        });
     }
 }
 
@@ -66,20 +97,33 @@ export function formatNcf(tipo: string, secuencia: number): string {
 export const db = new VentaRDDatabase();
 
 /**
- * Genera el siguiente número de ticket secuencial para un negocio.
+ * Genera el siguiente número de ticket secuencial PARA ESTA CAJA.
+ * Cada caja tiene su propia secuencia (prefijo caja_codigo), así dos cajas
+ * offline nunca generan el mismo ticket.
  */
-export async function getNextTicketNumber(negocioId: string): Promise<number> {
-    const ultimaVenta = await db.ventas
+export async function getNextTicketNumber(negocioId: string, cajaCodigo?: string): Promise<number> {
+    const ventas = await db.ventas
         .where('negocio_id')
         .equals(negocioId)
-        .reverse()
-        .sortBy('numero_ticket');
+        .toArray();
 
-    const ultimoNumero = ultimaVenta
+    // Respaldo persistido en el store: sobrevive a la purga de ventas viejas
+    const { useConfigStore } = await import('@/store/useConfigStore');
+    const ultimoPersistido = useConfigStore.getState().ultimoTicket;
+
+    // Secuencia de esta caja
+    const deEstaCaja = ventas.filter(v => v.numero_ticket != null && v.caja_codigo === cajaCodigo);
+    if (deEstaCaja.length > 0 || ultimoPersistido > 0) {
+        const maxTabla = deEstaCaja.reduce((m, v) => Math.max(m, v.numero_ticket!), 0);
+        return Math.max(maxTabla, ultimoPersistido) + 1;
+    }
+
+    // Primera venta con prefijo: continuar desde el máximo global para que un
+    // negocio de una sola caja no vea su numeración "reiniciarse"
+    const maxGlobal = ventas
         .filter(v => v.numero_ticket != null)
-        .map(v => v.numero_ticket!)[0] || 0;
-
-    return ultimoNumero + 1;
+        .reduce((m, v) => Math.max(m, v.numero_ticket!), 0);
+    return maxGlobal + 1;
 }
 
 /**

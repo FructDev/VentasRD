@@ -10,7 +10,8 @@ import { db } from '@/lib/db/dexie';
 import { SucursalLocal } from '@/types/database';
 
 export default function SelectBranchPage() {
-    const { negocioId, negocioNombre, setSucursal, isOnline } = useConfigStore();
+    const { negocioId, negocioNombre, setSucursal, isOnline, rolUsuario } = useConfigStore();
+    const esEmpleado = rolUsuario !== 'admin';
     const router = useRouter();
     const [sucursales, setSucursales] = useState<SucursalLocal[]>([]);
     const [isLoading, setIsLoading] = useState(true);
@@ -85,21 +86,32 @@ export default function SelectBranchPage() {
                     {sucursales.length === 0 ? (
                         <div className="text-center py-8 sm:py-12">
                             <div className="text-5xl sm:text-6xl mb-4">🏪</div>
-                            <h2 className="text-xl sm:text-2xl font-bold text-white mb-2">Aún no tienes sucursales</h2>
-                            <p className="text-vr-gray mb-6 text-sm sm:text-base px-4">
-                                {isOnline
-                                    ? 'Para empezar a vender, necesitas crear al menos un local.'
-                                    : 'Sin conexión y sin sucursales en cache. Conéctate a internet para continuar.'}
-                            </p>
-                            {isOnline && (
-                                <div className="flex flex-col sm:flex-row gap-3 justify-center px-4">
-                                    <Link href="/onboarding" className="px-6 py-4 bg-gold-gradient text-navy font-extrabold rounded-xl hover:brightness-110 transition-all text-center">
-                                        Configurar mi Local →
-                                    </Link>
-                                    <Link href="/admin" className="px-6 py-4 bg-navy-3 border border-navy-4 text-white font-bold rounded-xl hover:bg-navy-4 transition-all text-center text-sm">
-                                        Panel Administrativo
-                                    </Link>
-                                </div>
+                            {esEmpleado ? (
+                                <>
+                                    <h2 className="text-xl sm:text-2xl font-bold text-white mb-2">Sin locales disponibles</h2>
+                                    <p className="text-vr-gray text-sm sm:text-base px-4">
+                                        El administrador aún no ha configurado los locales. Contacta al dueño del negocio.
+                                    </p>
+                                </>
+                            ) : (
+                                <>
+                                    <h2 className="text-xl sm:text-2xl font-bold text-white mb-2">Aún no tienes sucursales</h2>
+                                    <p className="text-vr-gray mb-6 text-sm sm:text-base px-4">
+                                        {isOnline
+                                            ? 'Para empezar a vender, necesitas crear al menos un local.'
+                                            : 'Sin conexión y sin sucursales en cache. Conéctate a internet para continuar.'}
+                                    </p>
+                                    {isOnline && (
+                                        <div className="flex flex-col sm:flex-row gap-3 justify-center px-4">
+                                            <Link href="/onboarding" className="px-6 py-4 bg-gold-gradient text-navy font-extrabold rounded-xl hover:brightness-110 transition-all text-center">
+                                                Configurar mi Local →
+                                            </Link>
+                                            <Link href="/admin" className="px-6 py-4 bg-navy-3 border border-navy-4 text-white font-bold rounded-xl hover:bg-navy-4 transition-all text-center text-sm">
+                                                Panel Administrativo
+                                            </Link>
+                                        </div>
+                                    )}
+                                </>
                             )}
                         </div>
                     ) : (
@@ -118,7 +130,7 @@ export default function SelectBranchPage() {
                     )}
                 </div>
 
-                {sucursales.length > 0 && isOnline && (
+                {sucursales.length > 0 && isOnline && !esEmpleado && (
                     <div className="p-4 sm:p-6 bg-navy border-t border-navy-3 text-center">
                         <Link href="/admin" className="text-sm font-bold text-vr-gray hover:text-gold transition-colors underline">
                             Administrar mis Sucursales

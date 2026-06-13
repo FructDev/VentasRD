@@ -48,16 +48,7 @@ export default function PinScreen({ onUnlock }: { onUnlock?: () => void }) {
         // Migración automática: si el PIN era texto plano (4 chars), lo hasheamos y actualizamos
         if (pinAdmin && pinAdmin.length === 4) {
           const nuevoHash = await hashPin(newPin);
-          useConfigStore.getState().setAuth(
-            useConfigStore.getState().user,
-            useConfigStore.getState().negocioId,
-            useConfigStore.getState().negocioNombre,
-            nuevoHash,
-            useConfigStore.getState().negocioWhatsapp,
-            useConfigStore.getState().negocioRnc,
-            useConfigStore.getState().negocioDireccion,
-            useConfigStore.getState().negocioMensajeTicket,
-          );
+          useConfigStore.getState().setPinAdmin(nuevoHash);
           // Actualizar en Supabase en background (puede fallar offline sin problema)
           const negocioId = useConfigStore.getState().negocioId;
           if (negocioId) {

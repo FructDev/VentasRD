@@ -3,27 +3,40 @@
 
 import { useState } from 'react';
 import { useConfigStore } from '@/store/useConfigStore';
-import { useRouter } from 'next/navigation';
+import { useRouter, usePathname } from 'next/navigation';
+import { puedeAcceder } from '@/lib/acceso';
+import { verificarPin } from '@/lib/utils';
 
 export default function PinGuard({ children, title = "Zona Restringida" }: { children: React.ReactNode, title?: string }) {
-    const { isAdminMode, setAdminMode, pinAdmin } = useConfigStore();
+    const { isAdminMode, setAdminMode, pinAdmin, nombreUsuario, rolUsuario } = useConfigStore();
     const router = useRouter();
+    const pathname = usePathname();
     const [pinEntry, setPinEntry] = useState('');
     const [error, setError] = useState(false);
+
+    // Empleados autenticados con su propia cuenta: el acceso lo decide su rol
+    // (AuthProvider redirige las rutas no permitidas). El PIN existe para
+    // proteger las zonas admin en el dispositivo del dueño, no para empleados
+    // que ya iniciaron sesión con credenciales propias.
+    if (nombreUsuario) {
+        // Mientras AuthProvider redirige, no mostrar contenido no permitido
+        return puedeAcceder(rolUsuario, pathname) ? <>{children}</> : null;
+    }
 
     if (isAdminMode) {
         return <>{children}</>;
     }
 
-    const handleKeypad = (num: string) => {
+    const handleKeypad = async (num: string) => {
         setError(false);
         if (pinEntry.length < 4) {
             const newPin = pinEntry + num;
             setPinEntry(newPin);
 
             if (newPin.length === 4) {
-                const correctPin = pinAdmin || '1234';
-                if (newPin === correctPin) {
+                // verificarPin soporta tanto texto plano (legado) como hash SHA-256
+                const correcto = await verificarPin(newPin, pinAdmin || '1234');
+                if (correcto) {
                     setAdminMode(true);
                 } else {
                     setError(true);

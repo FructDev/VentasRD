@@ -2,6 +2,7 @@
 import { db } from './dexie';
 import { supabase } from '../supabase/client';
 import { useConfigStore } from '@/store/useConfigStore';
+import { productosConMovimientosPendientes } from './stock';
 
 // ─── Singleton ────────────────────────────────────────────────────────────────
 // Garantiza que nunca corra más de un intervalo de sync a la vez,
@@ -74,6 +75,10 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
             const { sucursalId, negocioId } = useConfigStore.getState();
             if (!negocioId) return;
 
+            // Productos con movimientos de stock aún no subidos: el pull no debe
+            // pisar su stock local (la nube todavía no refleja esos movimientos)
+            const movPendientes = await productosConMovimientosPendientes();
+
             // ══════════════════════════════════════════════════════════════════
             // 1. PULL — Descargar de la nube
             // ══════════════════════════════════════════════════════════════════
@@ -93,11 +98,11 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                 supabase.from('productos').select('*').eq('negocio_id', negocioId).gt('fecha_actualizacion', lastProdTs)
             );
             if (!pullProdErr && cloudProducts && cloudProducts.length > 0) {
-                let cloudStockMap = new Map<string, { stock_actual: number; stock_minimo: number }>();
+                let cloudStockMap = new Map<string, { stock_actual: number; stock_minimo: number; fecha_actualizacion?: number | null }>();
                 if (sucursalId) {
                     const { data: stockData } = await withTimeout(() =>
                         supabase.from('inventario_sucursales')
-                            .select('producto_id, stock_actual, stock_minimo')
+                            .select('producto_id, stock_actual, stock_minimo, fecha_actualizacion')
                             .eq('sucursal_id', sucursalId)
                             .in('producto_id', cloudProducts.map(p => p.id))
                     );
@@ -105,14 +110,32 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                 }
                 const productosAInsertar = await Promise.all(cloudProducts.map(async p => {
                     const cloudStock = cloudStockMap.get(p.id);
-                    if (cloudStock) {
-                        return { ...p, stock_actual: cloudStock.stock_actual, stock_minimo: cloudStock.stock_minimo, estado_sincronizacion: 1 };
-                    }
                     const local = await db.productos.get(p.id);
+                    const tieneCambiosPendientes = local?.estado_sincronizacion === 0;
+                    // Movimientos sin subir: conservar el stock local pase lo que pase
+                    const stockPendiente = movPendientes.has(p.id);
+
+                    // Si hay entrada en inventario_sucursales, usarla SOLO si es más reciente
+                    // que el valor de productos. Esto evita que datos viejos de inventario_sucursales
+                    // sobreescriban actualizaciones recientes de otros dispositivos.
+                    if (cloudStock && !stockPendiente) {
+                        const invTs = cloudStock.fecha_actualizacion ?? 0;
+                        const prodTs = p.fecha_actualizacion ?? 0;
+                        if (invTs >= prodTs) {
+                            // inventario_sucursales está al día → usarlo
+                            return { ...p, stock_actual: cloudStock.stock_actual, stock_minimo: cloudStock.stock_minimo, estado_sincronizacion: 1 };
+                        }
+                        // productos tiene un timestamp más reciente → ignorar inventario_sucursales para stock
+                    }
+
                     return {
                         ...p,
-                        stock_actual: local?.stock_actual ?? p.stock_actual ?? 0,
-                        stock_minimo: local?.stock_minimo ?? p.stock_minimo ?? 0,
+                        stock_actual: (stockPendiente || tieneCambiosPendientes)
+                            ? (local?.stock_actual ?? p.stock_actual ?? 0)
+                            : (p.stock_actual ?? local?.stock_actual ?? 0),
+                        stock_minimo: tieneCambiosPendientes
+                            ? (local!.stock_minimo ?? p.stock_minimo ?? 0)
+                            : (p.stock_minimo ?? local?.stock_minimo ?? 0),
                         estado_sincronizacion: 1,
                     };
                 }));
@@ -129,7 +152,61 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                 setSyncTs('productos', maxTs(cloudProducts));
             }
 
-            // ── 1.B.2  Reconciliación de eliminaciones (cada 5 min) ──────────
+            // ── 1.B.2  Reconciliación de stocks (cada 30 seg) ────────────────
+            // El pull incremental puede perderse cambios de otros dispositivos si
+            // su timestamp es anterior al lastProdTs local. Esta reconciliación
+            // descarga el stock_actual de TODOS los productos desde Supabase y
+            // actualiza Dexie ignorando timestamps, garantizando consistencia.
+            const STOCK_RECON_KEY = 'vrd_stock_recon_ts';
+            const STOCK_RECON_INTERVAL = 30 * 1000;
+            const lastStockRecon = parseInt(localStorage.getItem(STOCK_RECON_KEY) || '0', 10);
+            if (Date.now() - lastStockRecon > STOCK_RECON_INTERVAL) {
+                const { data: allStocks } = await withTimeout(() =>
+                    supabase
+                        .from('productos')
+                        .select('id, stock_actual, fecha_actualizacion')
+                        .eq('negocio_id', negocioId)
+                );
+                if (allStocks && allStocks.length > 0) {
+                    // Si hay sucursal, también traer stocks desde inventario_sucursales
+                    const sucursalStockMap = new Map<string, number>();
+                    if (sucursalId) {
+                        const { data: invData } = await withTimeout(() =>
+                            supabase
+                                .from('inventario_sucursales')
+                                .select('producto_id, stock_actual')
+                                .eq('sucursal_id', sucursalId)
+                        );
+                        if (invData) {
+                            (invData as { producto_id: string; stock_actual: number }[])
+                                .forEach(s => sucursalStockMap.set(s.producto_id, s.stock_actual));
+                        }
+                    }
+
+                    for (const cloudProd of allStocks) {
+                        const local = await db.productos.get(cloudProd.id);
+                        if (!local) continue;
+                        // No tocar productos con cambios locales pendientes
+                        if (local.estado_sincronizacion === 0) continue;
+                        // Ni productos con movimientos de stock sin subir
+                        if (movPendientes.has(cloudProd.id)) continue;
+
+                        const stockCorrecto = sucursalStockMap.has(cloudProd.id)
+                            ? sucursalStockMap.get(cloudProd.id)!
+                            : (cloudProd.stock_actual ?? local.stock_actual);
+
+                        if (local.stock_actual !== stockCorrecto) {
+                            await db.productos.update(cloudProd.id, {
+                                stock_actual: stockCorrecto,
+                                fecha_actualizacion: cloudProd.fecha_actualizacion ?? local.fecha_actualizacion,
+                            });
+                        }
+                    }
+                }
+                localStorage.setItem(STOCK_RECON_KEY, String(Date.now()));
+            }
+
+            // ── 1.B.4  Reconciliación de eliminaciones (cada 5 min) ──────────
             // El pull incremental no puede detectar borrados (el registro ya no
             // existe en Supabase). Esta reconciliación descarga todos los IDs de
             // la nube y elimina localmente los que ya no aparecen.
@@ -201,6 +278,7 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                     return {
                         ...v,
                         ncf: v.ncf ?? local?.ncf ?? null,
+                        vendedor_nombre: v.vendedor_nombre ?? local?.vendedor_nombre ?? null,
                         estado_sincronizacion: 1,
                     };
                 }));
@@ -239,6 +317,98 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                 setSyncTs('devoluciones', maxCreacionTs(cloudDevs));
             }
 
+            // ── 1.J  Seriales ─────────────────────────────────────────────────
+            const lastSerialesTs = getSyncTs('seriales');
+            const { data: cloudSeriales, error: pullSerialesErr } = await withTimeout(() =>
+                supabase.from('seriales').select('*').eq('negocio_id', negocioId).gt('fecha_actualizacion', lastSerialesTs)
+            );
+            if (!pullSerialesErr && cloudSeriales && cloudSeriales.length > 0) {
+                await db.seriales.bulkPut(cloudSeriales.map(s => ({ ...s, estado_sincronizacion: 1 })));
+                setSyncTs('seriales', maxTs(cloudSeriales));
+            }
+
+            // ── 1.J.2  Gastos ─────────────────────────────────────────────────
+            const lastGastosTs = getSyncTs('gastos');
+            const { data: cloudGastos, error: pullGastosErr } = await withTimeout(() =>
+                supabase.from('gastos').select('*').eq('negocio_id', negocioId).gt('fecha_actualizacion', lastGastosTs)
+            );
+            if (!pullGastosErr && cloudGastos && cloudGastos.length > 0) {
+                await db.gastos.bulkPut(cloudGastos.map(g => ({ ...g, estado_sincronizacion: 1 })));
+                setSyncTs('gastos', maxTs(cloudGastos));
+            }
+
+            // ── 1.K  Cortes de caja ───────────────────────────────────────────
+            const lastCortesTs = getSyncTs('cortes_caja');
+            const { data: cloudCortes, error: pullCortesErr } = await withTimeout(() =>
+                supabase.from('cortes_caja').select('*').eq('negocio_id', negocioId).gt('fecha_creacion', lastCortesTs)
+            );
+            if (!pullCortesErr && cloudCortes && cloudCortes.length > 0) {
+                await db.cortes_caja.bulkPut(cloudCortes.map(c => ({ ...c, estado_sincronizacion: 1 })));
+                setSyncTs('cortes_caja', maxCreacionTs(cloudCortes));
+            }
+
+            // ── 1.L  NCF: secuencia centralizada con bloques por dispositivo ──
+            try {
+                const ncf = useConfigStore.getState().ncf;
+
+                // 1.L.1 Sembrar la config legada a la nube (una sola vez por dispositivo).
+                // ignoreDuplicates: si otra caja ya sembró, no se pisa nada.
+                if (ncf.habilitado && !ncf.sembrado && ncf.hasta > 0) {
+                    await withTimeout(() =>
+                        supabase.from('ncf_secuencias').upsert({
+                            negocio_id: negocioId,
+                            tipo: ncf.tipo,
+                            desde: ncf.desde,
+                            hasta: ncf.hasta,
+                            proximo: ncf.actual === 0 ? ncf.desde : ncf.actual + 1,
+                            habilitado: true,
+                        }, { onConflict: 'negocio_id', ignoreDuplicates: true })
+                    );
+                }
+
+                // 1.L.2 Bajar el estado global de la secuencia
+                const { data: sec } = await withTimeout(() =>
+                    supabase.from('ncf_secuencias').select('*').eq('negocio_id', negocioId).maybeSingle()
+                );
+                if (sec) {
+                    useConfigStore.setState(s => ({
+                        ncf: {
+                            ...s.ncf,
+                            habilitado: sec.habilitado,
+                            tipo: sec.tipo,
+                            desde: Number(sec.desde),
+                            hasta: Number(sec.hasta),
+                            proximoGlobal: Number(sec.proximo),
+                            sembrado: true,
+                        },
+                    }));
+
+                    // 1.L.3 Reservar bloque si quedan pocos números locales
+                    const bloques = useConfigStore.getState().ncf.bloques;
+                    const restantes = bloques.reduce((s, b) => s + Math.max(0, b.hasta - b.proximo + 1), 0);
+                    if (sec.habilitado && restantes <= 5 && Number(sec.proximo) <= Number(sec.hasta)) {
+                        const { data: reserva } = await withTimeout(() =>
+                            supabase.rpc('reservar_ncf', { p_negocio_id: negocioId, p_cantidad: 20 })
+                        );
+                        const b = Array.isArray(reserva) ? reserva[0] : reserva;
+                        if (b?.bloque_desde != null) {
+                            useConfigStore.setState(s => ({
+                                ncf: {
+                                    ...s.ncf,
+                                    bloques: [
+                                        ...s.ncf.bloques.filter(x => x.proximo <= x.hasta),
+                                        { desde: Number(b.bloque_desde), hasta: Number(b.bloque_hasta), proximo: Number(b.bloque_desde) },
+                                    ],
+                                    proximoGlobal: Number(b.bloque_hasta) + 1,
+                                },
+                            }));
+                        }
+                    }
+                }
+            } catch (e) {
+                console.error('[sync] ncf error:', e);
+            }
+
             // ══════════════════════════════════════════════════════════════════
             // 2. PUSH — Subir a la nube
             // ══════════════════════════════════════════════════════════════════
@@ -252,6 +422,7 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                         negocio_id: venta.negocio_id,
                         sucursal_id: venta.sucursal_id || sucursalId,
                         numero_ticket: venta.numero_ticket,
+                        ...(venta.caja_codigo && { caja_codigo: venta.caja_codigo }),
                         total: venta.total,
                         metodo_pago: venta.metodo_pago,
                         fecha_creacion: venta.fecha_creacion,
@@ -260,6 +431,8 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                         ...(venta.monto_transferencia != null && { monto_transferencia: venta.monto_transferencia }),
                         // NCF
                         ...(venta.ncf && { ncf: venta.ncf }),
+                        // Vendedor
+                        ...(venta.vendedor_nombre && { vendedor_nombre: venta.vendedor_nombre }),
                         // Fiado
                         ...(venta.cliente_id && { cliente_id: venta.cliente_id }),
                     })
@@ -324,46 +497,53 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                             nombre: p.nombre,
                             codigo_barras: p.codigo_barras,
                             precio_venta: p.precio_venta,
+                            ...(p.precio_2    != null && { precio_2: p.precio_2 }),
+                            ...(p.precio_3    != null && { precio_3: p.precio_3 }),
+                            ...(p.ubicacion          && { ubicacion: p.ubicacion }),
+                            imagen_url: p.imagen_url ?? null, // null explícito: permite quitar la foto
+                            ...(p.serializable       && { serializable: p.serializable }),
                             costo: p.costo,
                             tasa_itbis: p.tasa_itbis,
                             tipo: p.tipo,
-                            // Subir stock también a productos como fallback multi-dispositivo.
-                            // inventario_sucursales es la verdad por sucursal, pero si ese push
-                            // falla (env var faltante en producción), el otro dispositivo al menos
-                            // ve el stock correcto via este campo.
-                            stock_actual: p.stock_actual,
+                            // NOTA: stock_actual NO se sube aquí — viaja como movimientos
+                            // atómicos (sección 2.C.2) para no pisar a otras cajas.
                             stock_minimo: p.stock_minimo,
                             fecha_actualizacion: p.fecha_actualizacion || Date.now(),
                         }))
                     )
                 );
-                if (!prodError) {
-                    let stockSyncOk = true;
-                    if (sucursalId) {
-                        const items = prodAUpsert.map(p => ({
-                            sucursal_id: sucursalId,
-                            producto_id: p.id,
-                            stock_actual: p.stock_actual,
-                            stock_minimo: p.stock_minimo,
-                            estado_sincronizacion: 1,
-                            fecha_actualizacion: p.fecha_actualizacion || Date.now(),
-                        }));
-                        const res = await withTimeout(() =>
-                            fetch('/api/sync/inventario', {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ items }),
-                            }).then(r => r.json())
-                        );
-                        if (!res.ok) {
-                            console.error('[sync] inventario_sucursales error:', res.error);
-                            stockSyncOk = false;
-                        }
-                    }
-                    if (stockSyncOk) {
-                        await db.productos.bulkPut(prodAUpsert.map(p => ({ ...p, estado_sincronizacion: 1 })));
-                    }
+                if (prodError) {
+                    console.error('[sync] productos error:', prodError.code, prodError.message, prodError.details);
+                } else {
+                    await db.productos.bulkPut(prodAUpsert.map(p => ({ ...p, estado_sincronizacion: 1 })));
                 }
+            }
+
+            // ── 2.C.2  Movimientos de stock (deltas atómicos) ─────────────────
+            // Cada movimiento se aplica en la nube con una RPC idempotente:
+            // increment/decrement atómico — dos cajas nunca se pisan el stock.
+            const movsPendientes = (await db.movimientos_stock
+                .where('estado_sincronizacion').equals(0).toArray())
+                .sort((a, b) => a.fecha_creacion - b.fecha_creacion);
+            for (const mov of movsPendientes) {
+                const { error: movErr } = await withTimeout(() =>
+                    supabase.rpc('aplicar_movimiento_stock', {
+                        p_id: mov.id,
+                        p_negocio_id: mov.negocio_id,
+                        p_sucursal_id: mov.sucursal_id ?? null,
+                        p_producto_id: mov.producto_id,
+                        p_delta: mov.delta,
+                        p_tipo: mov.tipo,
+                        p_referencia_id: mov.referencia_id ?? null,
+                        p_fecha_creacion: mov.fecha_creacion,
+                        p_valor_absoluto: mov.valor_absoluto ?? null,
+                    })
+                );
+                if (movErr) {
+                    console.error('[sync] movimiento_stock error:', movErr.code, movErr.message, movErr.details);
+                    break; // mantener el orden: no aplicar movimientos posteriores si uno falla
+                }
+                await db.movimientos_stock.update(mov.id, { estado_sincronizacion: 1 });
             }
 
             // ── 2.D  Composiciones ────────────────────────────────────────────
@@ -395,6 +575,8 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                             nombre: c.nombre,
                             telefono: c.telefono,
                             limite_credito: c.limite_credito,
+                            tipo_precio: c.tipo_precio ?? 1,
+                            al_por_mayor: c.al_por_mayor ?? false,
                             fecha_actualizacion: c.fecha_actualizacion || Date.now(),
                         }))
                     )
@@ -470,12 +652,147 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                 if (!error) await db.devoluciones.update(dev.id, { estado_sincronizacion: 1 });
             }
 
+            // ── 2.I  Seriales ─────────────────────────────────────────────────
+            const serialesPendientes = await db.seriales.where('estado_sincronizacion').equals(0).toArray();
+            if (serialesPendientes.length > 0) {
+                const { error: serErr } = await withTimeout(() =>
+                    supabase.from('seriales').upsert(
+                        serialesPendientes.map(s => ({
+                            id: s.id,
+                            negocio_id: s.negocio_id,
+                            producto_id: s.producto_id,
+                            numero_serial: s.numero_serial,
+                            estado: s.estado,
+                            venta_id: s.venta_id ?? null,
+                            fecha_venta: s.fecha_venta ?? null,
+                            fecha_actualizacion: s.fecha_actualizacion,
+                        }))
+                    )
+                );
+                if (!serErr) await db.seriales.bulkPut(serialesPendientes.map(s => ({ ...s, estado_sincronizacion: 1 })));
+            }
+
+            // ── 2.I.2  Gastos ─────────────────────────────────────────────────
+            const gastosPendientes = await db.gastos.where('estado_sincronizacion').equals(0).toArray();
+            for (const gasto of gastosPendientes) {
+                if (gasto.eliminado) {
+                    // Soft delete local → borrar en la nube y luego localmente
+                    const { error } = await withTimeout(() =>
+                        supabase.from('gastos').delete().eq('id', gasto.id)
+                    );
+                    if (!error) await db.gastos.delete(gasto.id);
+                    continue;
+                }
+                const { error } = await withTimeout(() =>
+                    supabase.from('gastos').upsert({
+                        id: gasto.id,
+                        negocio_id: gasto.negocio_id,
+                        sucursal_id: gasto.sucursal_id || sucursalId || null,
+                        categoria: gasto.categoria,
+                        descripcion: gasto.descripcion,
+                        monto: gasto.monto,
+                        metodo: gasto.metodo,
+                        creado_por: gasto.creado_por ?? null,
+                        fecha_creacion: gasto.fecha_creacion,
+                        fecha_actualizacion: gasto.fecha_actualizacion || Date.now(),
+                    })
+                );
+                if (error) {
+                    console.error('[sync] gastos error:', error.code, error.message, error.details);
+                } else {
+                    await db.gastos.update(gasto.id, { estado_sincronizacion: 1 });
+                }
+            }
+
+            // ── 2.J  Cortes de caja ───────────────────────────────────────────
+            const cortesPendientes = await db.cortes_caja.where('estado_sincronizacion').equals(0).toArray();
+            for (const corte of cortesPendientes) {
+                const { error } = await withTimeout(() =>
+                    supabase.from('cortes_caja').upsert({
+                        id: corte.id,
+                        negocio_id: corte.negocio_id,
+                        caja_id: corte.caja_id,
+                        sucursal_id: corte.sucursal_id || sucursalId || null,
+                        tipo: corte.tipo,
+                        fecha_creacion: corte.fecha_creacion,
+                        efectivo: corte.efectivo,
+                        tarjeta: corte.tarjeta,
+                        transferencia: corte.transferencia,
+                        fiado: corte.fiado,
+                        mixto: corte.mixto,
+                        total_ventas: corte.total_ventas,
+                        cantidad_transacciones: corte.cantidad_transacciones,
+                        monto_apertura: corte.monto_apertura ?? null,
+                        monto_esperado: corte.monto_esperado ?? null,
+                        monto_contado: corte.monto_contado ?? null,
+                        diferencia: corte.diferencia ?? null,
+                    })
+                );
+                if (!error) await db.cortes_caja.update(corte.id, { estado_sincronizacion: 1 });
+            }
+
+            // ══════════════════════════════════════════════════════════════════
+            // 3. PURGA LOCAL — mantener IndexedDB liviano (1 vez al día)
+            // Borra datos viejos YA SINCRONIZADOS. Supabase conserva todo;
+            // los reportes de rangos antiguos consultan la nube.
+            // ══════════════════════════════════════════════════════════════════
+            const PURGE_KEY = 'vrd_purge_ts';
+            const PURGE_INTERVAL = 24 * 60 * 60 * 1000;
+            const lastPurge = parseInt(localStorage.getItem(PURGE_KEY) || '0', 10);
+            if (Date.now() - lastPurge > PURGE_INTERVAL) {
+                const corte90d = Date.now() - 90 * 24 * 60 * 60 * 1000;
+                const corte30d = Date.now() - 30 * 24 * 60 * 60 * 1000;
+
+                // Ventas sincronizadas con más de 90 días (y sus detalles)
+                const ventasViejas = await db.ventas
+                    .where('fecha_creacion').below(corte90d)
+                    .filter(v => v.estado_sincronizacion === 1)
+                    .toArray();
+                if (ventasViejas.length > 0) {
+                    const ids = ventasViejas.map(v => v.id);
+                    await db.venta_detalles.where('venta_id').anyOf(ids).delete();
+                    await db.ventas.bulkDelete(ids);
+                }
+
+                // Movimientos de stock sincronizados con más de 30 días
+                // (son solo el outbox local — el kardex completo vive en la nube)
+                await db.movimientos_stock
+                    .where('fecha_creacion').below(corte30d)
+                    .filter(m => m.estado_sincronizacion === 1)
+                    .delete();
+
+                // Devoluciones y cortes sincronizados con más de 90 días
+                await db.devoluciones
+                    .where('fecha_creacion').below(corte90d)
+                    .filter(d => d.estado_sincronizacion === 1)
+                    .delete();
+                await db.cortes_caja
+                    .where('fecha_creacion').below(corte90d)
+                    .filter(c => c.estado_sincronizacion === 1)
+                    .delete();
+                await db.gastos
+                    .where('fecha_creacion').below(corte90d)
+                    .filter(g => g.estado_sincronizacion === 1 && !g.eliminado)
+                    .delete();
+
+                localStorage.setItem(PURGE_KEY, String(Date.now()));
+                if (ventasViejas.length > 0) {
+                    console.log(`[purge] ${ventasViejas.length} ventas antiguas archivadas (siguen en la nube)`);
+                }
+            }
+
             consecutiveErrors = 0;
 
         } catch (err) {
             consecutiveErrors++;
             const isTimeout = err instanceof Error && err.message === 'sync_timeout';
             console.error(`🚨 Error en sync worker (intento ${consecutiveErrors}):`, isTimeout ? 'timeout de Supabase' : err);
+            // Reportar a Sentry (los timeouts son ruido normal de conexiones lentas)
+            if (!isTimeout && consecutiveErrors === 1) {
+                import('@sentry/nextjs').then(Sentry => {
+                    Sentry.captureException(err, { tags: { origen: 'sync_worker' } });
+                }).catch(() => { });
+            }
         } finally {
             isSyncing = false;
         }
