@@ -1,11 +1,12 @@
 // src/app/page.tsx
 'use client';
 
-import { useState, useEffect, useRef, useMemo, lazy, Suspense } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback, memo, lazy, Suspense } from 'react';
 import { useConfigStore, getDispositivoId } from '@/store/useConfigStore';
 import { useCartStore } from '@/store/useCartStore';
 import { ProductoLocal } from '@/types/database';
 import { formatDOP, formatTicket } from '@/lib/utils';
+import { miniatura } from '@/lib/imagen';
 import Fuse from 'fuse.js';
 import { useReactToPrint } from 'react-to-print';
 import { TicketVenta } from '@/components/TicketVenta';
@@ -21,6 +22,51 @@ import CajaModal from '@/components/shared/CajaModal';
 import ConfirmModal from '@/components/ui/ConfirmModal';
 import { SkeletonProductGrid } from '@/components/ui/Skeleton';
 import { useLiveQuery } from 'dexie-react-hooks';
+
+// Color del stock según nivel (puro — fuera del componente para no recrearse)
+function getStockColor(producto: ProductoLocal) {
+  if (producto.stock_actual <= 0) return 'text-vr-red';
+  if (producto.stock_actual <= producto.stock_minimo) return 'text-vr-orange';
+  return 'text-vr-gray';
+}
+
+// Tarjeta de producto memoizada: no se re-renderiza al teclear en el buscador
+// mientras el producto y el handler no cambien de referencia.
+const ProductCard = memo(function ProductCard({
+  producto, onSelect,
+}: { producto: ProductoLocal; onSelect: (p: ProductoLocal) => void }) {
+  return (
+    <button
+      onClick={() => onSelect(producto)}
+      className="bg-navy-2 p-3 sm:p-4 rounded-xl border border-navy-3 hover:border-gold/40 hover:bg-navy-3 transition-all text-left flex flex-col justify-between h-24 sm:h-28 active:scale-[0.97] group relative overflow-hidden"
+    >
+      <div className="flex items-start gap-2">
+        {producto.imagen_url && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={miniatura(producto.imagen_url, 96)}
+            alt=""
+            loading="lazy"
+            className="w-10 h-10 sm:w-12 sm:h-12 rounded-lg object-cover bg-white shrink-0 border border-navy-3"
+          />
+        )}
+        <span className="font-semibold text-white line-clamp-2 text-xs sm:text-sm group-hover:text-gold-2 transition-colors">{producto.nombre}</span>
+      </div>
+      <div className="flex justify-between items-end mt-1">
+        <span className="text-base sm:text-lg font-bold font-mono text-gold">{formatDOP(producto.precio_venta)}</span>
+        {producto.tipo === 'combo' ? (
+          <span className="text-[10px] font-bold text-purple-400 bg-purple-400/10 px-1.5 py-0.5 rounded">combo</span>
+        ) : producto.serializable ? (
+          <span className="text-[10px] font-bold text-gold bg-gold/10 px-1.5 py-0.5 rounded">{producto.stock_actual} SN</span>
+        ) : (
+          <span className={`text-xs font-medium ${getStockColor(producto)}`}>
+            {producto.stock_actual} uds
+          </span>
+        )}
+      </div>
+    </button>
+  );
+});
 
 export default function POSPage() {
   const { negocioId, negocioNombre, sucursalId, showToast, negocioRnc, negocioTelefono, negocioDireccion, negocioMensajeTicket, negocioLogo, nombreUsuario, rolUsuario, consumirNcf, ncf: ncfConfig, impresion, dispositivoId } = useConfigStore();
@@ -415,11 +461,16 @@ export default function POSPage() {
     }
   };
 
-  const getStockColor = (producto: ProductoLocal) => {
-    if (producto.stock_actual <= 0) return 'text-vr-red';
-    if (producto.stock_actual <= producto.stock_minimo) return 'text-vr-orange';
-    return 'text-vr-gray';
-  };
+  // Handler estable para la parrilla: permite que ProductCard memoizado no se
+  // re-renderice al teclear en el buscador.
+  const onSelectProducto = useCallback((producto: ProductoLocal) => {
+    if (producto.serializable) {
+      setProductoParaSerial(producto);
+      setBusquedaSerial('');
+    } else {
+      addItem(producto);
+    }
+  }, [addItem]);
 
   // Cliente activo derivado de la lista de clientes
   const clienteActivo = clientes.find(c => c.id === clienteActivoId) ?? null;
@@ -440,7 +491,7 @@ export default function POSPage() {
   };
 
   // Cart panel content - shared between desktop sidebar and mobile drawer
-  const CartContent = () => (
+  const cartContent = (
     <>
       <div className="p-3 sm:p-4 border-b border-navy-3 flex justify-between items-center">
         <h2 className="text-base sm:text-lg font-display font-bold text-white">Ticket</h2>
@@ -621,43 +672,7 @@ export default function POSPage() {
                 </div>
               ) : (
                 productosFiltrados.map((producto) => (
-                  <button
-                    key={producto.id}
-                    onClick={() => {
-                      if (producto.serializable) {
-                        setProductoParaSerial(producto);
-                        setBusquedaSerial('');
-                      } else {
-                        addItem(producto);
-                      }
-                    }}
-                    className="bg-navy-2 p-3 sm:p-4 rounded-xl border border-navy-3 hover:border-gold/40 hover:bg-navy-3 transition-all text-left flex flex-col justify-between h-24 sm:h-28 active:scale-[0.97] group relative overflow-hidden"
-                  >
-                    <div className="flex items-start gap-2">
-                      {producto.imagen_url && (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={producto.imagen_url}
-                          alt=""
-                          loading="lazy"
-                          className="w-10 h-10 sm:w-12 sm:h-12 rounded-lg object-cover bg-white shrink-0 border border-navy-3"
-                        />
-                      )}
-                      <span className="font-semibold text-white line-clamp-2 text-xs sm:text-sm group-hover:text-gold-2 transition-colors">{producto.nombre}</span>
-                    </div>
-                    <div className="flex justify-between items-end mt-1">
-                      <span className="text-base sm:text-lg font-bold font-mono text-gold">{formatDOP(producto.precio_venta)}</span>
-                      {producto.tipo === 'combo' ? (
-                        <span className="text-[10px] font-bold text-purple-400 bg-purple-400/10 px-1.5 py-0.5 rounded">combo</span>
-                      ) : producto.serializable ? (
-                        <span className="text-[10px] font-bold text-gold bg-gold/10 px-1.5 py-0.5 rounded">{producto.stock_actual} SN</span>
-                      ) : (
-                        <span className={`text-xs font-medium ${getStockColor(producto)}`}>
-                          {producto.stock_actual} uds
-                        </span>
-                      )}
-                    </div>
-                  </button>
+                  <ProductCard key={producto.id} producto={producto} onSelect={onSelectProducto} />
                 ))
               )}
             </div>
@@ -685,7 +700,7 @@ export default function POSPage() {
           z-50 lg:z-10
           overflow-hidden
         `}>
-          <CartContent />
+          {cartContent}
         </div>
 
         {/* MOBILE: Floating cart button (visible when cart is closed) */}

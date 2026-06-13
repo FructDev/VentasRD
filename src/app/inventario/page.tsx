@@ -5,7 +5,7 @@ import { useMemo, useState, useRef, lazy, Suspense } from 'react';
 import Link from 'next/link';
 import { db } from '@/lib/db/dexie';
 import { registrarMovimientoStock } from '@/lib/db/stock';
-import { comprimirImagen } from '@/lib/imagen';
+import { comprimirImagen, miniatura } from '@/lib/imagen';
 import ConfirmModal from '@/components/ui/ConfirmModal';
 import { useProductosTenant, useComposicionesTenant, useVentasPeriodoTenant, useVentaDetallesPorVentas } from '@/lib/db/tenantQuery';
 import { useConfigStore } from '@/store/useConfigStore';
@@ -520,7 +520,7 @@ export default function InventarioPage() {
                                             <div className="flex items-center gap-2.5">
                                                 {prod.imagen_url && (
                                                     // eslint-disable-next-line @next/next/no-img-element
-                                                    <img src={prod.imagen_url} alt="" loading="lazy" className="w-9 h-9 rounded-lg object-cover bg-white border border-navy-3 shrink-0 hidden sm:block" />
+                                                    <img src={miniatura(prod.imagen_url, 72)} alt="" loading="lazy" className="w-9 h-9 rounded-lg object-cover bg-white border border-navy-3 shrink-0 hidden sm:block" />
                                                 )}
                                                 <span className="font-bold text-white text-sm block">{prod.nombre}</span>
                                             </div>
