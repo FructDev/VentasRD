@@ -74,3 +74,6 @@ jobs:
 
       - name: Verificación offline (PWA + PIN)
         run: node scripts/verify-offline.mjs
+
+      - name: Smoke de cierre de sesión (cajero)
+        run: node scripts/smoke-logout.mjs
