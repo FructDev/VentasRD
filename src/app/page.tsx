@@ -163,6 +163,37 @@ export default function POSPage() {
     return fuse.search(searchTerm).map(result => result.item);
   }, [searchTerm, fuse, productosEnDB]);
 
+  // Renderizado progresivo: pinta un bloque y carga más al hacer scroll.
+  // Mantiene la parrilla ágil con catálogos grandes sin perder ningún producto.
+  const PAGINA_GRID = 48;
+  const [limiteVisible, setLimiteVisible] = useState(PAGINA_GRID);
+  const sentinelRef = useRef<HTMLDivElement>(null);
+
+  // Reiniciar al cambiar la búsqueda (cada búsqueda empieza desde arriba)
+  useEffect(() => { setLimiteVisible(PAGINA_GRID); }, [searchTerm]);
+
+  const productosVisibles = useMemo(
+    () => productosFiltrados.slice(0, limiteVisible),
+    [productosFiltrados, limiteVisible]
+  );
+  const hayMas = limiteVisible < productosFiltrados.length;
+
+  // Cargar más cuando el centinela entra en vista
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el) return;
+    const obs = new IntersectionObserver(
+      entries => {
+        if (entries[0].isIntersecting) {
+          setLimiteVisible(l => Math.min(l + PAGINA_GRID, productosFiltrados.length));
+        }
+      },
+      { rootMargin: '300px' }
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [productosFiltrados.length]);
+
   // ¿Hay números NCF disponibles para emitir? (bloques reservados o secuencia legada)
   const ncfDisponible =
     ncfConfig.bloques.some(b => b.proximo <= b.hasta) ||
@@ -671,11 +702,17 @@ export default function POSPage() {
                   <span className="font-medium text-sm">No se encontraron productos</span>
                 </div>
               ) : (
-                productosFiltrados.map((producto) => (
+                productosVisibles.map((producto) => (
                   <ProductCard key={producto.id} producto={producto} onSelect={onSelectProducto} />
                 ))
               )}
             </div>
+            {/* Centinela de scroll infinito + contador */}
+            {hayMas && (
+              <div ref={sentinelRef} className="col-span-full py-4 text-center text-xs text-vr-gray">
+                Mostrando {productosVisibles.length} de {productosFiltrados.length}…
+              </div>
+            )}
           </div>
         </div>
 

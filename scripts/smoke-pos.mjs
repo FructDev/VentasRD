@@ -47,7 +47,11 @@ await page.reload({ waitUntil: 'domcontentloaded' });
 await page.waitForSelector('input[placeholder*="Buscar producto"]', { timeout: 10000 });
 await page.waitForTimeout(1500);
 
-// 1. Buscar
+// 0. Renderizado progresivo: con 200 productos, NO debe pintar las 200 tarjetas de golpe
+const tarjetasIniciales = await page.locator('.grid > button').count();
+check('Parrilla progresiva: no renderiza todo de golpe', tarjetasIniciales > 0 && tarjetasIniciales <= 60, `${tarjetasIniciales} tarjetas iniciales`);
+
+// 1. Buscar (un producto de índice alto: la búsqueda filtra antes de cortar)
 const buscador = page.locator('input[placeholder*="Buscar producto"]');
 await buscador.fill('Producto 137');
 await page.waitForTimeout(800);
