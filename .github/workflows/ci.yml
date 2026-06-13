@@ -1,0 +1,76 @@
+name: CI
+
+# Red de seguridad: corre en cada push y PR a main.
+# Guardianes duros (bloquean si fallan): typecheck + build.
+# Lint es informativo (hay deuda preexistente que se limpia aparte).
+# E2E corre los smokes que no necesitan secretos (la app va offline en la prueba).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Variables de marcador para que el build no falle por falta de secretos reales.
+# No se usan en runtime durante las pruebas (la app corre offline).
+env:
+  NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
+  NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: placeholder-key
+  SUPABASE_SERVICE_ROLE_KEY: placeholder-service-role
+
+jobs:
+  calidad:
+    name: Tipos, lint y build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Verificar tipos (TypeScript)
+        run: npm run typecheck
+
+      - name: Lint (informativo, no bloquea)
+        run: npm run lint
+        continue-on-error: true
+
+      - name: Build de producción
+        run: npm run build
+
+  e2e:
+    name: Pruebas de extremo a extremo (offline)
+    runs-on: ubuntu-latest
+    needs: calidad
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Instalar Chromium para Playwright
+        run: npx playwright install --with-deps chromium
+
+      - name: Build de producción
+        run: npm run build
+
+      - name: Iniciar servidor y esperar
+        run: |
+          npx next start -p 3001 &
+          npx wait-on http://localhost:3001 --timeout 60000
+
+      - name: Smoke del POS (buscar, agregar, cobrar)
+        run: node scripts/smoke-pos.mjs
+
+      - name: Verificación offline (PWA + PIN)
+        run: node scripts/verify-offline.mjs
