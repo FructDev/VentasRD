@@ -1,9 +1,13 @@
 // src/app/inventario/page.tsx
 'use client';
 
-import { useMemo, useState, lazy, Suspense } from 'react';
+import { useMemo, useState, useRef, lazy, Suspense } from 'react';
+import Link from 'next/link';
 import { db } from '@/lib/db/dexie';
-import { useProductosTenant, useComposicionesTenant } from '@/lib/db/tenantQuery';
+import { registrarMovimientoStock } from '@/lib/db/stock';
+import { comprimirImagen } from '@/lib/imagen';
+import ConfirmModal from '@/components/ui/ConfirmModal';
+import { useProductosTenant, useComposicionesTenant, useVentasPeriodoTenant, useVentaDetallesPorVentas } from '@/lib/db/tenantQuery';
 import { useConfigStore } from '@/store/useConfigStore';
 import { ProductoLocal, ComposicionLocal } from '@/types/database';
 import { formatDOP } from '@/lib/utils';
@@ -18,7 +22,7 @@ import Pagination from '@/components/ui/Pagination';
 const BarcodeScanner = lazy(() => import('@/components/ui/BarcodeScanner'));
 
 export default function InventarioPage() {
-    const { negocioId } = useConfigStore();
+    const { negocioId, showToast, isOnline } = useConfigStore();
     const productosRaw = useLiveQuery(
         () => negocioId ? db.productos.where('negocio_id').equals(negocioId).toArray() : [],
         [negocioId]
@@ -59,6 +63,9 @@ export default function InventarioPage() {
 
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [productoEditando, setProductoEditando] = useState<ProductoLocal | null>(null);
+    // Foto del producto: data URL (nueva, pendiente de subir) o URL http (existente)
+    const [fotoProducto, setFotoProducto] = useState<string | null>(null);
+    const fotoInputRef = useRef<HTMLInputElement>(null);
     const [busquedaInsumo, setBusquedaInsumo] = useState('');
     const [isScannerOpen, setIsScannerOpen] = useState(false);
 
@@ -66,12 +73,18 @@ export default function InventarioPage() {
     const [productoAjustando, setProductoAjustando] = useState<ProductoLocal | null>(null);
     const [tipoAjuste, setTipoAjuste] = useState<'entrada' | 'merma' | 'conteo'>('entrada');
     const [cantidadAjuste, setCantidadAjuste] = useState('');
+    const [serialesEntrada, setSerialesEntrada] = useState<string[]>(['']); // inputs de seriales en entrada
+    const [scannerSerialIdx, setScannerSerialIdx] = useState<number | null>(null); // índice del campo que está escaneando
 
     const [formData, setFormData] = useState({
         nombre: '',
         tipo: 'simple' as 'simple' | 'insumo' | 'combo',
         codigo_barras: '',
+        ubicacion: '',
+        serializable: false,
         precio_venta: '',
+        precio_2: '',
+        precio_3: '',
         costo: '',
         stock_actual: '',
         stock_minimo: '',
@@ -86,6 +99,65 @@ export default function InventarioPage() {
         return productosConCosto.slice(inicio, inicio + ITEMS_POR_PAGINA);
     }, [productosConCosto, pagina]);
     const totalPaginas = Math.ceil(productosConCosto.length / ITEMS_POR_PAGINA);
+
+    // ─── Reorden inteligente ──────────────────────────────────────────────
+    // Velocidad de venta de los últimos 14 días → "te quedan ~X días de stock".
+    // Los combos se expanden a sus insumos vía recetas para que el consumo
+    // de ingredientes también cuente.
+    const DIAS_VENTANA = 14;
+    const DIAS_COBERTURA = 14; // cuánto stock comprar (2 semanas)
+    const UMBRAL_DIAS = 7;     // alertar cuando queden ≤7 días
+
+    const ventas14 = useVentasPeriodoTenant(DIAS_VENTANA);
+    const detalles14 = useVentaDetallesPorVentas(useMemo(() => ventas14.map(v => v.id), [ventas14]));
+
+    const sugerenciasReorden = useMemo(() => {
+        if (detalles14.length === 0) return [];
+
+        // Recetas indexadas por combo
+        const recetasPorCombo = new Map<string, ComposicionLocal[]>();
+        composiciones.forEach(c => {
+            const arr = recetasPorCombo.get(c.producto_padre_id) ?? [];
+            arr.push(c);
+            recetasPorCombo.set(c.producto_padre_id, arr);
+        });
+
+        // Consumo real por producto (combos → insumos)
+        const consumo = new Map<string, number>();
+        detalles14.forEach(d => {
+            const receta = recetasPorCombo.get(d.producto_id);
+            if (receta && receta.length > 0) {
+                receta.forEach(ing => {
+                    consumo.set(ing.insumo_id, (consumo.get(ing.insumo_id) ?? 0) + ing.cantidad_necesaria * d.cantidad);
+                });
+            } else {
+                consumo.set(d.producto_id, (consumo.get(d.producto_id) ?? 0) + d.cantidad);
+            }
+        });
+
+        return productos
+            .filter(p => p.tipo !== 'combo') // los combos no se compran, se arman
+            .map(p => {
+                const vendido = consumo.get(p.id) ?? 0;
+                if (vendido <= 0) return null;
+                const velocidad = vendido / DIAS_VENTANA; // unidades por día
+                const diasRestantes = p.stock_actual > 0 ? p.stock_actual / velocidad : 0;
+                if (diasRestantes > UMBRAL_DIAS) return null;
+                const sugerido = Math.max(1, Math.ceil(velocidad * DIAS_COBERTURA - p.stock_actual));
+                return { producto: p, velocidad, diasRestantes, sugerido };
+            })
+            .filter((x): x is NonNullable<typeof x> => x !== null)
+            .sort((a, b) => a.diasRestantes - b.diasRestantes)
+            .slice(0, 15);
+    }, [productos, composiciones, detalles14]);
+
+    const enviarListaCompras = () => {
+        const lineas = sugerenciasReorden.map(s =>
+            `• ${s.producto.nombre} — comprar ~${s.sugerido} (quedan ${parseFloat(s.producto.stock_actual.toFixed(1))})`
+        );
+        const msg = `🛒 *Lista de compras sugerida*\n\n${lineas.join('\n')}\n\nGenerada por VentaRD según las ventas de los últimos ${DIAS_VENTANA} días.`;
+        window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
+    };
 
     const insights = useMemo(() => {
         if (productosConCosto.length === 0) return null;
@@ -111,7 +183,8 @@ export default function InventarioPage() {
 
     const abrirModalNuevo = () => {
         setProductoEditando(null);
-        setFormData({ nombre: '', tipo: 'simple', codigo_barras: '', precio_venta: '', costo: '', stock_actual: '', stock_minimo: '', tasa_itbis: '0.18', ingredientes: [] });
+        setFormData({ nombre: '', tipo: 'simple', codigo_barras: '', ubicacion: '', serializable: false, precio_venta: '', precio_2: '', precio_3: '', costo: '', stock_actual: '', stock_minimo: '', tasa_itbis: '0.18', ingredientes: [] });
+        setFotoProducto(null);
         setIsModalOpen(true);
     };
 
@@ -131,13 +204,18 @@ export default function InventarioPage() {
             nombre: producto.nombre,
             tipo: (producto as any).tipo || 'simple',
             codigo_barras: producto.codigo_barras || '',
+            ubicacion: producto.ubicacion || '',
+            serializable: producto.serializable ?? false,
             precio_venta: producto.precio_venta.toString(),
+            precio_2: producto.precio_2?.toString() || '',
+            precio_3: producto.precio_3?.toString() || '',
             costo: producto.costo.toString(),
             stock_actual: producto.stock_actual.toString(),
             stock_minimo: producto.stock_minimo.toString(),
             tasa_itbis: producto.tasa_itbis?.toString() || '0.18',
             ingredientes: ingredientesCargados
         });
+        setFotoProducto(producto.imagen_url ?? null);
         setIsModalOpen(true);
     };
 
@@ -147,21 +225,66 @@ export default function InventarioPage() {
         const idProducto = productoEditando ? productoEditando.id : uuidv4();
 
         try {
-            await db.transaction('rw', db.productos, db.composiciones, async () => {
+            // Foto: si es nueva (data URL), subirla a Cloudinary antes de guardar
+            let imagenFinal: string | undefined = fotoProducto || undefined;
+            if (fotoProducto?.startsWith('data:')) {
+                if (navigator.onLine) {
+                    try {
+                        const res = await fetch('/api/upload/producto', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ dataUrl: fotoProducto, productoId: idProducto }),
+                        });
+                        const data = await res.json();
+                        if (!res.ok) throw new Error(data.error);
+                        imagenFinal = data.url;
+                    } catch (err) {
+                        console.error('[foto producto]', err);
+                        showToast('No se pudo subir la foto — el producto se guardó sin ella.', 'info');
+                        imagenFinal = productoEditando?.imagen_url;
+                    }
+                } else {
+                    showToast('Sin internet: el producto se guardó sin la foto. Súbela de nuevo cuando tengas conexión.', 'info');
+                    imagenFinal = productoEditando?.imagen_url;
+                }
+            }
+
+            await db.transaction('rw', db.productos, db.composiciones, db.movimientos_stock, async () => {
+                const precio2 = parseFloat(formData.precio_2) || undefined;
+                const precio3 = parseFloat(formData.precio_3) || undefined;
+                const stockFormulario = parseInt(formData.stock_actual) || 0;
+                // El stock NO se escribe directo: se registra como movimiento
+                // (entrada inicial si es nuevo, conteo si cambió en edición)
+                const stockPrevio = productoEditando?.stock_actual ?? 0;
                 await db.productos.put({
                     id: idProducto,
                     negocio_id: negocioId,
                     nombre: formData.nombre,
                     tipo: formData.tipo,
                     codigo_barras: formData.codigo_barras,
+                    ...(formData.ubicacion && { ubicacion: formData.ubicacion }),
+                    ...(imagenFinal && { imagen_url: imagenFinal }),
+                    serializable: formData.serializable || undefined,
                     precio_venta: formData.tipo === 'insumo' ? 0 : (parseFloat(formData.precio_venta) || 0),
+                    ...(formData.tipo !== 'insumo' && precio2 && { precio_2: precio2 }),
+                    ...(formData.tipo !== 'insumo' && precio3 && { precio_3: precio3 }),
                     costo: formData.tipo === 'combo' ? 0 : (parseFloat(formData.costo) || 0),
-                    stock_actual: parseInt(formData.stock_actual) || 0,
+                    stock_actual: stockPrevio,
                     stock_minimo: parseInt(formData.stock_minimo) || 0,
                     tasa_itbis: parseFloat(formData.tasa_itbis),
                     estado_sincronizacion: 0,
                     fecha_actualizacion: Date.now(),
                 } as any);
+
+                if (formData.tipo !== 'combo') {
+                    if (!productoEditando && stockFormulario > 0) {
+                        // Producto nuevo con stock inicial
+                        await registrarMovimientoStock({ productoId: idProducto, tipo: 'entrada', delta: stockFormulario });
+                    } else if (productoEditando && stockFormulario !== stockPrevio) {
+                        // Edición con cambio manual de stock = conteo
+                        await registrarMovimientoStock({ productoId: idProducto, tipo: 'conteo', valorAbsoluto: stockFormulario });
+                    }
+                }
 
                 if (formData.tipo === 'combo') {
                     await db.composiciones.where('producto_padre_id').equals(idProducto).delete();
@@ -182,41 +305,74 @@ export default function InventarioPage() {
         }
     };
 
-    const eliminarProducto = async (id: string) => {
-        if (confirm("¿Estás seguro de eliminar este producto?")) {
-            const ahora = Date.now();
-            await db.transaction('rw', db.productos, db.composiciones, async () => {
-                // Soft delete: ocultar en UI y marcar para eliminar en Supabase al próximo sync
-                await db.productos.update(id, { eliminado: true, estado_sincronizacion: 0, fecha_actualizacion: ahora });
-                // Las composiciones huérfanas se limpian en el worker cuando el producto sea confirmado borrado
-            });
-        }
+    const [productoAEliminar, setProductoAEliminar] = useState<ProductoLocal | null>(null);
+
+    const eliminarProducto = async () => {
+        if (!productoAEliminar) return;
+        const ahora = Date.now();
+        await db.transaction('rw', db.productos, db.composiciones, async () => {
+            // Soft delete: ocultar en UI y marcar para eliminar en Supabase al próximo sync
+            await db.productos.update(productoAEliminar.id, { eliminado: true, estado_sincronizacion: 0, fecha_actualizacion: ahora });
+            // Las composiciones huérfanas se limpian en el worker cuando el producto sea confirmado borrado
+        });
+        setProductoAEliminar(null);
+        showToast('Producto eliminado.', 'info');
     };
 
     const abrirModalAjuste = (producto: ProductoLocal) => {
         setProductoAjustando(producto);
         setTipoAjuste('entrada');
         setCantidadAjuste('');
+        setSerialesEntrada(['']);
+        setScannerSerialIdx(null);
         setIsAjusteOpen(true);
     };
 
     const guardarAjuste = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!productoAjustando) return;
+        if (!productoAjustando || !negocioId) return;
+
+        // Producto serializable + entrada: validar que los seriales estén completos
+        const esSerializable = productoAjustando.serializable;
+        if (esSerializable && tipoAjuste === 'entrada') {
+            const seriales = serialesEntrada.map(s => s.trim()).filter(Boolean);
+            if (seriales.length === 0) return;
+            // Guardar cada serial en Dexie
+            await Promise.all(seriales.map(num =>
+                db.seriales.add({
+                    id: uuidv4(),
+                    negocio_id: negocioId,
+                    producto_id: productoAjustando.id,
+                    numero_serial: num,
+                    estado: 'disponible',
+                    venta_id: null,
+                    fecha_venta: null,
+                    estado_sincronizacion: 0,
+                    fecha_actualizacion: Date.now(),
+                })
+            ));
+            // Entrada de seriales: delta = cantidad de seriales nuevos
+            await registrarMovimientoStock({
+                productoId: productoAjustando.id,
+                tipo: 'entrada',
+                delta: seriales.length,
+            });
+            setIsAjusteOpen(false);
+            return;
+        }
+
         const cantidad = parseFloat(cantidadAjuste);
         if (isNaN(cantidad) || cantidad < 0) return;
 
-        const stockActual = productoAjustando.stock_actual;
-        let nuevoStock: number;
-        if (tipoAjuste === 'entrada') nuevoStock = stockActual + cantidad;
-        else if (tipoAjuste === 'merma') nuevoStock = Math.max(0, stockActual - cantidad);
-        else nuevoStock = cantidad;
-
-        await db.productos.update(productoAjustando.id, {
-            stock_actual: nuevoStock,
-            estado_sincronizacion: 0,
-            fecha_actualizacion: Date.now(),
-        } as any);
+        if (tipoAjuste === 'entrada') {
+            await registrarMovimientoStock({ productoId: productoAjustando.id, tipo: 'entrada', delta: cantidad });
+        } else if (tipoAjuste === 'merma') {
+            const aRestar = Math.min(cantidad, productoAjustando.stock_actual);
+            await registrarMovimientoStock({ productoId: productoAjustando.id, tipo: 'merma', delta: -aRestar });
+        } else {
+            // Conteo físico: establece el stock exacto
+            await registrarMovimientoStock({ productoId: productoAjustando.id, tipo: 'conteo', valorAbsoluto: cantidad });
+        }
         setIsAjusteOpen(false);
     };
 
@@ -235,9 +391,17 @@ export default function InventarioPage() {
                             <h1 className="text-2xl sm:text-3xl font-display font-extrabold text-white">Inventario</h1>
                             <p className="text-vr-gray mt-0.5 text-sm hidden sm:block">Gestión inteligente de productos y recetas</p>
                         </div>
-                        <button onClick={abrirModalNuevo} className="px-4 sm:px-6 py-2.5 sm:py-3 bg-gold-gradient text-navy font-extrabold rounded-xl hover:brightness-110 transition-all shadow-md text-sm sm:text-base">
-                            + Nuevo
-                        </button>
+                        <div className="flex items-center gap-2">
+                            <Link
+                                href="/inventario/importar"
+                                className="px-3 sm:px-5 py-2.5 sm:py-3 bg-navy-2 border border-navy-3 text-vr-gray hover:text-gold hover:border-gold/40 font-bold rounded-xl transition-all text-sm sm:text-base whitespace-nowrap"
+                            >
+                                📥 <span className="hidden sm:inline">Importar</span>
+                            </Link>
+                            <button onClick={abrirModalNuevo} className="px-4 sm:px-6 py-2.5 sm:py-3 bg-gold-gradient text-navy font-extrabold rounded-xl hover:brightness-110 transition-all shadow-md text-sm sm:text-base whitespace-nowrap">
+                                + Nuevo
+                            </button>
+                        </div>
                     </div>
 
                     {insights && (
@@ -265,6 +429,52 @@ export default function InventarioPage() {
                                 <p className="text-xs sm:text-sm mt-1 sm:mt-2 leading-tight text-vr-gray">
                                     {insights.agotados > 0 ? `${insights.agotados} productos en cero. ¡Estás perdiendo ventas!` : "Tu inventario está sano. ¡Buen trabajo!"}
                                 </p>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* REORDEN INTELIGENTE */}
+                    {sugerenciasReorden.length > 0 && (
+                        <div className="bg-navy-2 rounded-2xl border border-gold/20 overflow-hidden mb-4 sm:mb-8">
+                            <div className="px-4 py-3 border-b border-navy-3 flex items-center justify-between gap-3 flex-wrap">
+                                <div>
+                                    <h2 className="text-sm font-display font-bold text-gold">🧠 Reorden Inteligente</h2>
+                                    <p className="text-[11px] text-vr-gray mt-0.5">Según tus ventas de los últimos 14 días</p>
+                                </div>
+                                <button
+                                    onClick={enviarListaCompras}
+                                    className="px-3 py-1.5 bg-vr-green/10 text-vr-green font-bold rounded-lg hover:bg-vr-green/20 text-xs border border-vr-green/20 transition-all whitespace-nowrap"
+                                >
+                                    📱 Enviar lista de compras
+                                </button>
+                            </div>
+                            <div className="divide-y divide-navy-3/50">
+                                {sugerenciasReorden.map(({ producto: p, velocidad, diasRestantes, sugerido }) => {
+                                    const diasRedondeados = Math.floor(diasRestantes);
+                                    const urgencia = diasRestantes <= 2
+                                        ? 'bg-vr-red/15 text-vr-red border-vr-red/20'
+                                        : diasRestantes <= 5
+                                            ? 'bg-vr-orange/15 text-vr-orange border-vr-orange/20'
+                                            : 'bg-gold/15 text-gold border-gold/20';
+                                    return (
+                                        <div key={p.id} className="flex items-center gap-3 px-4 py-2.5 hover:bg-navy-3/20 transition-colors">
+                                            <div className="flex-1 min-w-0">
+                                                <p className="text-sm font-bold text-white truncate">{p.nombre}</p>
+                                                <p className="text-[11px] text-vr-gray">
+                                                    Vendes ~{velocidad >= 1 ? Math.round(velocidad) : velocidad.toFixed(1)}/día · quedan {parseFloat(p.stock_actual.toFixed(1))}
+                                                </p>
+                                            </div>
+                                            <span className={`px-2 py-1 rounded-md text-[11px] font-black border whitespace-nowrap shrink-0 ${urgencia}`}>
+                                                {p.stock_actual <= 0
+                                                    ? 'AGOTADO'
+                                                    : diasRedondeados === 0 ? 'Se acaba HOY' : `~${diasRedondeados} día${diasRedondeados === 1 ? '' : 's'}`}
+                                            </span>
+                                            <span className="font-mono font-black text-vr-green text-sm whitespace-nowrap shrink-0">
+                                                +{sugerido}
+                                            </span>
+                                        </div>
+                                    );
+                                })}
                             </div>
                         </div>
                     )}
@@ -307,13 +517,24 @@ export default function InventarioPage() {
                                     return (
                                     <tr key={prod.id} className="border-b border-navy-3/50 hover:bg-navy-3/30 transition-colors">
                                         <td className="p-3 sm:p-4">
-                                            <span className="font-bold text-white text-sm block">{prod.nombre}</span>
-                                            {/* Type badge inline on mobile */}
-                                            <span className={`mt-1 inline-block px-1.5 py-0.5 rounded text-[10px] font-black uppercase ${esCombo ? 'bg-purple-500/15 text-purple-400' : esInsumo ? 'bg-vr-orange/15 text-vr-orange' : 'bg-gold/15 text-gold'}`}>
-                                                {tipo || 'simple'}
-                                            </span>
-                                            {/* Price on mobile */}
-                                            <span className="sm:hidden ml-2 text-xs font-mono text-vr-green">
+                                            <div className="flex items-center gap-2.5">
+                                                {prod.imagen_url && (
+                                                    // eslint-disable-next-line @next/next/no-img-element
+                                                    <img src={prod.imagen_url} alt="" loading="lazy" className="w-9 h-9 rounded-lg object-cover bg-white border border-navy-3 shrink-0 hidden sm:block" />
+                                                )}
+                                                <span className="font-bold text-white text-sm block">{prod.nombre}</span>
+                                            </div>
+                                            <div className="flex items-center flex-wrap gap-1.5 mt-1">
+                                                <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-black uppercase ${esCombo ? 'bg-purple-500/15 text-purple-400' : esInsumo ? 'bg-vr-orange/15 text-vr-orange' : 'bg-gold/15 text-gold'}`}>
+                                                    {tipo || 'simple'}
+                                                </span>
+                                                {prod.ubicacion && (
+                                                    <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-medium bg-navy-3 text-vr-gray border border-navy-3">
+                                                        📍 {prod.ubicacion}
+                                                    </span>
+                                                )}
+                                            </div>
+                                            <span className="sm:hidden block text-xs font-mono text-vr-green mt-0.5">
                                                 {esInsumo ? '' : formatDOP(prod.precio_venta)}
                                             </span>
                                         </td>
@@ -339,7 +560,7 @@ export default function InventarioPage() {
                                                     <button onClick={() => abrirModalAjuste(prod)} className="text-vr-green hover:text-vr-green/80 text-xs sm:text-sm font-bold transition-colors whitespace-nowrap">Ajuste</button>
                                                 )}
                                                 <button onClick={() => abrirModalEditar(prod)} className="text-gold hover:text-gold-2 text-xs sm:text-sm font-bold transition-colors">Editar</button>
-                                                <button onClick={() => eliminarProducto(prod.id)} className="text-vr-red hover:text-vr-red/80 text-xs sm:text-sm font-bold transition-colors">Eliminar</button>
+                                                <button onClick={() => setProductoAEliminar(prod)} className="text-vr-red hover:text-vr-red/80 text-xs sm:text-sm font-bold transition-colors">Eliminar</button>
                                             </div>
                                         </td>
                                     </tr>
@@ -397,6 +618,64 @@ export default function InventarioPage() {
                                     <span className="font-mono font-black text-white text-lg">{parseFloat(Number(productoAjustando.stock_actual).toFixed(3))}</span>
                                 </div>
 
+                                {/* Entrada serializable: inputs de números de serie */}
+                                {productoAjustando?.serializable && tipoAjuste === 'entrada' ? (
+                                    <div>
+                                        <div className="flex items-center justify-between mb-2">
+                                            <label className="text-sm font-bold text-vr-gray">Números de serie a ingresar</label>
+                                            <span className="text-xs font-bold text-gold">{serialesEntrada.filter(s => s.trim()).length} unidades</span>
+                                        </div>
+                                        <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                                            {serialesEntrada.map((s, i) => (
+                                                <div key={i} className="flex gap-2">
+                                                    <input
+                                                        type="text"
+                                                        autoFocus={i === 0}
+                                                        placeholder={`Serie / IMEI #${i + 1}`}
+                                                        className="flex-1 bg-navy-3 border border-navy-3 rounded-xl p-2.5 text-white font-mono text-sm focus:border-gold outline-none transition-all placeholder-vr-gray/40"
+                                                        value={s}
+                                                        onChange={e => {
+                                                            const copy = [...serialesEntrada];
+                                                            copy[i] = e.target.value;
+                                                            setSerialesEntrada(copy);
+                                                        }}
+                                                        onKeyDown={e => {
+                                                            if (e.key === 'Enter') {
+                                                                e.preventDefault();
+                                                                setSerialesEntrada(prev => [...prev, '']);
+                                                            }
+                                                        }}
+                                                    />
+                                                    {/* Botón cámara para escanear este serial */}
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setScannerSerialIdx(i)}
+                                                        className="px-2.5 bg-navy-3 border border-navy-3 rounded-xl text-vr-gray hover:text-gold hover:border-gold/50 transition-all"
+                                                        title="Escanear con cámara"
+                                                    >
+                                                        <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                                                            <path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/>
+                                                            <path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/>
+                                                            <line x1="7" y1="12" x2="7" y2="12.01"/><line x1="12" y1="12" x2="17" y2="12"/>
+                                                            <line x1="7" y1="8" x2="7" y2="16"/><line x1="12" y1="8" x2="12" y2="16"/>
+                                                            <line x1="17" y1="8" x2="17" y2="16"/>
+                                                        </svg>
+                                                    </button>
+                                                    {serialesEntrada.length > 1 && (
+                                                        <button type="button" onClick={() => setSerialesEntrada(prev => prev.filter((_, idx) => idx !== i))} className="text-vr-red font-bold px-2 hover:text-vr-red/70 transition-colors">✕</button>
+                                                    )}
+                                                </div>
+                                            ))}
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={() => setSerialesEntrada(prev => [...prev, ''])}
+                                            className="mt-2 w-full py-2 border border-dashed border-navy-3 hover:border-gold/40 text-vr-gray hover:text-gold rounded-xl text-xs font-bold transition-all"
+                                        >
+                                            + Agregar otro serial (o presiona Enter)
+                                        </button>
+                                    </div>
+                                ) : (
                                 <div>
                                     <label className="block text-sm font-bold text-vr-gray mb-1.5">
                                         {tipoAjuste === 'conteo' ? 'Nuevo stock físico' : 'Cantidad'}
@@ -410,6 +689,7 @@ export default function InventarioPage() {
                                         placeholder="0"
                                     />
                                 </div>
+                                )}
 
                                 {cantidadAjuste !== '' && !isNaN(parseFloat(cantidadAjuste)) && (
                                     <div className="flex justify-between items-center bg-navy rounded-xl px-4 py-3 border border-navy-3">
@@ -458,6 +738,53 @@ export default function InventarioPage() {
                                     <input required type="text" className="w-full bg-navy-3 border border-navy-3 rounded-xl p-3 text-white focus:border-gold outline-none transition-all" value={formData.nombre} onChange={e => setFormData({ ...formData, nombre: e.target.value })} />
                                 </div>
 
+                                {/* Foto del producto (no aplica a insumos) */}
+                                {formData.tipo !== 'insumo' && (
+                                    <div>
+                                        <label className="block text-sm font-bold text-vr-gray mb-1.5">
+                                            Foto
+                                            <span className="ml-2 text-[10px] font-normal text-vr-gray/60 uppercase tracking-wide">(opcional — se ve en la caja)</span>
+                                        </label>
+                                        <input
+                                            ref={fotoInputRef}
+                                            type="file"
+                                            accept="image/*"
+                                            className="hidden"
+                                            onChange={async e => {
+                                                const f = e.target.files?.[0];
+                                                e.target.value = '';
+                                                if (!f) return;
+                                                if (!f.type.startsWith('image/')) { showToast('El archivo debe ser una imagen.', 'error'); return; }
+                                                try { setFotoProducto(await comprimirImagen(f, 360)); }
+                                                catch { showToast('No se pudo procesar la imagen.', 'error'); }
+                                            }}
+                                        />
+                                        <div className="flex items-center gap-3">
+                                            {fotoProducto ? (
+                                                <>
+                                                    <div className="w-16 h-16 rounded-xl bg-white border border-navy-3 overflow-hidden flex items-center justify-center shrink-0">
+                                                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                                                        <img src={fotoProducto} alt="Foto del producto" className="w-full h-full object-cover" />
+                                                    </div>
+                                                    <button type="button" onClick={() => fotoInputRef.current?.click()} className="px-3 py-2 bg-navy-3 border border-navy-3 hover:border-gold/40 text-vr-gray hover:text-gold font-bold rounded-xl text-xs transition-all">Cambiar</button>
+                                                    <button type="button" onClick={() => setFotoProducto(null)} className="px-3 py-2 text-vr-red hover:bg-vr-red/10 font-bold rounded-xl text-xs transition-all">Quitar</button>
+                                                </>
+                                            ) : (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => fotoInputRef.current?.click()}
+                                                    className="w-full py-3 bg-navy-3/50 border border-dashed border-navy-3 hover:border-gold/50 text-vr-gray hover:text-gold font-bold rounded-xl text-sm transition-all"
+                                                >
+                                                    📷 Agregar foto
+                                                </button>
+                                            )}
+                                        </div>
+                                        {!isOnline && fotoProducto?.startsWith('data:') && (
+                                            <p className="text-xs text-vr-orange mt-1.5">Sin internet: la foto necesita conexión para subirse.</p>
+                                        )}
+                                    </div>
+                                )}
+
                                 <div>
                                     <label className="block text-sm font-bold text-vr-gray mb-1.5">
                                         Código de Barras
@@ -488,10 +815,41 @@ export default function InventarioPage() {
                                     </div>
                                 </div>
 
+                                <div>
+                                    <label className="block text-sm font-bold text-vr-gray mb-1.5">
+                                        Ubicación en tienda
+                                        <span className="ml-2 text-[10px] font-normal text-vr-gray/60 uppercase tracking-wide">(opcional)</span>
+                                    </label>
+                                    <input
+                                        type="text"
+                                        placeholder="Ej: Pasillo 2-A, Nevera, Bodega…"
+                                        className="w-full bg-navy-3 border border-navy-3 rounded-xl p-3 text-white placeholder-vr-gray/40 focus:border-gold outline-none transition-all"
+                                        value={formData.ubicacion}
+                                        onChange={e => setFormData({ ...formData, ubicacion: e.target.value })}
+                                    />
+                                </div>
+
+                                {/* Solo para productos vendibles */}
+                                {formData.tipo !== 'insumo' && formData.tipo !== 'combo' && (
+                                    <button
+                                        type="button"
+                                        onClick={() => setFormData({ ...formData, serializable: !formData.serializable })}
+                                        className={`w-full flex items-center justify-between px-4 py-3 rounded-xl border transition-all ${formData.serializable ? 'border-gold/40 bg-gold/10 text-gold' : 'border-navy-3 text-vr-gray hover:text-white'}`}
+                                    >
+                                        <div>
+                                            <p className="text-sm font-bold text-left">Producto con número de serie</p>
+                                            <p className="text-xs font-normal opacity-70 text-left">Cada unidad requiere IMEI, serie u otro código único</p>
+                                        </div>
+                                        <div className={`relative w-10 h-5 rounded-full transition-colors shrink-0 ml-3 ${formData.serializable ? 'bg-gold' : 'bg-navy-3'}`}>
+                                            <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${formData.serializable ? 'translate-x-5' : ''}`} />
+                                        </div>
+                                    </button>
+                                )}
+
                                 <div className="grid grid-cols-2 gap-3">
                                     {formData.tipo !== 'insumo' ? (
                                         <div>
-                                            <label className="block text-sm font-bold text-vr-gray mb-1.5">Precio Venta (RD$)</label>
+                                            <label className="block text-sm font-bold text-vr-gray mb-1.5">Precio 1 — Menudeo (RD$)</label>
                                             <input type="number" step="0.01" className="w-full bg-navy-3 border border-navy-3 rounded-xl p-3 text-white font-mono focus:border-gold outline-none transition-all" value={formData.precio_venta} onChange={e => setFormData({ ...formData, precio_venta: e.target.value })} />
                                         </div>
                                     ) : (
@@ -517,6 +875,35 @@ export default function InventarioPage() {
                                         </div>
                                     )}
                                 </div>
+
+                                {/* Precios adicionales (solo para productos vendibles) */}
+                                {formData.tipo !== 'insumo' && (
+                                    <div className="p-3 bg-navy rounded-xl border border-navy-3">
+                                        <p className="text-xs font-bold text-vr-gray uppercase tracking-wider mb-2">Precios Mayoreo / Especiales <span className="font-normal normal-case">(opcional)</span></p>
+                                        <div className="grid grid-cols-2 gap-3">
+                                            <div>
+                                                <label className="block text-xs font-bold text-vr-gray mb-1.5">Precio 2 — Mayoreo</label>
+                                                <input
+                                                    type="number" step="0.01" min="0"
+                                                    placeholder="—"
+                                                    className="w-full bg-navy-3 border border-navy-3 rounded-xl p-2.5 text-white font-mono focus:border-gold outline-none transition-all text-sm"
+                                                    value={formData.precio_2}
+                                                    onChange={e => setFormData({ ...formData, precio_2: e.target.value })}
+                                                />
+                                            </div>
+                                            <div>
+                                                <label className="block text-xs font-bold text-vr-gray mb-1.5">Precio 3 — Especial</label>
+                                                <input
+                                                    type="number" step="0.01" min="0"
+                                                    placeholder="—"
+                                                    className="w-full bg-navy-3 border border-navy-3 rounded-xl p-2.5 text-white font-mono focus:border-gold outline-none transition-all text-sm"
+                                                    value={formData.precio_3}
+                                                    onChange={e => setFormData({ ...formData, precio_3: e.target.value })}
+                                                />
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
 
                                 <div className="grid grid-cols-3 gap-3">
                                     {formData.tipo !== 'combo' ? (
@@ -592,7 +979,17 @@ export default function InventarioPage() {
                 )}
             </div>
         </div>
-        {/* Scanner de cámara — carga lazy solo cuando se abre */}
+        {/* Confirmación de eliminación de producto */}
+        <ConfirmModal
+            isOpen={!!productoAEliminar}
+            title="Eliminar producto"
+            mensaje={<>¿Eliminar <span className="font-bold text-white">{productoAEliminar?.nombre}</span>? Desaparecerá del catálogo y del POS en todas las cajas.</>}
+            confirmLabel="Eliminar"
+            onConfirm={eliminarProducto}
+            onClose={() => setProductoAEliminar(null)}
+        />
+
+        {/* Scanner código de barras de producto */}
         {isScannerOpen && (
             <Suspense fallback={null}>
                 <BarcodeScanner
@@ -601,6 +998,25 @@ export default function InventarioPage() {
                         setIsScannerOpen(false);
                     }}
                     onClose={() => setIsScannerOpen(false)}
+                />
+            </Suspense>
+        )}
+
+        {/* Scanner serial/IMEI — rellena el campo del índice activo */}
+        {scannerSerialIdx !== null && (
+            <Suspense fallback={null}>
+                <BarcodeScanner
+                    onScan={(code) => {
+                        setSerialesEntrada(prev => {
+                            const copy = [...prev];
+                            copy[scannerSerialIdx] = code;
+                            // Auto-agrega una línea vacía para el siguiente
+                            if (scannerSerialIdx === copy.length - 1) copy.push('');
+                            return copy;
+                        });
+                        setScannerSerialIdx(null);
+                    }}
+                    onClose={() => setScannerSerialIdx(null)}
                 />
             </Suspense>
         )}
