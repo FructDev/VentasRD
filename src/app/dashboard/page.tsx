@@ -12,6 +12,7 @@ import TopBar from '@/components/shared/TopBar';
 import OfflineBanner from '@/components/shared/OfflineBanner';
 import Link from 'next/link';
 import { SkeletonKPIGrid } from '@/components/ui/Skeleton';
+import ResumenDiario from '@/components/shared/ResumenDiario';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '@/lib/db/dexie';
 import { useConfigStore } from '@/store/useConfigStore';
@@ -192,6 +193,9 @@ export default function DashboardPage() {
                             </Link>
                         </div>
                     </header>
+
+                    {/* Resumen de ayer — aparece una vez al día */}
+                    <ResumenDiario />
 
                     {/* KPI Cards */}
                     {isLoading ? (
