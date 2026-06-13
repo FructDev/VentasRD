@@ -1,22 +1,18 @@
 // src/components/ui/Skeleton.tsx
 
-/** Fila de tabla con celdas pulsantes */
+/** Fila de tabla con celdas pulsantes — usar dentro de un <tbody> */
 export function SkeletonTableRow({ cols = 5 }: { cols?: number }) {
     return (
-        <table>
-            <tbody>
-                <tr>
-                    {Array.from({ length: cols }).map((_, i) => (
-                        <td key={i} className="p-4">
-                            <div
-                                className="h-4 bg-navy-3 rounded-md animate-pulse"
-                                style={{ width: `${60 + Math.random() * 30}%` }}
-                            />
-                        </td>
-                    ))}
-                </tr>
-            </tbody>
-        </table>
+        <tr>
+            {Array.from({ length: cols }).map((_, i) => (
+                <td key={i} className="p-4">
+                    <div
+                        className="h-4 bg-navy-3 rounded-md animate-pulse"
+                        style={{ width: `${60 + ((i * 13) % 31)}%` }}
+                    />
+                </td>
+            ))}
+        </tr>
     );
 }
 
