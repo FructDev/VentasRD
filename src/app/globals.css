@@ -151,3 +151,19 @@
 .animate-scan-line {
   animation: scanLine 2s ease-in-out infinite;
 }
+/* ─── Ajustes de impresión de tickets ──────────────────────────────────────── */
+/* Letra grande: escala los tamaños de texto del ticket */
+.ticket-grande { font-size: 16px; }
+.ticket-grande .text-\[10px\] { font-size: 12px; }
+.ticket-grande .text-xs { font-size: 14px; }
+.ticket-grande .text-sm { font-size: 16px; }
+.ticket-grande .text-base { font-size: 18px; }
+.ticket-grande .text-xl { font-size: 24px; }
+
+/* Densidad compacta: reduce espacios para ahorrar papel */
+.ticket-compacto { line-height: 1.15; }
+.ticket-compacto .mb-4 { margin-bottom: 0.4rem; }
+.ticket-compacto .mb-2 { margin-bottom: 0.2rem; }
+.ticket-compacto .mt-6 { margin-top: 0.6rem; }
+.ticket-compacto .mt-2 { margin-top: 0.2rem; }
+.ticket-compacto .py-1 { padding-top: 1px; padding-bottom: 1px; }

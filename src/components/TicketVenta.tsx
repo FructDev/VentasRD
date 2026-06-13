@@ -1,6 +1,8 @@
 // src/components/TicketVenta.tsx
-import { forwardRef } from 'react';
+import { forwardRef, Fragment } from 'react';
 import { CartItem } from '@/store/useCartStore';
+import { useConfigStore } from '@/store/useConfigStore';
+import { formatTicket } from '@/lib/utils';
 
 interface TicketProps {
     items: CartItem[];
@@ -18,28 +20,47 @@ interface TicketProps {
     numeroTicket?: number;
     mensajePie?: string;
     ncf?: string; // Número de Comprobante Fiscal (ej: B0200000001)
+    logoUrl?: string;  // Data URL del logo del negocio
+    vendedor?: string; // Nombre de quien atendió la venta
+    cajaCodigo?: string; // Prefijo de la caja emisora (ej: "C7K")
 }
 
 export const TicketVenta = forwardRef<HTMLDivElement, TicketProps>(({
     items, subtotal, itbis, descuento = 0, total, metodoPago, montoRecibido, devuelta,
     nombreNegocio = 'Mi Negocio', rnc, direccion = 'Ciudad, RD', telefono = '809-000-0000',
-    numeroTicket, mensajePie, ncf
+    numeroTicket, mensajePie, ncf, logoUrl, vendedor, cajaCodigo
 }, ref) => {
+    const { impresion } = useConfigStore();
 
     const fechaActual = new Date().toLocaleString('es-DO');
-    const ticketNum = numeroTicket ? String(numeroTicket).padStart(5, '0') : '-----';
+    const ticketNum = formatTicket(numeroTicket, cajaCodigo);
 
-    return (
-        <div className="hidden print:block font-mono text-sm text-black" ref={ref} style={{ width: '80mm', padding: '10px' }}>
+    const es58 = impresion.anchoPapel === '58mm';
+    const claseTicket = [
+        impresion.tamanoLetra === 'grande' ? 'ticket-grande' : '',
+        impresion.densidad === 'compacta' ? 'ticket-compacto' : '',
+    ].join(' ');
 
+    const Contenido = () => (
+        <>
             {/* Cabecera del Negocio */}
             <div className="text-center mb-4">
-                <h1 className="text-xl font-bold uppercase">{nombreNegocio}</h1>
+                {logoUrl && impresion.mostrarLogo && (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                        src={logoUrl}
+                        alt={nombreNegocio}
+                        className="mx-auto mb-2"
+                        style={{ maxWidth: es58 ? '32mm' : '45mm', maxHeight: es58 ? '16mm' : '22mm', objectFit: 'contain' }}
+                    />
+                )}
+                <h1 className={`${es58 ? 'text-base' : 'text-xl'} font-bold uppercase`}>{nombreNegocio}</h1>
                 {rnc && <p className="text-xs">RNC: {rnc}</p>}
                 <p className="text-xs">{direccion}</p>
                 <p className="text-xs">Tel: {telefono}</p>
                 <p className="text-xs mt-2">Fecha: {fechaActual}</p>
                 <p className="text-xs font-bold mt-1">Ticket #: {ticketNum}</p>
+                {vendedor && <p className="text-xs">Le atendió: {vendedor}</p>}
             </div>
 
             {/* NCF */}
@@ -108,7 +129,21 @@ export const TicketVenta = forwardRef<HTMLDivElement, TicketProps>(({
                 <p>{mensajePie || '¡Gracias por su compra!'}</p>
                 <p className="mt-1 text-[10px] text-gray-500">VentaRD POS</p>
             </div>
+        </>
+    );
 
+    return (
+        <div
+            className={`hidden print:block font-mono text-sm text-black ${claseTicket}`}
+            ref={ref}
+            style={{ width: impresion.anchoPapel, padding: es58 ? '4px' : '10px' }}
+        >
+            {Array.from({ length: impresion.copias }).map((_, i) => (
+                <Fragment key={i}>
+                    {i > 0 && <div style={{ pageBreakBefore: 'always' }} />}
+                    <Contenido />
+                </Fragment>
+            ))}
         </div>
     );
 });
