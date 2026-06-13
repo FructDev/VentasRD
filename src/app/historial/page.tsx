@@ -1,14 +1,18 @@
 // src/app/historial/page.tsx
 'use client';
 
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { db } from '@/lib/db/dexie';
-import { useVentasTenant, useVentaDetallesTenant, useDevolucionesTenant, useClientesTenant } from '@/lib/db/tenantQuery';
+import { registrarMovimientoStock } from '@/lib/db/stock';
+import { useVentasTenant, useVentaDetallesPorVentas, useDevolucionesTenant, useClientesTenant, useProductosTenant } from '@/lib/db/tenantQuery';
 import { useConfigStore } from '@/store/useConfigStore';
 import { VentaLocal, VentaDetalleLocal } from '@/types/database';
-import { formatDOP } from '@/lib/utils';
+import { formatDOP, formatTicket } from '@/lib/utils';
 import { v4 as uuidv4 } from 'uuid';
 import { useLiveQuery } from 'dexie-react-hooks';
+import { useReactToPrint } from 'react-to-print';
+import { TicketVenta } from '@/components/TicketVenta';
+import { CartItem } from '@/store/useCartStore';
 import PinGuard from '@/components/ui/PinGuard';
 import TopBar from '@/components/shared/TopBar';
 import OfflineBanner from '@/components/shared/OfflineBanner';
@@ -43,16 +47,79 @@ interface ItemDevolucion {
 }
 
 export default function HistorialPage() {
-    const { negocioId, showToast } = useConfigStore();
+    const { negocioId, showToast, negocioNombre, negocioRnc, negocioDireccion, negocioTelefono, negocioMensajeTicket, negocioLogo, impresion } = useConfigStore();
     const ventasRaw = useLiveQuery(
         () => negocioId ? db.ventas.where('negocio_id').equals(negocioId).limit(1).toArray() : [],
         [negocioId]
     );
     const isLoading = ventasRaw === undefined;
     const ventas = useVentasTenant(200);
-    const detalles = useVentaDetallesTenant();
+    // Solo los detalles de las ventas visibles (no toda la historia)
+    const detalles = useVentaDetallesPorVentas(useMemo(() => ventas.map(v => v.id), [ventas]));
     const devoluciones = useDevolucionesTenant();
     const clientes = useClientesTenant();
+
+    // Estado para reimprimir ticket
+    const ticketReimpresionRef = useRef<HTMLDivElement>(null);
+    const [ventaReimprimiendo, setVentaReimprimiendo] = useState<VentaLocal | null>(null);
+    const [itemsReimpresion, setItemsReimpresion] = useState<CartItem[]>([]);
+    const handleReimprimir = useReactToPrint({ contentRef: ticketReimpresionRef });
+
+    const abrirReimpresion = async (venta: VentaLocal) => {
+        const detallesVenta = detallesPorVenta.get(venta.id) || [];
+        const prods = await db.productos.bulkGet(detallesVenta.map(d => d.producto_id));
+        const cartItems: CartItem[] = detallesVenta.map((d, i) => ({
+            id: d.producto_id,
+            nombre: prods[i]?.nombre || 'Producto eliminado',
+            precio_venta: d.precio_unitario,
+            cantidad: d.cantidad,
+            negocio_id: d.negocio_id,
+            codigo_barras: prods[i]?.codigo_barras || '',
+            costo: prods[i]?.costo || 0,
+            stock_actual: prods[i]?.stock_actual || 0,
+            stock_minimo: prods[i]?.stock_minimo || 0,
+            tasa_itbis: prods[i]?.tasa_itbis || 0,
+            tipo: prods[i]?.tipo || 'simple',
+        }));
+        setItemsReimpresion(cartItems);
+        setVentaReimprimiendo(venta);
+
+        // Impresión directa ESC/POS si está configurada
+        if (impresion.modoImpresion === 'directa') {
+            try {
+                const { imprimirVentaDirecta } = await import('@/lib/print/tickets');
+                await imprimirVentaDirecta({
+                    items: cartItems.map(i => ({ cantidad: i.cantidad, nombre: i.nombre, precio: i.precio_venta })),
+                    subtotal: cartItems.reduce((s, i) => s + i.precio_venta * i.cantidad, 0),
+                    itbis: cartItems.reduce((s, i) => s + i.precio_venta * i.cantidad * (i.tasa_itbis || 0), 0),
+                    descuento: 0,
+                    total: venta.total,
+                    metodoPago: venta.metodo_pago,
+                    montoRecibido: venta.total,
+                    devuelta: 0,
+                    negocio: {
+                        nombre: negocioNombre || 'VentaRD',
+                        rnc: negocioRnc || undefined,
+                        direccion: negocioDireccion || undefined,
+                        telefono: negocioTelefono || undefined,
+                    },
+                    numeroTicket: venta.numero_ticket,
+                    cajaCodigo: venta.caja_codigo,
+                    ncf: venta.ncf,
+                    vendedor: venta.vendedor_nombre,
+                    mensajePie: negocioMensajeTicket || undefined,
+                    logoUrl: negocioLogo || undefined,
+                }, impresion);
+                return;
+            } catch (e) {
+                console.error('[print] impresión directa falló, usando navegador:', e);
+                showToast('Impresora directa no disponible — usando impresión del navegador.', 'info');
+            }
+        }
+
+        // Pequeño delay para que React renderice el ticket antes de imprimir
+        setTimeout(() => handleReimprimir(), 100);
+    };
 
     const [filtroMetodo, setFiltroMetodo] = useState<string>('todos');
     const ITEMS_POR_PAGINA = 25;
@@ -85,7 +152,7 @@ export default function HistorialPage() {
         return m;
     }, [clientes]);
 
-    const productosArr = useLiveQuery(() => db.productos.toArray(), []) || [];
+    const productosArr = useProductosTenant();
     const prodNombres = useMemo(() => {
         const m = new Map<string, string>();
         productosArr.forEach(p => m.set(p.id, p.nombre));
@@ -147,9 +214,10 @@ export default function HistorialPage() {
 
         setProcesando(true);
         try {
-            await db.transaction('rw', [db.devoluciones, db.productos, db.composiciones, db.transacciones_fiado], async () => {
+            const idDevolucion = uuidv4();
+            await db.transaction('rw', [db.devoluciones, db.productos, db.composiciones, db.transacciones_fiado, db.movimientos_stock], async () => {
                 await db.devoluciones.add({
-                    id: uuidv4(),
+                    id: idDevolucion,
                     negocio_id: negocioId,
                     venta_id: modalVenta.id,
                     items_devueltos: seleccionados.map(i => ({
@@ -168,31 +236,22 @@ export default function HistorialPage() {
                         .where('producto_padre_id').equals(item.producto_id).toArray();
 
                     if (receta.length > 0) {
+                        // Combo devuelto: reponer cada insumo según la receta
                         for (const ing of receta) {
-                            const insumo = await db.productos.get(ing.insumo_id);
-                            if (insumo) {
-                                const nuevoStock = parseFloat(
-                                    (insumo.stock_actual + ing.cantidad_necesaria * item.cantidad_devolver).toFixed(3)
-                                );
-                                await db.productos.update(ing.insumo_id, {
-                                    stock_actual: nuevoStock,
-                                    estado_sincronizacion: 0,
-                                    fecha_actualizacion: Date.now(),
-                                } as any);
-                            }
+                            await registrarMovimientoStock({
+                                productoId: ing.insumo_id,
+                                tipo: 'devolucion',
+                                delta: ing.cantidad_necesaria * item.cantidad_devolver,
+                                referenciaId: idDevolucion,
+                            });
                         }
                     } else {
-                        const prod = await db.productos.get(item.producto_id);
-                        if (prod) {
-                            const nuevoStock = parseFloat(
-                                (prod.stock_actual + item.cantidad_devolver).toFixed(3)
-                            );
-                            await db.productos.update(item.producto_id, {
-                                stock_actual: nuevoStock,
-                                estado_sincronizacion: 0,
-                                fecha_actualizacion: Date.now(),
-                            } as any);
-                        }
+                        await registrarMovimientoStock({
+                            productoId: item.producto_id,
+                            tipo: 'devolucion',
+                            delta: item.cantidad_devolver,
+                            referenciaId: idDevolucion,
+                        });
                     }
                 }
 
@@ -234,6 +293,32 @@ export default function HistorialPage() {
             <div className="min-h-screen bg-navy flex flex-col">
                 <TopBar />
                 <OfflineBanner />
+
+                {/* Ticket oculto para reimpresión */}
+                {ventaReimprimiendo && (
+                    <div style={{ display: 'none' }}>
+                        <TicketVenta
+                            ref={ticketReimpresionRef}
+                            items={itemsReimpresion}
+                            subtotal={itemsReimpresion.reduce((s, i) => s + i.precio_venta * i.cantidad, 0)}
+                            itbis={itemsReimpresion.reduce((s, i) => s + i.precio_venta * i.cantidad * (i.tasa_itbis || 0), 0)}
+                            total={ventaReimprimiendo.total}
+                            metodoPago={ventaReimprimiendo.metodo_pago}
+                            montoRecibido={String(ventaReimprimiendo.total)}
+                            devuelta={0}
+                            nombreNegocio={negocioNombre || 'VentaRD'}
+                            rnc={negocioRnc || undefined}
+                            direccion={negocioDireccion || undefined}
+                            telefono={negocioTelefono || undefined}
+                            numeroTicket={ventaReimprimiendo.numero_ticket}
+                            cajaCodigo={ventaReimprimiendo.caja_codigo}
+                            mensajePie={negocioMensajeTicket || undefined}
+                            ncf={ventaReimprimiendo.ncf}
+                            logoUrl={negocioLogo || undefined}
+                            vendedor={ventaReimprimiendo.vendedor_nombre}
+                        />
+                    </div>
+                )}
 
                 <div className="flex-1 p-3 sm:p-6">
                     <div className="max-w-5xl mx-auto">
@@ -301,7 +386,7 @@ export default function HistorialPage() {
                                                     >
                                                         <td className="p-3 sm:p-4">
                                                             <span className="font-mono font-bold text-white text-sm block">
-                                                                #{venta.numero_ticket ? String(venta.numero_ticket).padStart(5, '0') : '?????'}
+                                                                #{formatTicket(venta.numero_ticket, venta.caja_codigo)}
                                                             </span>
                                                             {/* Show method badge on mobile (hidden on md+) */}
                                                             <span className={`md:hidden mt-1 inline-block px-1.5 py-0.5 rounded text-[10px] font-bold border ${METODO_COLOR[venta.metodo_pago] || 'text-vr-gray border-navy-3'}`}>
@@ -321,16 +406,25 @@ export default function HistorialPage() {
                                                         </td>
                                                         <td className="p-3 sm:p-4 font-mono font-bold text-gold text-sm">{formatDOP(venta.total)}</td>
                                                         <td className="p-3 sm:p-4 text-right" onClick={e => e.stopPropagation()}>
-                                                            {yaDevuelta ? (
-                                                                <span className="text-xs text-vr-gray italic px-2 sm:px-3 py-1.5 border border-navy-3 rounded-lg">Devuelta</span>
-                                                            ) : (
+                                                            <div className="flex items-center justify-end gap-1.5 sm:gap-2">
                                                                 <button
-                                                                    onClick={() => abrirDevolucion(venta)}
-                                                                    className="text-vr-red hover:text-vr-red/80 text-xs sm:text-sm font-bold border border-vr-red/20 px-2 sm:px-3 py-1.5 rounded-lg hover:bg-vr-red/10 transition-all whitespace-nowrap"
+                                                                    onClick={() => abrirReimpresion(venta)}
+                                                                    className="text-vr-gray hover:text-white text-xs font-bold border border-navy-3 px-2 sm:px-3 py-1.5 rounded-lg hover:bg-navy-3 transition-all"
+                                                                    title="Reimprimir ticket"
                                                                 >
-                                                                    Devolver
+                                                                    🖨️
                                                                 </button>
-                                                            )}
+                                                                {yaDevuelta ? (
+                                                                    <span className="text-xs text-vr-gray italic px-2 sm:px-3 py-1.5 border border-navy-3 rounded-lg">Devuelta</span>
+                                                                ) : (
+                                                                    <button
+                                                                        onClick={() => abrirDevolucion(venta)}
+                                                                        className="text-vr-red hover:text-vr-red/80 text-xs sm:text-sm font-bold border border-vr-red/20 px-2 sm:px-3 py-1.5 rounded-lg hover:bg-vr-red/10 transition-all whitespace-nowrap"
+                                                                    >
+                                                                        Devolver
+                                                                    </button>
+                                                                )}
+                                                            </div>
                                                         </td>
                                                     </tr>
 
@@ -392,7 +486,7 @@ export default function HistorialPage() {
                                 <div>
                                     <h2 className="text-lg sm:text-xl font-display font-bold text-white">Devolución</h2>
                                     <p className="text-sm text-vr-gray mt-0.5">
-                                        Ticket #{modalVenta.numero_ticket ? String(modalVenta.numero_ticket).padStart(5, '0') : '?????'} — {formatDOP(modalVenta.total)}
+                                        Ticket #{formatTicket(modalVenta.numero_ticket, modalVenta.caja_codigo)} — {formatDOP(modalVenta.total)}
                                     </p>
                                 </div>
                                 <button onClick={() => setModalVenta(null)} className="text-vr-gray hover:text-white font-bold text-xl transition-colors">✕</button>

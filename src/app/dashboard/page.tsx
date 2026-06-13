@@ -5,7 +5,8 @@ import { useMemo, useState } from 'react';
 import { formatDOP } from '@/lib/utils';
 import {
     useVentasRangoTenant, useProductosBajoStockTenant, useProductosTenant,
-    useVentaDetallesTenant, useClientesTenant, useTransaccionesFiadoTenant, useVentasPeriodoTenant
+    useVentaDetallesPorVentas, useClientesTenant, useTransaccionesFiadoTenant, useVentasPeriodoTenant,
+    useGastosRangoTenant
 } from '@/lib/db/tenantQuery';
 import TopBar from '@/components/shared/TopBar';
 import OfflineBanner from '@/components/shared/OfflineBanner';
@@ -63,9 +64,12 @@ export default function DashboardPage() {
     const ventas7d = useVentasPeriodoTenant(7);
     const productosBajoStock = useProductosBajoStockTenant();
     const productos = useProductosTenant();
-    const detalles = useVentaDetallesTenant();
+    // Detalles SOLO de las ventas visibles — escala con el período, no con la historia
+    const detallesPeriodo = useVentaDetallesPorVentas(useMemo(() => ventasPeriodo.map(v => v.id), [ventasPeriodo]));
+    const detalles7d = useVentaDetallesPorVentas(useMemo(() => ventas7d.map(v => v.id), [ventas7d]));
     const clientes = useClientesTenant();
     const transacciones = useTransaccionesFiadoTenant();
+    const gastosPeriodo = useGastosRangoTenant(desde, hasta);
 
     // === KPIs CALCULADOS ===
     const totalVentas = ventasPeriodo.reduce((acc, v) => acc + v.total, 0);
@@ -74,14 +78,12 @@ export default function DashboardPage() {
     // Ganancia bruta del período (precio_venta - costo) * cantidad
     const gananciaBruta = useMemo(() => {
         const productoMap = new Map(productos.map(p => [p.id, p]));
-        const ventasSet = new Set(ventasPeriodo.map(v => v.id));
-        const detallesPeriodo = detalles.filter(d => ventasSet.has(d.venta_id));
         return detallesPeriodo.reduce((acc, d) => {
             const prod = productoMap.get(d.producto_id);
             if (!prod) return acc;
             return acc + ((prod.precio_venta - prod.costo) * d.cantidad);
         }, 0);
-    }, [ventasPeriodo, detalles, productos]);
+    }, [detallesPeriodo, productos]);
 
     // Balance de fiados consolidado
     const balanceFiados = useMemo(() => {
@@ -102,15 +104,25 @@ export default function DashboardPage() {
         return Object.values(mapa).sort((a, b) => b.total - a.total).slice(0, 5);
     }, [transacciones, clientes]);
 
+    // Ventas por vendedor del período (las ventas del dueño salen como "Dueño")
+    const ventasPorVendedor = useMemo(() => {
+        const mapa: Record<string, { nombre: string; total: number; cantidad: number }> = {};
+        ventasPeriodo.forEach(v => {
+            const nombre = v.vendedor_nombre || 'Dueño';
+            if (!mapa[nombre]) mapa[nombre] = { nombre, total: 0, cantidad: 0 };
+            mapa[nombre].total += v.total;
+            mapa[nombre].cantidad++;
+        });
+        return Object.values(mapa).sort((a, b) => b.total - a.total);
+    }, [ventasPeriodo]);
+
     // Productos sin movimiento (stock > 0, 0 ventas en 7d)
     const productosSinMovimiento = useMemo(() => {
-        const idsVendidos7d = new Set(
-            detalles.filter(d => ventas7d.find(v => v.id === d.venta_id)).map(d => d.producto_id)
-        );
+        const idsVendidos7d = new Set(detalles7d.map(d => d.producto_id));
         return productos.filter(p =>
             p.tipo !== 'insumo' && p.stock_actual > 0 && !idsVendidos7d.has(p.id)
         );
-    }, [productos, detalles, ventas7d]);
+    }, [productos, detalles7d]);
 
     // Data: Ventas por hora (solo relevante en vista "hoy", para otros períodos agrupamos por día)
     const ventasPorHora = useMemo(() => {
@@ -196,9 +208,21 @@ export default function DashboardPage() {
                         </div>
 
                         <div className="bg-navy-2 p-5 rounded-2xl border border-navy-3">
-                            <p className="text-vr-gray font-bold uppercase text-[10px] tracking-widest">Ganancia Bruta</p>
-                            <h2 className="text-2xl font-black font-mono mt-2 text-vr-green">{formatDOP(gananciaBruta)}</h2>
-                            <p className="mt-1 text-vr-gray text-xs">{totalVentas > 0 ? `${((gananciaBruta / totalVentas) * 100).toFixed(0)}% margen` : '-'}</p>
+                            <p className="text-vr-gray font-bold uppercase text-[10px] tracking-widest">Ganancia Neta</p>
+                            {(() => {
+                                const totalGastos = gastosPeriodo.reduce((s, g) => s + g.monto, 0);
+                                const neta = gananciaBruta - totalGastos;
+                                return (
+                                    <>
+                                        <h2 className={`text-2xl font-black font-mono mt-2 ${neta >= 0 ? 'text-vr-green' : 'text-vr-red'}`}>{formatDOP(neta)}</h2>
+                                        <p className="mt-1 text-vr-gray text-xs">
+                                            {totalGastos > 0
+                                                ? <>Bruta {formatDOP(gananciaBruta)} − <Link href="/gastos" className="text-vr-red hover:underline">gastos {formatDOP(totalGastos)}</Link></>
+                                                : totalVentas > 0 ? `${((gananciaBruta / totalVentas) * 100).toFixed(0)}% margen` : '-'}
+                                        </p>
+                                    </>
+                                );
+                            })()}
                         </div>
 
                         <div className="bg-navy-2 p-5 rounded-2xl border border-navy-3">
@@ -263,7 +287,29 @@ export default function DashboardPage() {
                     </div>
 
                     {/* BI Row */}
-                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-6 mb-6">
+                        <div className="bg-navy-2 p-6 rounded-2xl border border-navy-3">
+                            <h3 className="text-white font-display font-bold mb-3">Por Vendedor</h3>
+                            {ventasPorVendedor.length === 0 ? (
+                                <p className="text-vr-gray text-sm">Sin ventas en este período</p>
+                            ) : (
+                                <div className="space-y-2 max-h-48 overflow-y-auto">
+                                    {ventasPorVendedor.map((v, i) => (
+                                        <div key={v.nombre} className="flex justify-between items-center py-2 border-b border-navy-3/50 last:border-0">
+                                            <div className="flex items-center gap-2 min-w-0">
+                                                <span className={`text-xs font-black w-5 h-5 rounded flex items-center justify-center shrink-0 ${i === 0 ? 'bg-vr-green/15 text-vr-green' : 'bg-navy-3 text-vr-gray'}`}>{i + 1}</span>
+                                                <div className="min-w-0">
+                                                    <p className="text-white text-sm font-medium truncate">{v.nombre}</p>
+                                                    <p className="text-vr-gray text-[10px]">{v.cantidad} venta{v.cantidad === 1 ? '' : 's'}</p>
+                                                </div>
+                                            </div>
+                                            <span className="text-vr-green font-mono font-bold text-sm shrink-0">{formatDOP(v.total)}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+
                         <div className="bg-navy-2 p-6 rounded-2xl border border-navy-3">
                             <h3 className="text-white font-display font-bold mb-3">Top Clientes</h3>
                             {topClientes.length === 0 ? (
