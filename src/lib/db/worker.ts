@@ -220,27 +220,42 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                 localStorage.setItem(STOCK_RECON_KEY, String(Date.now()));
             }
 
-            // ── 1.B.4  Reconciliación de eliminaciones (cada 5 min) ──────────
-            // El pull incremental no puede detectar borrados (el registro ya no
-            // existe en Supabase). Esta reconciliación descarga todos los IDs de
-            // la nube y elimina localmente los que ya no aparecen.
+            // ── 1.B.4  Reconciliación de existencia (cada 5 min) ─────────────
+            // Compara los IDs de la nube con los locales para: (a) eliminar los
+            // que ya no existen en la nube, y (b) TRAER los que existen en la nube
+            // pero faltan localmente (productos que se perdieron la ventana del
+            // pull incremental, ej. insertados con fecha vieja o nula).
             const RECON_KEY = 'vrd_prod_recon_ts';
             const RECON_INTERVAL = 5 * 60 * 1000; // 5 minutos
             const lastRecon = parseInt(localStorage.getItem(RECON_KEY) || '0', 10);
             if (Date.now() - lastRecon > RECON_INTERVAL) {
                 const { data: allIds } = await withTimeout(() =>
-                    supabase.from('productos').select('id').eq('negocio_id', negocioId)
+                    supabase.from('productos').select('id, eliminado').eq('negocio_id', negocioId)
                 );
                 if (allIds) {
-                    const cloudIds = new Set(allIds.map((r: { id: string }) => r.id));
+                    const cloudActivos = new Set((allIds as { id: string; eliminado?: boolean }[])
+                        .filter(r => !r.eliminado).map(r => r.id));
                     const locales = await db.productos.where('negocio_id').equals(negocioId).toArray();
-                    // Solo eliminar los que están sincronizados (estado=1) y ya no existen en la nube
-                    const obsoletos = locales.filter(p => !p.eliminado && p.estado_sincronizacion === 1 && !cloudIds.has(p.id));
+                    const localIds = new Set(locales.map(p => p.id));
+
+                    // (a) Borrar los sincronizados que ya no existen (o quedaron eliminados) en la nube
+                    const obsoletos = locales.filter(p => !p.eliminado && p.estado_sincronizacion === 1 && !cloudActivos.has(p.id));
                     if (obsoletos.length > 0) {
                         await db.productos.bulkDelete(obsoletos.map(p => p.id));
                         await Promise.all(obsoletos.map(p =>
                             db.composiciones.where('producto_padre_id').equals(p.id).delete()
                         ));
+                    }
+
+                    // (b) Traer los activos de la nube que faltan localmente
+                    const faltantes = [...cloudActivos].filter(id => !localIds.has(id));
+                    if (faltantes.length > 0) {
+                        const { data: nuevos } = await withTimeout(() =>
+                            supabase.from('productos').select('*').in('id', faltantes)
+                        );
+                        if (nuevos && nuevos.length > 0) {
+                            await db.productos.bulkPut(nuevos.map(p => ({ ...p, estado_sincronizacion: 1 })));
+                        }
                     }
                 }
                 localStorage.setItem(RECON_KEY, String(Date.now()));
