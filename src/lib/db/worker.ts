@@ -588,6 +588,7 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                             limite_credito: c.limite_credito,
                             tipo_precio: c.tipo_precio ?? 1,
                             al_por_mayor: c.al_por_mayor ?? false,
+                            eliminado: c.eliminado ?? false,
                             fecha_actualizacion: c.fecha_actualizacion || Date.now(),
                         }))
                     )

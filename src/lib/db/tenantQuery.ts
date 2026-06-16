@@ -51,7 +51,9 @@ export function useClientesTenant() {
     const { negocioId } = useConfigStore();
     return useLiveQuery(
         () => negocioId
-            ? db.clientes.where('negocio_id').equals(negocioId).toArray()
+            ? db.clientes.where('negocio_id').equals(negocioId)
+                .filter(c => !c.eliminado)
+                .toArray()
             : [],
         [negocioId]
     ) || [];

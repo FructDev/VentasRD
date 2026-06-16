@@ -13,6 +13,7 @@ import TopBar from '@/components/shared/TopBar';
 import OfflineBanner from '@/components/shared/OfflineBanner';
 import Pagination from '@/components/ui/Pagination';
 import { SkeletonTable } from '@/components/ui/Skeleton';
+import ConfirmModal from '@/components/ui/ConfirmModal';
 
 export default function ClientesPage() {
     const { negocioId, showToast, negocioNombre } = useConfigStore();
@@ -38,7 +39,19 @@ export default function ClientesPage() {
     const [clienteEditando, setClienteEditando] = useState<ClienteLocal | null>(null);
     const [formDataCliente, setFormDataCliente] = useState({ nombre: '', telefono: '', limite_credito: '', tipo_precio: '1', al_por_mayor: false });
 
+    const [clienteAEliminar, setClienteAEliminar] = useState<ClienteLocal | null>(null);
     const [isModalAbonoOpen, setIsModalAbonoOpen] = useState(false);
+
+    const eliminarCliente = async () => {
+        if (!clienteAEliminar) return;
+        // Borrado suave: se oculta y se sincroniza; conserva el historial
+        await db.clientes.update(clienteAEliminar.id, {
+            eliminado: true, estado_sincronizacion: 0, fecha_actualizacion: Date.now(),
+        });
+        setClienteAEliminar(null);
+        setIsModalClienteOpen(false);
+        showToast('Cliente eliminado.', 'info');
+    };
     const [clienteParaAbono, setClienteParaAbono] = useState<any>(null);
     const [abonoMonto, setAbonoMonto] = useState('');
     const [abonoConcepto, setAbonoConcepto] = useState('Abono en efectivo');
@@ -360,6 +373,24 @@ export default function ClientesPage() {
                                         <button type="button" onClick={() => setIsModalClienteOpen(false)} className="flex-1 py-3 font-bold text-vr-gray hover:text-white border border-navy-3 rounded-xl transition-colors">Cancelar</button>
                                         <button type="submit" className="flex-1 py-3 bg-gold-gradient text-navy font-extrabold rounded-xl hover:brightness-110 transition-all">Guardar</button>
                                     </div>
+
+                                    {/* Eliminar — solo al editar un cliente existente */}
+                                    {clienteEditando && (
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                const conSaldo = clientesConSaldo.find(c => c.id === clienteEditando.id);
+                                                if (conSaldo && conSaldo.saldo_pendiente > 0) {
+                                                    showToast('No puedes borrar un cliente con deuda pendiente. Registra el pago primero.', 'error');
+                                                    return;
+                                                }
+                                                setClienteAEliminar(clienteEditando);
+                                            }}
+                                            className="w-full text-center text-vr-red/80 hover:text-vr-red text-sm font-bold py-2 hover:bg-vr-red/10 rounded-xl transition-all"
+                                        >
+                                            🗑 Eliminar cliente
+                                        </button>
+                                    )}
                                 </form>
                             </div>
                         </div>
@@ -394,6 +425,16 @@ export default function ClientesPage() {
                             </div>
                         </div>
                     )}
+
+                    {/* Confirmación de borrado de cliente */}
+                    <ConfirmModal
+                        isOpen={!!clienteAEliminar}
+                        title="Eliminar cliente"
+                        mensaje={<>¿Eliminar a <span className="font-bold text-white">{clienteAEliminar?.nombre}</span>? Dejará de aparecer en tus listas. Su historial de ventas se conserva.</>}
+                        confirmLabel="Eliminar"
+                        onConfirm={eliminarCliente}
+                        onClose={() => setClienteAEliminar(null)}
+                    />
                 </div>
             </div>
         </div>

@@ -108,6 +108,7 @@ export interface ClienteLocal {
     limite_credito: number; // 0 significa sin límite
     tipo_precio?: 1 | 2 | 3; // Tier de precio asignado (1 = menudeo, 2 = mayoreo, 3 = especial)
     al_por_mayor?: boolean;  // Indicador visual de cliente mayorista
+    eliminado?: boolean;     // Borrado suave (se oculta; se conserva para historial)
     estado_sincronizacion: 0 | 1;
     fecha_actualizacion: number;
 }
