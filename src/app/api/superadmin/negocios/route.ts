@@ -15,7 +15,7 @@ export async function GET(req: NextRequest) {
 
     const { data: negocios, error: negociosError } = await admin
         .from('negocios')
-        .select('id, nombre, telefono, tipo_negocio, whatsapp_dueno, plan_activo, trial_hasta, acceso_hasta, onboarding_completado, direccion');
+        .select('id, nombre, telefono, tipo_negocio, whatsapp_dueno, plan_activo, trial_hasta, acceso_hasta, onboarding_completado, direccion, nota_operador');
 
     if (negociosError) {
         return NextResponse.json({ error: negociosError.message }, { status: 500 });

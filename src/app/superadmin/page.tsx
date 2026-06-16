@@ -14,8 +14,11 @@ interface Negocio {
     trial_hasta: number | null;
     acceso_hasta: number | null;
     onboarding_completado: boolean;
+    nota_operador: string | null;
     created_at: string;
 }
+
+const PRECIO_KEY = 'vrd_sa_precio'; // precio mensual (lo fija el operador, por dispositivo)
 
 const DIA = 86400000;
 const GRACIA_DIAS = 5;
@@ -186,6 +189,19 @@ function Panel({ secret, onLogout }: { secret: string; onLogout: () => void }) {
     const [confirmandoCorte, setConfirmandoCorte] = useState<string | null>(null);
     const [filtro, setFiltro] = useState<'todos' | 'vigentes' | 'porvencer' | 'vencidos' | 'sinactivar'>('todos');
     const [detalle, setDetalle] = useState<{ negocio: Negocio; data: DetalleNegocio | null } | null>(null);
+    const [precio, setPrecio] = useState(0);
+    const [pagosMes, setPagosMes] = useState(0);
+    const [pinNuevo, setPinNuevo] = useState('');
+
+    useEffect(() => { setPrecio(Number(localStorage.getItem(PRECIO_KEY)) || 0); }, []);
+    const guardarPrecio = (v: number) => { setPrecio(v); localStorage.setItem(PRECIO_KEY, String(v)); };
+
+    useEffect(() => {
+        fetch('/api/superadmin/resumen', { headers: { 'x-superadmin-secret': secret } })
+            .then(r => r.ok ? r.json() : { pagosMes: 0 })
+            .then(d => setPagosMes(d.pagosMes ?? 0))
+            .catch(() => {});
+    }, [secret, negocios]);
 
     const fetchNegocios = async () => {
         setLoading(true);
@@ -238,8 +254,27 @@ function Panel({ secret, onLogout }: { secret: string; onLogout: () => void }) {
         window.open(`https://wa.me/${tel}?text=${msg}`, '_blank');
     };
 
+    // Recordatorio de renovación con fecha de vencimiento y monto
+    const whatsappRenovacion = (n: Negocio) => {
+        const tel = (n.whatsapp_dueno || n.telefono || '').replace(/\D/g, '');
+        if (!tel) return;
+        const vence = venceDe(n);
+        const fechaTxt = vence ? new Date(vence).toLocaleDateString('es-DO', { day: '2-digit', month: 'long' }) : 'pronto';
+        const yaVencio = vence != null && vence < Date.now();
+        const montoTxt = precio > 0 ? ` El monto de renovación es ${fmtDOP(precio)}.` : '';
+        const msg = encodeURIComponent(
+            `Hola ${n.nombre}, tu acceso a VentaRD ${yaVencio ? 'venció' : 'vence'} el ${fechaTxt}.${montoTxt} ` +
+            `Renueva para seguir vendiendo sin interrupción. ¡Gracias por confiar en VentaRD!`
+        );
+        window.open(`https://wa.me/${tel}?text=${msg}`, '_blank');
+    };
+
+    const guardarNota = (n: Negocio, nota: string) => accion(n.id, { nota_operador: nota });
+    const resetearPin = (n: Negocio, pin: string) => accion(n.id, { pin_nuevo: pin });
+
     // Abrir el panel de detalle de un negocio (carga métricas de actividad)
     const abrirDetalle = async (n: Negocio) => {
+        setPinNuevo('');
         setDetalle({ negocio: n, data: null });
         try {
             const res = await fetch(`/api/superadmin/negocios/${n.id}/detalle`, {
@@ -330,6 +365,32 @@ function Panel({ secret, onLogout }: { secret: string; onLogout: () => void }) {
                             }
                         </div>
                     ))}
+                </div>
+
+                {/* Ingresos del operador */}
+                <div className="bg-navy-2 border border-gold/20 rounded-2xl p-4 mb-6 flex flex-col sm:flex-row sm:items-center gap-4 flex-wrap">
+                    <div className="flex items-center gap-2">
+                        <span className="text-xs text-vr-gray font-semibold uppercase tracking-wider">Precio mensual</span>
+                        <span className="text-vr-gray font-mono text-sm">RD$</span>
+                        <input
+                            type="number" min="0" placeholder="0"
+                            value={precio || ''}
+                            onChange={e => guardarPrecio(Number(e.target.value) || 0)}
+                            className="w-24 bg-navy border border-navy-3 rounded-lg px-2 py-1.5 text-white font-mono text-sm outline-none focus:border-gold"
+                        />
+                    </div>
+                    <div className="sm:ml-auto flex gap-8">
+                        <div>
+                            <p className="text-[10px] text-vr-gray uppercase tracking-wider">MRR estimado</p>
+                            <p className="text-xl font-black font-mono text-vr-green">{fmtDOP(stats.vigentes * precio)}</p>
+                            <p className="text-[10px] text-vr-gray">{stats.vigentes} vigentes × precio</p>
+                        </div>
+                        <div>
+                            <p className="text-[10px] text-vr-gray uppercase tracking-wider">Cobrado este mes</p>
+                            <p className="text-xl font-black font-mono text-gold">{fmtDOP(pagosMes * precio)}</p>
+                            <p className="text-[10px] text-vr-gray">{pagosMes} pago{pagosMes !== 1 ? 's' : ''} registrado{pagosMes !== 1 ? 's' : ''}</p>
+                        </div>
+                    </div>
                 </div>
 
                 {/* Búsqueda + filtros por estado */}
@@ -587,6 +648,45 @@ function Panel({ secret, onLogout }: { secret: string; onLogout: () => void }) {
                                     <input type="date" defaultValue={fechaInput}
                                         onChange={e => e.target.value && fijarFecha(n, e.target.value)}
                                         className="w-full bg-navy border border-navy-3 rounded-xl px-3 py-2 text-sm text-white outline-none focus:border-gold" />
+                                    <button
+                                        onClick={() => whatsappRenovacion(n)}
+                                        disabled={!tel}
+                                        className="w-full mt-2 py-2.5 bg-vr-green/10 text-vr-green border border-vr-green/20 rounded-xl text-sm font-bold hover:bg-vr-green/20 transition-all disabled:opacity-30 flex items-center justify-center gap-2">
+                                        <MessageCircle className="w-4 h-4" /> Recordar renovación por WhatsApp
+                                    </button>
+                                </div>
+
+                                {/* Notas internas (CRM) */}
+                                <div>
+                                    <p className="text-[10px] font-bold text-vr-gray uppercase tracking-wider mb-2">Notas internas</p>
+                                    <textarea
+                                        defaultValue={n.nota_operador || ''}
+                                        onBlur={e => { if (e.target.value !== (n.nota_operador || '')) guardarNota(n, e.target.value); }}
+                                        placeholder="Ej: paga por transferencia, pidió factura, cliente difícil…"
+                                        className="w-full h-20 bg-navy border border-navy-3 rounded-xl px-3 py-2 text-sm text-white placeholder-vr-gray/40 outline-none focus:border-gold resize-none"
+                                    />
+                                    <p className="text-[10px] text-vr-gray mt-1">Se guarda al salir del campo. Solo tú la ves.</p>
+                                </div>
+
+                                {/* Soporte: resetear PIN */}
+                                <div>
+                                    <p className="text-[10px] font-bold text-vr-gray uppercase tracking-wider mb-2">Soporte</p>
+                                    <div className="flex gap-2">
+                                        <input
+                                            type="text" inputMode="numeric" maxLength={4}
+                                            value={pinNuevo}
+                                            onChange={e => setPinNuevo(e.target.value.replace(/\D/g, ''))}
+                                            placeholder="Nuevo PIN (4 dígitos)"
+                                            className="flex-1 bg-navy border border-navy-3 rounded-xl px-3 py-2 text-sm text-white font-mono outline-none focus:border-gold"
+                                        />
+                                        <button
+                                            onClick={() => { resetearPin(n, pinNuevo); setPinNuevo(''); }}
+                                            disabled={pinNuevo.length !== 4 || accionando === n.id}
+                                            className="px-4 py-2 bg-navy-3 border border-navy-4 text-white rounded-xl text-sm font-bold hover:bg-navy-4 transition-all disabled:opacity-30 whitespace-nowrap">
+                                            Resetear PIN
+                                        </button>
+                                    </div>
+                                    <p className="text-[10px] text-vr-gray mt-1">Úsalo si el dueño quedó fuera de su zona admin.</p>
                                 </div>
 
                                 {/* Historial de pagos */}

@@ -1,6 +1,7 @@
 // src/app/api/superadmin/negocios/[id]/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
+import crypto from 'crypto';
 
 function verifyAdmin(req: NextRequest): boolean {
     const secret = req.headers.get('x-superadmin-secret');
@@ -24,6 +25,11 @@ export async function PATCH(
     if (typeof body.plan_activo === 'boolean') updateData.plan_activo = body.plan_activo;
     if ('trial_hasta' in body) updateData.trial_hasta = body.trial_hasta;
     if ('acceso_hasta' in body) updateData.acceso_hasta = body.acceso_hasta;
+    if ('nota_operador' in body) updateData.nota_operador = body.nota_operador;
+    // Reseteo de PIN: el operador manda 4 dígitos en claro; se guarda hasheado (SHA-256)
+    if (typeof body.pin_nuevo === 'string' && /^\d{4}$/.test(body.pin_nuevo)) {
+        updateData.pin_admin = crypto.createHash('sha256').update(body.pin_nuevo).digest('hex');
+    }
 
     if (Object.keys(updateData).length === 0) {
         return NextResponse.json({ error: 'Nada que actualizar' }, { status: 400 });
