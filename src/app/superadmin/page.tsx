@@ -12,19 +12,32 @@ interface Negocio {
     whatsapp_dueno: string | null;
     plan_activo: boolean;
     trial_hasta: number | null;
+    acceso_hasta: number | null;
     onboarding_completado: boolean;
     created_at: string;
 }
 
+const DIA = 86400000;
+const GRACIA_DIAS = 5;
+
+// Fecha de vencimiento efectiva (acceso_hasta, o trial legado como respaldo)
+function venceDe(n: Negocio): number | null {
+    return n.acceso_hasta ?? n.trial_hasta ?? null;
+}
+
 function getEstado(n: Negocio): { label: string; color: string } {
+    const vence = venceDe(n);
     const ahora = Date.now();
-    if (n.plan_activo) return { label: 'Activo', color: 'text-vr-green bg-vr-green/10 border-vr-green/20' };
-    if (n.trial_hasta && ahora < n.trial_hasta) {
-        const dias = Math.ceil((n.trial_hasta - ahora) / 86400000);
-        return { label: `Trial · ${dias}d`, color: 'text-gold bg-gold/10 border-gold/20' };
+    if (vence == null) return { label: 'Sin activar', color: 'text-vr-gray bg-white/5 border-white/10' };
+    if (ahora <= vence) {
+        const dias = Math.ceil((vence - ahora) / DIA);
+        return { label: `Vigente · ${dias}d`, color: 'text-vr-green bg-vr-green/10 border-vr-green/20' };
     }
-    if (n.trial_hasta && ahora >= n.trial_hasta) return { label: 'Vencido', color: 'text-vr-red bg-vr-red/10 border-vr-red/20' };
-    return { label: 'Sin activar', color: 'text-vr-gray bg-white/5 border-white/10' };
+    const diasVencido = (ahora - vence) / DIA;
+    if (diasVencido <= GRACIA_DIAS) {
+        return { label: `Gracia · ${Math.max(1, Math.ceil(GRACIA_DIAS - diasVencido))}d`, color: 'text-vr-orange bg-vr-orange/10 border-vr-orange/20' };
+    }
+    return { label: 'Bloqueado', color: 'text-vr-red bg-vr-red/10 border-vr-red/20' };
 }
 
 const TIPOS: Record<string, string> = {
@@ -144,6 +157,7 @@ function Panel({ secret, onLogout }: { secret: string; onLogout: () => void }) {
     const [loading, setLoading] = useState(true);
     const [busqueda, setBusqueda] = useState('');
     const [accionando, setAccionando] = useState<string | null>(null);
+    const [confirmandoCorte, setConfirmandoCorte] = useState<string | null>(null);
 
     const fetchNegocios = async () => {
         setLoading(true);
@@ -171,12 +185,16 @@ function Panel({ secret, onLogout }: { secret: string; onLogout: () => void }) {
         setAccionando(null);
     };
 
-    const togglePlan = (n: Negocio) => accion(n.id, { plan_activo: !n.plan_activo });
-
-    const extenderTrial = (n: Negocio, dias: number) => {
-        const base = n.trial_hasta && n.trial_hasta > Date.now() ? n.trial_hasta : Date.now();
-        accion(n.id, { trial_hasta: base + dias * 86400000 });
+    // Extiende el acceso: parte de la fecha actual de vencimiento si aún es futura,
+    // o de hoy si ya venció (no regala días al que pagó tarde, no quita al que pagó antes)
+    const extender = (n: Negocio, dias: number) => {
+        const vence = venceDe(n);
+        const base = vence && vence > Date.now() ? vence : Date.now();
+        accion(n.id, { acceso_hasta: base + dias * DIA });
     };
+    const registrarPago = (n: Negocio) => extender(n, 30);
+
+    const cortarAcceso = (n: Negocio) => accion(n.id, { acceso_hasta: Date.now() });
 
     const whatsapp = (n: Negocio) => {
         const tel = (n.whatsapp_dueno || n.telefono || '').replace(/\D/g, '');
@@ -198,9 +216,9 @@ function Panel({ secret, onLogout }: { secret: string; onLogout: () => void }) {
     const ahora = Date.now();
     const stats = {
         total: negocios.length,
-        activos: negocios.filter(n => n.plan_activo).length,
-        enTrial: negocios.filter(n => !n.plan_activo && n.trial_hasta && ahora < n.trial_hasta).length,
-        vencidos: negocios.filter(n => !n.plan_activo && n.trial_hasta && ahora >= n.trial_hasta).length,
+        vigentes: negocios.filter(n => { const v = venceDe(n); return v != null && ahora <= v; }).length,
+        porVencer: negocios.filter(n => { const v = venceDe(n); return v != null && ahora <= v && (v - ahora) <= 5 * DIA; }).length,
+        vencidos: negocios.filter(n => { const v = venceDe(n); return v != null && ahora > v; }).length,
     };
 
     return (
@@ -242,10 +260,10 @@ function Panel({ secret, onLogout }: { secret: string; onLogout: () => void }) {
                 {/* Stats */}
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-8">
                     {[
-                        { icon: Users,       label: 'Total',    value: stats.total,    color: 'text-white'    },
-                        { icon: Check,       label: 'Activos',  value: stats.activos,  color: 'text-vr-green' },
-                        { icon: Clock,       label: 'En trial', value: stats.enTrial,  color: 'text-gold'     },
-                        { icon: AlertCircle, label: 'Vencidos', value: stats.vencidos, color: 'text-vr-red'   },
+                        { icon: Users,       label: 'Total',     value: stats.total,     color: 'text-white'     },
+                        { icon: Check,       label: 'Vigentes',  value: stats.vigentes,  color: 'text-vr-green'  },
+                        { icon: Clock,       label: 'Por vencer (5d)', value: stats.porVencer, color: 'text-vr-orange' },
+                        { icon: AlertCircle, label: 'Vencidos',  value: stats.vencidos,  color: 'text-vr-red'    },
                     ].map(({ icon: Icon, label, value, color }) => (
                         <div key={label} className="bg-navy-2 border border-navy-3 rounded-2xl p-4">
                             <div className="flex items-center gap-2 mb-2">
@@ -280,7 +298,7 @@ function Panel({ secret, onLogout }: { secret: string; onLogout: () => void }) {
                                 <tr className="border-b border-navy-3 text-vr-gray text-xs uppercase tracking-wider">
                                     <th className="px-4 py-3 font-semibold">Negocio</th>
                                     <th className="px-4 py-3 font-semibold hidden md:table-cell">Contacto</th>
-                                    <th className="px-4 py-3 font-semibold hidden lg:table-cell">Registro</th>
+                                    <th className="px-4 py-3 font-semibold hidden lg:table-cell">Vence</th>
                                     <th className="px-4 py-3 font-semibold">Estado</th>
                                     <th className="px-4 py-3 font-semibold text-center">Acciones</th>
                                 </tr>
@@ -326,9 +344,11 @@ function Panel({ secret, onLogout }: { secret: string; onLogout: () => void }) {
                                                     )}
                                                 </td>
 
-                                                {/* Registro */}
+                                                {/* Vence */}
                                                 <td className="px-4 py-3 hidden lg:table-cell text-vr-gray text-xs">
-                                                    {n.created_at ? new Date(n.created_at).toLocaleDateString('es-DO', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}
+                                                    {venceDe(n)
+                                                        ? new Date(venceDe(n)!).toLocaleDateString('es-DO', { day: '2-digit', month: 'short', year: 'numeric' })
+                                                        : '—'}
                                                 </td>
 
                                                 {/* Estado */}
@@ -341,38 +361,46 @@ function Panel({ secret, onLogout }: { secret: string; onLogout: () => void }) {
                                                 {/* Acciones */}
                                                 <td className="px-4 py-3">
                                                     <div className="flex items-center justify-center gap-1.5 flex-wrap">
+                                                        {/* Registrar pago = +30 días (acción principal) */}
                                                         <button
-                                                            onClick={() => togglePlan(n)}
+                                                            onClick={() => { setConfirmandoCorte(null); registrarPago(n); }}
                                                             disabled={cargando}
-                                                            title={n.plan_activo ? 'Desactivar plan' : 'Activar plan'}
-                                                            className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold border transition-all disabled:opacity-40 ${
-                                                                n.plan_activo
-                                                                    ? 'bg-vr-red/10 text-vr-red border-vr-red/20 hover:bg-vr-red/20'
-                                                                    : 'bg-vr-green/10 text-vr-green border-vr-green/20 hover:bg-vr-green/20'
-                                                            }`}
+                                                            title="Registrar pago: extiende el acceso 30 días"
+                                                            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold bg-vr-green/10 text-vr-green border border-vr-green/20 hover:bg-vr-green/20 transition-all disabled:opacity-40"
                                                         >
-                                                            {n.plan_activo ? <X className="w-3 h-3" /> : <Check className="w-3 h-3" />}
-                                                            <span className="hidden sm:inline">{n.plan_activo ? 'Desactivar' : 'Activar'}</span>
+                                                            <Check className="w-3 h-3" />
+                                                            <span className="hidden sm:inline">Pago +30d</span>
+                                                            <span className="sm:hidden">+30</span>
                                                         </button>
 
+                                                        {/* Extensión corta (gracia / cortesía) */}
                                                         <button
-                                                            onClick={() => extenderTrial(n, 7)}
+                                                            onClick={() => { setConfirmandoCorte(null); extender(n, 7); }}
                                                             disabled={cargando}
-                                                            title="Extender trial 7 días"
+                                                            title="Extender 7 días (cortesía)"
                                                             className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold bg-gold/10 text-gold border border-gold/20 hover:bg-gold/20 transition-all disabled:opacity-40"
                                                         >
                                                             <Clock className="w-3 h-3" />
                                                             <span>+7d</span>
                                                         </button>
 
+                                                        {/* Cortar acceso (confirmación en dos clics, sin diálogo nativo) */}
                                                         <button
-                                                            onClick={() => extenderTrial(n, 30)}
+                                                            onClick={() => {
+                                                                if (confirmandoCorte === n.id) { cortarAcceso(n); setConfirmandoCorte(null); }
+                                                                else setConfirmandoCorte(n.id);
+                                                            }}
+                                                            onBlur={() => setConfirmandoCorte(c => c === n.id ? null : c)}
                                                             disabled={cargando}
-                                                            title="Extender trial 30 días"
-                                                            className="hidden sm:flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold bg-gold/10 text-gold border border-gold/20 hover:bg-gold/20 transition-all disabled:opacity-40"
+                                                            title="Cortar acceso (entra en gracia y se bloquea)"
+                                                            className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold border transition-all disabled:opacity-40 ${
+                                                                confirmandoCorte === n.id
+                                                                    ? 'bg-vr-red text-white border-vr-red'
+                                                                    : 'bg-vr-red/10 text-vr-red border-vr-red/20 hover:bg-vr-red/20'
+                                                            }`}
                                                         >
-                                                            <Clock className="w-3 h-3" />
-                                                            <span>+30d</span>
+                                                            <X className="w-3 h-3" />
+                                                            <span className="hidden sm:inline">{confirmandoCorte === n.id ? '¿Seguro?' : 'Cortar'}</span>
                                                         </button>
 
                                                         <button
