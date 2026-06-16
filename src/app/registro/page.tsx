@@ -40,7 +40,9 @@ export default function RegistroPage() {
             const { error: signInErr } = await supabase.auth.signInWithPassword({ email, password });
             if (signInErr) throw new Error(signInErr.message);
 
-            router.push('/');
+            // Ir directo al onboarding (mismo destino que el enrutador del AuthProvider
+            // para un dueño nuevo) — evita el rebote /  →  /onboarding
+            router.push('/onboarding');
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Error al crear la cuenta.');
             setLoading(false);
