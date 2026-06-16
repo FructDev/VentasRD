@@ -15,7 +15,7 @@ set acceso_hasta = coalesce(
     acceso_hasta,
     trial_hasta,
     case when plan_activo
-         then (extract(epoch from now()) * 1000)::bigint + 30 * 86400000
+         then (extract(epoch from now()) * 1000)::bigint + 30 * 86400000::bigint
          else (extract(epoch from now()) * 1000)::bigint
     end
 )
@@ -27,7 +27,7 @@ where acceso_hasta is null;
 -- así pagar antes de vencer no pierde días. Reemplaza el id del negocio.
 -- ════════════════════════════════════════════════════════════════════════════
 -- update negocios
--- set acceso_hasta = greatest(coalesce(acceso_hasta, 0), (extract(epoch from now()) * 1000)::bigint) + 30 * 86400000
+-- set acceso_hasta = greatest(coalesce(acceso_hasta, 0), (extract(epoch from now()) * 1000)::bigint) + 30 * 86400000::bigint
 -- where id = 'EL-ID-DEL-NEGOCIO';
 
 -- Ver vencimientos (para tu control):
