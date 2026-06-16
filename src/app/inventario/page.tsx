@@ -490,15 +490,16 @@ export default function InventarioPage() {
                                     <th className="p-3 sm:p-4 font-semibold hidden md:table-cell">Costo</th>
                                     <th className="p-3 sm:p-4 font-semibold hidden md:table-cell">Margen</th>
                                     <th className="p-3 sm:p-4 font-semibold">Stock</th>
+                                    <th className="p-3 sm:p-4 font-semibold hidden lg:table-cell">Mínimo</th>
                                     <th className="p-3 sm:p-4 font-semibold text-right">Acciones</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 {isLoading ? (
-                                    <SkeletonTable rows={6} cols={6} />
+                                    <SkeletonTable rows={6} cols={7} />
                                 ) : productosConCosto.length === 0 ? (
                                     <tr>
-                                        <td colSpan={6} className="py-20 text-center text-vr-gray">
+                                        <td colSpan={7} className="py-20 text-center text-vr-gray">
                                             <span className="text-4xl block mb-3">📦</span>
                                             <p className="font-medium">Sin productos aún. Agrega tu primer producto.</p>
                                         </td>
@@ -553,6 +554,9 @@ export default function InventarioPage() {
                                                 {esCombo && <span className="text-[10px] ml-1 opacity-60">calc.</span>}
                                                 {esInsumo && <span className="text-[10px] ml-1 opacity-60">ing.</span>}
                                             </span>
+                                        </td>
+                                        <td className="p-3 sm:p-4 hidden lg:table-cell text-vr-gray font-mono text-sm">
+                                            {esCombo ? '—' : prod.stock_minimo}
                                         </td>
                                         <td className="p-3 sm:p-4 text-right">
                                             <div className="flex items-center justify-end gap-2 sm:gap-3">

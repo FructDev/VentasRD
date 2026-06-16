@@ -99,7 +99,7 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                 supabase.from('productos').select('*').eq('negocio_id', negocioId).gt('fecha_actualizacion', lastProdTs)
             );
             if (!pullProdErr && cloudProducts && cloudProducts.length > 0) {
-                let cloudStockMap = new Map<string, { stock_actual: number; stock_minimo: number; fecha_actualizacion?: number | null }>();
+                const cloudStockMap = new Map<string, { stock_actual: number; stock_minimo: number; fecha_actualizacion?: number | null }>();
                 if (sucursalId) {
                     const { data: stockData } = await withTimeout(() =>
                         supabase.from('inventario_sucursales')
@@ -116,17 +116,22 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                     // Movimientos sin subir: conservar el stock local pase lo que pase
                     const stockPendiente = movPendientes.has(p.id);
 
-                    // Si hay entrada en inventario_sucursales, usarla SOLO si es más reciente
-                    // que el valor de productos. Esto evita que datos viejos de inventario_sucursales
-                    // sobreescriban actualizaciones recientes de otros dispositivos.
+                    // stock_minimo es atributo del PRODUCTO (no de inventario_sucursales):
+                    // siempre viene de la tabla productos. Si hay cambios locales sin subir,
+                    // se respeta el local. NUNCA se toma de inventario_sucursales (que lo
+                    // guarda en 0 por defecto y borraría el valor real).
+                    const stockMinimoFinal = tieneCambiosPendientes
+                        ? (local?.stock_minimo ?? p.stock_minimo ?? 0)
+                        : (p.stock_minimo ?? local?.stock_minimo ?? 0);
+
+                    // El stock_actual sí puede venir de inventario_sucursales (es por sucursal),
+                    // usándolo solo si su timestamp es más reciente que el de productos.
                     if (cloudStock && !stockPendiente) {
                         const invTs = cloudStock.fecha_actualizacion ?? 0;
                         const prodTs = p.fecha_actualizacion ?? 0;
                         if (invTs >= prodTs) {
-                            // inventario_sucursales está al día → usarlo
-                            return { ...p, stock_actual: cloudStock.stock_actual, stock_minimo: cloudStock.stock_minimo, estado_sincronizacion: 1 };
+                            return { ...p, stock_actual: cloudStock.stock_actual, stock_minimo: stockMinimoFinal, estado_sincronizacion: 1 };
                         }
-                        // productos tiene un timestamp más reciente → ignorar inventario_sucursales para stock
                     }
 
                     return {
@@ -134,9 +139,7 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                         stock_actual: (stockPendiente || tieneCambiosPendientes)
                             ? (local?.stock_actual ?? p.stock_actual ?? 0)
                             : (p.stock_actual ?? local?.stock_actual ?? 0),
-                        stock_minimo: tieneCambiosPendientes
-                            ? (local!.stock_minimo ?? p.stock_minimo ?? 0)
-                            : (p.stock_minimo ?? local?.stock_minimo ?? 0),
+                        stock_minimo: stockMinimoFinal,
                         estado_sincronizacion: 1,
                     };
                 }));
