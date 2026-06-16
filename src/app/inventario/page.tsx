@@ -1,7 +1,7 @@
 // src/app/inventario/page.tsx
 'use client';
 
-import { useMemo, useState, useRef, lazy, Suspense } from 'react';
+import { useMemo, useState, useRef, useEffect, lazy, Suspense } from 'react';
 import Link from 'next/link';
 import { db } from '@/lib/db/dexie';
 import { registrarMovimientoStock } from '@/lib/db/stock';
@@ -20,6 +20,13 @@ import { SkeletonTable } from '@/components/ui/Skeleton';
 import Pagination from '@/components/ui/Pagination';
 
 const BarcodeScanner = lazy(() => import('@/components/ui/BarcodeScanner'));
+
+// Normaliza texto para búsqueda: minúsculas y sin tildes (la gente busca "cafe", no "café")
+const norm = (s: string | null | undefined): string =>
+    (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+
+type FiltroInventario = 'todos' | 'por_agotarse' | 'agotados' | 'simple' | 'insumo' | 'combo';
+type OrdenInventario = 'nombre' | 'stock' | 'margen';
 
 export default function InventarioPage() {
     const { negocioId, showToast, isOnline } = useConfigStore();
@@ -92,13 +99,69 @@ export default function InventarioPage() {
         ingredientes: [] as { insumo_id: string, nombre: string, cantidad: number }[]
     });
 
+    // ─── Búsqueda, filtros y orden ────────────────────────────────────────
+    const [busqueda, setBusqueda] = useState('');
+    const [filtro, setFiltro] = useState<FiltroInventario>('todos');
+    const [orden, setOrden] = useState<OrdenInventario>('nombre');
+    const [isBusquedaScanOpen, setIsBusquedaScanOpen] = useState(false);
+
+    const productosFiltrados = useMemo(() => {
+        const q = norm(busqueda).trim();
+        const terminos = q ? q.split(/\s+/) : [];
+
+        const lista = productosConCosto.filter(p => {
+            const tipo = (p as any).tipo || 'simple';
+
+            // Filtro por categoría / estado de stock
+            if (filtro === 'simple' && tipo !== 'simple') return false;
+            if (filtro === 'insumo' && tipo !== 'insumo') return false;
+            if (filtro === 'combo' && tipo !== 'combo') return false;
+            if (filtro === 'agotados' && !(tipo === 'simple' && p.stock_actual <= 0)) return false;
+            if (filtro === 'por_agotarse' && !(tipo === 'simple' && p.stock_actual > 0 && p.stock_actual <= p.stock_minimo)) return false;
+
+            // Búsqueda por texto (nombre + código de barras + ubicación). Todos los términos deben coincidir.
+            if (terminos.length > 0) {
+                const heno = norm(`${p.nombre} ${p.codigo_barras || ''} ${p.ubicacion || ''}`);
+                if (!terminos.every(t => heno.includes(t))) return false;
+            }
+            return true;
+        });
+
+        const ordenada = [...lista];
+        if (orden === 'nombre') {
+            ordenada.sort((a, b) => a.nombre.localeCompare(b.nombre, 'es', { sensitivity: 'base' }));
+        } else if (orden === 'stock') {
+            ordenada.sort((a, b) => a.stock_actual - b.stock_actual);
+        } else if (orden === 'margen') {
+            const margen = (p: typeof lista[number]) => p.precio_venta - p.costo;
+            ordenada.sort((a, b) => margen(b) - margen(a));
+        }
+        return ordenada;
+    }, [productosConCosto, busqueda, filtro, orden]);
+
     const ITEMS_POR_PAGINA = 20;
     const [pagina, setPagina] = useState(1);
+    // Al cambiar búsqueda/filtro/orden, volver a la primera página
+    useEffect(() => { setPagina(1); }, [busqueda, filtro, orden]);
+
     const productosPaginados = useMemo(() => {
         const inicio = (pagina - 1) * ITEMS_POR_PAGINA;
-        return productosConCosto.slice(inicio, inicio + ITEMS_POR_PAGINA);
-    }, [productosConCosto, pagina]);
-    const totalPaginas = Math.ceil(productosConCosto.length / ITEMS_POR_PAGINA);
+        return productosFiltrados.slice(inicio, inicio + ITEMS_POR_PAGINA);
+    }, [productosFiltrados, pagina]);
+    const totalPaginas = Math.ceil(productosFiltrados.length / ITEMS_POR_PAGINA);
+
+    // Conteos para las pastillas de filtro (sobre el catálogo completo, no el filtrado)
+    const conteos = useMemo(() => {
+        const simples = productosConCosto.filter(p => ((p as any).tipo || 'simple') === 'simple');
+        return {
+            todos: productosConCosto.length,
+            por_agotarse: simples.filter(p => p.stock_actual > 0 && p.stock_actual <= p.stock_minimo).length,
+            agotados: simples.filter(p => p.stock_actual <= 0).length,
+            simple: simples.length,
+            insumo: productosConCosto.filter(p => (p as any).tipo === 'insumo').length,
+            combo: productosConCosto.filter(p => (p as any).tipo === 'combo').length,
+        };
+    }, [productosConCosto]);
 
     // ─── Reorden inteligente ──────────────────────────────────────────────
     // Velocidad de venta de los últimos 14 días → "te quedan ~X días de stock".
@@ -406,12 +469,17 @@ export default function InventarioPage() {
 
                     {insights && (
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4 mb-4 sm:mb-8">
-                            <div className={`p-3 sm:p-5 rounded-2xl border ${insights.porAgotarse > 0 ? 'border-vr-orange/30 bg-vr-orange/5' : 'border-navy-3 bg-navy-2'}`}>
+                            <button
+                                type="button"
+                                onClick={() => { setFiltro('por_agotarse'); setBusqueda(''); }}
+                                className={`text-left p-3 sm:p-5 rounded-2xl border transition-all hover:brightness-110 ${insights.porAgotarse > 0 ? 'border-vr-orange/30 bg-vr-orange/5' : 'border-navy-3 bg-navy-2'} ${filtro === 'por_agotarse' ? 'ring-2 ring-gold/50' : ''}`}
+                                title="Ver productos por agotarse"
+                            >
                                 <p className="text-xs font-bold text-vr-gray uppercase tracking-wider leading-tight">Alertas Stock</p>
                                 <h3 className="text-xl sm:text-2xl font-black font-mono mt-1 text-white">
                                     {insights.porAgotarse} <span className="text-xs font-normal text-vr-gray">por agotarse</span>
                                 </h3>
-                            </div>
+                            </button>
 
                             <div className="p-3 sm:p-5 rounded-2xl border border-navy-3 bg-navy-2">
                                 <p className="text-xs font-bold text-vr-gray uppercase tracking-wider leading-tight">Capital Estante</p>
@@ -479,6 +547,99 @@ export default function InventarioPage() {
                         </div>
                     )}
 
+                    {/* BÚSQUEDA + FILTROS */}
+                    {(productosConCosto.length > 0 || busqueda || filtro !== 'todos') && (
+                        <div className="mb-3 sm:mb-4 space-y-3">
+                            {/* Barra de búsqueda */}
+                            <div className="flex gap-2">
+                                <div className="relative flex-1">
+                                    <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-vr-gray pointer-events-none">
+                                        <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                            <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
+                                        </svg>
+                                    </span>
+                                    <input
+                                        type="text"
+                                        inputMode="search"
+                                        placeholder="Buscar por nombre, código o ubicación…"
+                                        className="w-full bg-navy-2 border border-navy-3 rounded-xl pl-11 pr-10 py-3 text-white placeholder-vr-gray/50 focus:border-gold outline-none transition-all"
+                                        value={busqueda}
+                                        onChange={e => setBusqueda(e.target.value)}
+                                    />
+                                    {busqueda && (
+                                        <button
+                                            type="button"
+                                            onClick={() => setBusqueda('')}
+                                            className="absolute right-3 top-1/2 -translate-y-1/2 text-vr-gray hover:text-white font-bold transition-colors"
+                                            title="Limpiar"
+                                        >
+                                            ✕
+                                        </button>
+                                    )}
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => setIsBusquedaScanOpen(true)}
+                                    title="Escanear para buscar"
+                                    className="px-3.5 bg-navy-2 border border-navy-3 rounded-xl text-vr-gray hover:text-gold hover:border-gold/50 transition-all flex items-center shrink-0"
+                                >
+                                    <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                                        <path d="M3 7V5a2 2 0 0 1 2-2h2" /><path d="M17 3h2a2 2 0 0 1 2 2v2" />
+                                        <path d="M21 17v2a2 2 0 0 1-2 2h-2" /><path d="M7 21H5a2 2 0 0 1-2-2v-2" />
+                                        <line x1="7" y1="12" x2="7" y2="12.01" /><line x1="12" y1="12" x2="17" y2="12" />
+                                        <line x1="7" y1="8" x2="7" y2="16" /><line x1="12" y1="8" x2="12" y2="16" />
+                                        <line x1="17" y1="8" x2="17" y2="16" />
+                                    </svg>
+                                </button>
+                            </div>
+
+                            {/* Pastillas de filtro + orden */}
+                            <div className="flex items-center gap-2 flex-wrap">
+                                <div className="flex items-center gap-1.5 overflow-x-auto -mx-1 px-1 pb-1 flex-1 scrollbar-none">
+                                    {([
+                                        { key: 'todos', label: 'Todos', n: conteos.todos },
+                                        { key: 'por_agotarse', label: 'Por agotarse', n: conteos.por_agotarse },
+                                        { key: 'agotados', label: 'Agotados', n: conteos.agotados },
+                                        { key: 'simple', label: 'Venta', n: conteos.simple },
+                                        { key: 'insumo', label: 'Insumos', n: conteos.insumo },
+                                        { key: 'combo', label: 'Combos', n: conteos.combo },
+                                    ] as const)
+                                        // Ocultar pastillas vacías (excepto Todos) para no saturar
+                                        .filter(c => c.key === 'todos' || c.n > 0)
+                                        .map(({ key, label, n }) => {
+                                            const activo = filtro === key;
+                                            const esAlerta = (key === 'por_agotarse' || key === 'agotados') && n > 0;
+                                            return (
+                                                <button
+                                                    key={key}
+                                                    type="button"
+                                                    onClick={() => setFiltro(key)}
+                                                    className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-all border shrink-0 ${activo
+                                                        ? 'bg-gold/15 text-gold border-gold/40'
+                                                        : esAlerta
+                                                            ? 'bg-vr-orange/10 text-vr-orange border-vr-orange/20 hover:border-vr-orange/40'
+                                                            : 'bg-navy-2 text-vr-gray border-navy-3 hover:text-white'}`}
+                                                >
+                                                    {label}
+                                                    <span className={`ml-1.5 ${activo ? 'text-gold/70' : 'opacity-60'}`}>{n}</span>
+                                                </button>
+                                            );
+                                        })}
+                                </div>
+                                <select
+                                    value={orden}
+                                    onChange={e => setOrden(e.target.value as OrdenInventario)}
+                                    className="bg-navy-2 border border-navy-3 rounded-lg py-1.5 pl-2.5 pr-7 text-xs font-bold text-vr-gray focus:border-gold outline-none transition-all shrink-0 cursor-pointer"
+                                    title="Ordenar"
+                                >
+                                    <option value="nombre">A–Z</option>
+                                    <option value="stock">Menos stock</option>
+                                    <option value="margen">Mayor ganancia</option>
+                                </select>
+                            </div>
+                        </div>
+                    )}
+
                     {/* TABLE */}
                     <div className="bg-navy-2 rounded-2xl border border-navy-3 overflow-hidden">
                         <div className="overflow-x-auto">
@@ -502,6 +663,20 @@ export default function InventarioPage() {
                                         <td colSpan={7} className="py-20 text-center text-vr-gray">
                                             <span className="text-4xl block mb-3">📦</span>
                                             <p className="font-medium">Sin productos aún. Agrega tu primer producto.</p>
+                                        </td>
+                                    </tr>
+                                ) : productosFiltrados.length === 0 ? (
+                                    <tr>
+                                        <td colSpan={7} className="py-20 text-center text-vr-gray">
+                                            <span className="text-4xl block mb-3">🔍</span>
+                                            <p className="font-medium">No se encontraron productos.</p>
+                                            <button
+                                                type="button"
+                                                onClick={() => { setBusqueda(''); setFiltro('todos'); }}
+                                                className="mt-3 text-gold hover:text-gold-2 text-sm font-bold transition-colors"
+                                            >
+                                                Limpiar búsqueda y filtros
+                                            </button>
                                         </td>
                                     </tr>
                                 ) : productosPaginados.map((prod) => {
@@ -577,7 +752,7 @@ export default function InventarioPage() {
                             pagina={pagina}
                             totalPaginas={totalPaginas}
                             onCambiar={p => { setPagina(p); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
-                            totalItems={productosConCosto.length}
+                            totalItems={productosFiltrados.length}
                             itemsPorPagina={ITEMS_POR_PAGINA}
                         />
                     </div>
@@ -1002,6 +1177,20 @@ export default function InventarioPage() {
                         setIsScannerOpen(false);
                     }}
                     onClose={() => setIsScannerOpen(false)}
+                />
+            </Suspense>
+        )}
+
+        {/* Scanner de búsqueda — escanea un código y filtra la lista */}
+        {isBusquedaScanOpen && (
+            <Suspense fallback={null}>
+                <BarcodeScanner
+                    onScan={(code) => {
+                        setBusqueda(code);
+                        setFiltro('todos');
+                        setIsBusquedaScanOpen(false);
+                    }}
+                    onClose={() => setIsBusquedaScanOpen(false)}
                 />
             </Suspense>
         )}
