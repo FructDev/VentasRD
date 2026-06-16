@@ -8,7 +8,7 @@ import { usePathname } from 'next/navigation';
 import { useConfigStore } from '@/store/useConfigStore';
 
 // Subir esta versión cuando haya novedades nuevas que anunciar.
-const NOVEDADES_VERSION = '2026-06';
+const NOVEDADES_VERSION = '2026-06.2';
 const STORAGE_KEY = 'vrd_novedades_version';
 
 const RUTAS_SETUP = ['/login', '/registro', '/landing', '/onboarding', '/select-branch', '/pin', '/unirse', '/auth', '/offline'];
@@ -17,6 +17,16 @@ interface Item { titulo: string; probar: string; }
 interface Seccion { emoji: string; titulo: string; items: Item[]; }
 
 const SECCIONES: Seccion[] = [
+    {
+        emoji: '🔎', titulo: 'Tu inventario, más fácil de manejar',
+        items: [
+            { titulo: 'Buscador y filtros rápidos', probar: 'Inventario → escribe el nombre, código o ubicación; o toca "Por agotarse", "Agotados", "Combos"…' },
+            { titulo: 'Cambia precio y stock con un toque', probar: 'En la tabla toca el precio o el stock, escribe el nuevo valor y presiona Enter. Sin abrir nada.' },
+            { titulo: 'Historial de cada producto', probar: 'Inventario → "Ajuste" → "🕑 Ver historial". Ves entradas, ventas, mermas y conteos.' },
+            { titulo: 'Exportar a Excel', probar: 'Inventario → "📤 Exportar". Lo bajas, lo editas y lo puedes volver a importar.' },
+            { titulo: 'Cuánto ganarías si vendes todo', probar: 'En la tarjeta "Capital Estante" aparece tu ganancia potencial del inventario actual.' },
+        ],
+    },
     {
         emoji: '🛒', titulo: 'Vender más rápido',
         items: [
