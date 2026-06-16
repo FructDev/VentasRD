@@ -49,6 +49,14 @@ function maxCreacionTs(items: Array<{ fecha_creacion?: number | null }>): number
     return items.reduce((m, i) => Math.max(m, i.fecha_creacion || 0), 0);
 }
 
+// Evita que el cursor de sync salte al futuro si un registro tiene un timestamp
+// anómalo (skew de reloj, import erróneo, etc.). Sin este límite, un solo producto
+// con fecha_actualizacion en el futuro envenenarÍa el cursor y dejaría de traer
+// cualquier otra novedad hasta que el reloj del servidor alcance ese valor.
+function clampTs(ts: number): number {
+    return Math.min(ts, Date.now() + 60_000);
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const isValidUUID = (s: string | null | undefined): boolean => !!s && UUID_RE.test(s);
@@ -153,7 +161,7 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                         db.composiciones.where('producto_padre_id').equals(p.id).delete()
                     ));
                 }
-                setSyncTs('productos', maxTs(cloudProducts));
+                setSyncTs('productos', clampTs(maxTs(cloudProducts)));
             }
 
             // ── 1.B.2  Reconciliación de stocks (cada 30 seg) ────────────────
@@ -236,7 +244,11 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                     const cloudActivos = new Set((allIds as { id: string; eliminado?: boolean }[])
                         .filter(r => !r.eliminado).map(r => r.id));
                     const locales = await db.productos.where('negocio_id').equals(negocioId).toArray();
-                    const localIds = new Set(locales.map(p => p.id));
+                    // Solo contamos como "presentes localmente" los que NO están eliminados.
+                    // Si un producto está marcado eliminado localmente pero sigue activo en la
+                    // nube (push de borrado fallido o producto recreado en Supabase), se trata
+                    // como faltante y se restaura desde la nube — Supabase es la fuente de verdad.
+                    const localIds = new Set(locales.filter(p => !p.eliminado).map(p => p.id));
 
                     // (a) Borrar los sincronizados que ya no existen (o quedaron eliminados) en la nube
                     const obsoletos = locales.filter(p => !p.eliminado && p.estado_sincronizacion === 1 && !cloudActivos.has(p.id));
@@ -247,7 +259,8 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                         ));
                     }
 
-                    // (b) Traer los activos de la nube que faltan localmente
+                    // (b) Traer los activos de la nube que faltan localmente (incluye los
+                    // que localmente están marcados eliminados pero la nube los tiene activos)
                     const faltantes = [...cloudActivos].filter(id => !localIds.has(id));
                     if (faltantes.length > 0) {
                         const { data: nuevos } = await withTimeout(() =>
