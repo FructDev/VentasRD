@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase/client';
 import Link from 'next/link';
 import { ShoppingCart, Check } from 'lucide-react';
@@ -13,65 +14,38 @@ const FEATURES = [
 ];
 
 export default function RegistroPage() {
+    const router = useRouter();
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [nombreNegocio, setNombreNegocio] = useState('');
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const [exito, setExito] = useState(false);
 
     const handleRegistro = async (e: React.FormEvent) => {
         e.preventDefault();
         setLoading(true);
         setError(null);
 
-        const redirectTo = `${window.location.origin}/auth/confirm`;
-        const { error: signUpError } = await supabase.auth.signUp({
-            email,
-            password,
-            options: {
-                data: { nombre_negocio: nombreNegocio },
-                emailRedirectTo: redirectTo,
-            },
-        });
+        try {
+            // Crea la cuenta del lado del servidor (ya confirmada, sin email)
+            const res = await fetch('/api/auth/registro', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email, password, nombreNegocio }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'No se pudo crear la cuenta.');
 
-        if (signUpError) {
-            setError(signUpError.message);
-            setLoading(false);
-        } else {
-            setExito(true);
+            // Iniciar sesión de inmediato — el AuthProvider crea/carga el negocio
+            const { error: signInErr } = await supabase.auth.signInWithPassword({ email, password });
+            if (signInErr) throw new Error(signInErr.message);
+
+            router.push('/');
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'Error al crear la cuenta.');
             setLoading(false);
         }
     };
-
-    if (exito) {
-        return (
-            <div className="min-h-screen flex items-center justify-center bg-navy p-4">
-                <div className="max-w-md w-full text-center">
-                    <div className="flex items-center gap-2.5 justify-center mb-10">
-                        <div className="w-8 h-8 bg-gold rounded-lg flex items-center justify-center">
-                            <ShoppingCart className="w-4 h-4 text-navy" />
-                        </div>
-                        <span className="font-display font-extrabold text-lg text-white">VentaRD</span>
-                    </div>
-                    <div className="w-16 h-16 bg-vr-green/15 border border-vr-green/30 rounded-2xl flex items-center justify-center mx-auto mb-5 text-3xl">
-                        📧
-                    </div>
-                    <h2 className="text-2xl font-display font-bold text-white mb-2">¡Revisa tu correo!</h2>
-                    <p className="text-vr-gray mb-2 leading-relaxed">
-                        Enviamos un enlace de confirmación a{' '}
-                        <strong className="text-white">{email}</strong>.
-                    </p>
-                    <p className="text-vr-gray text-sm mb-8">
-                        Haz clic en el enlace para activar tu negocio y continuar.
-                    </p>
-                    <Link href="/login" className="inline-flex items-center gap-2 text-gold hover:text-gold-2 font-bold transition-colors text-sm">
-                        Ir al inicio de sesión →
-                    </Link>
-                </div>
-            </div>
-        );
-    }
 
     return (
         <div className="min-h-screen flex bg-navy">

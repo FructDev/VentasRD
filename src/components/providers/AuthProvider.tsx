@@ -112,9 +112,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 if (!negocio && !empleado && !error) {
                     console.log("Creando negocio faltante...");
                     const trialHasta = Date.now() + 30 * 24 * 60 * 60 * 1000;
+                    // Usar el nombre que el dueño escribió al registrarse (si el trigger no creó el negocio)
+                    const nombreInicial = (user.user_metadata?.nombre_negocio as string) || 'Mi Negocio';
                     const { data: nuevoNegocio, error: insertError } = await supabase
                         .from('negocios')
-                        .insert({ dueño_id: user.id, nombre: 'Mi Negocio', pin_admin: '1234', plan_activo: false, trial_hasta: trialHasta })
+                        .insert({ dueño_id: user.id, nombre: nombreInicial, pin_admin: '1234', plan_activo: false, trial_hasta: trialHasta })
                         .select('id, nombre, onboarding_completado, pin_admin, whatsapp_dueno, telefono, rnc, direccion, mensaje_ticket, logo_url, plan_activo, trial_hasta')
                         .single();
 
