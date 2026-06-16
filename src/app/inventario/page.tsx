@@ -1,7 +1,7 @@
 // src/app/inventario/page.tsx
 'use client';
 
-import { useMemo, useState, useRef, useEffect, lazy, Suspense } from 'react';
+import { useMemo, useState, useRef, lazy, Suspense } from 'react';
 import Link from 'next/link';
 import { db } from '@/lib/db/dexie';
 import { registrarMovimientoStock } from '@/lib/db/stock';
@@ -9,7 +9,7 @@ import { comprimirImagen, miniatura } from '@/lib/imagen';
 import ConfirmModal from '@/components/ui/ConfirmModal';
 import { useProductosTenant, useComposicionesTenant, useVentasPeriodoTenant, useVentaDetallesPorVentas } from '@/lib/db/tenantQuery';
 import { useConfigStore } from '@/store/useConfigStore';
-import { ProductoLocal, ComposicionLocal } from '@/types/database';
+import { ProductoLocal, ComposicionLocal, MovimientoStockLocal } from '@/types/database';
 import { formatDOP } from '@/lib/utils';
 import { v4 as uuidv4 } from 'uuid';
 import { useLiveQuery } from 'dexie-react-hooks';
@@ -27,6 +27,39 @@ const norm = (s: string | null | undefined): string =>
 
 type FiltroInventario = 'todos' | 'por_agotarse' | 'agotados' | 'simple' | 'insumo' | 'combo';
 type OrdenInventario = 'nombre' | 'stock' | 'margen';
+
+// Etiquetas y colores por tipo de movimiento de stock (para el historial)
+const META_MOVIMIENTO: Record<MovimientoStockLocal['tipo'], { label: string; icono: string; color: string }> = {
+    venta:       { label: 'Venta',         icono: '🛒', color: 'text-vr-red' },
+    merma:       { label: 'Merma',         icono: '📉', color: 'text-vr-red' },
+    devolucion:  { label: 'Devolución',    icono: '↩️', color: 'text-vr-green' },
+    entrada:     { label: 'Entrada',       icono: '📦', color: 'text-vr-green' },
+    conteo:      { label: 'Conteo físico', icono: '🔢', color: 'text-gold' },
+    importacion: { label: 'Importación',   icono: '📥', color: 'text-gold' },
+};
+
+// Input de edición rápida en línea (Enter guarda, Escape cancela, blur guarda)
+function CeldaEditInput({ valor, onValor, onGuardar, onCancelar }: {
+    valor: string;
+    onValor: (v: string) => void;
+    onGuardar: () => void;
+    onCancelar: () => void;
+}) {
+    return (
+        <input
+            type="number" step="any" min="0" autoFocus
+            value={valor}
+            onChange={e => onValor(e.target.value)}
+            onBlur={onGuardar}
+            onClick={e => e.stopPropagation()}
+            onKeyDown={e => {
+                if (e.key === 'Enter') { e.preventDefault(); onGuardar(); }
+                else if (e.key === 'Escape') { e.preventDefault(); onCancelar(); }
+            }}
+            className="w-20 bg-navy border border-gold rounded-md px-2 py-1 text-white font-mono text-sm outline-none text-right"
+        />
+    );
+}
 
 export default function InventarioPage() {
     const { negocioId, showToast, isOnline } = useConfigStore();
@@ -78,6 +111,17 @@ export default function InventarioPage() {
 
     const [isAjusteOpen, setIsAjusteOpen] = useState(false);
     const [productoAjustando, setProductoAjustando] = useState<ProductoLocal | null>(null);
+    // Historial de movimientos de un producto (entradas, mermas, ventas, conteos…)
+    const [productoHistorial, setProductoHistorial] = useState<ProductoLocal | null>(null);
+    const movimientosHistorial = useLiveQuery(
+        async () => {
+            if (!productoHistorial) return [];
+            const movs = await db.movimientos_stock.where('producto_id').equals(productoHistorial.id).toArray();
+            movs.sort((a, b) => b.fecha_creacion - a.fecha_creacion);
+            return movs.slice(0, 50);
+        },
+        [productoHistorial?.id]
+    ) || [];
     const [tipoAjuste, setTipoAjuste] = useState<'entrada' | 'merma' | 'conteo'>('entrada');
     const [cantidadAjuste, setCantidadAjuste] = useState('');
     const [serialesEntrada, setSerialesEntrada] = useState<string[]>(['']); // inputs de seriales en entrada
@@ -105,12 +149,53 @@ export default function InventarioPage() {
     const [orden, setOrden] = useState<OrdenInventario>('nombre');
     const [isBusquedaScanOpen, setIsBusquedaScanOpen] = useState(false);
 
+    // ─── Edición rápida en línea (precio y stock) ──────────────────────────
+    // Precio: escritura directa del campo. Stock: movimiento de conteo (mantiene
+    // la auditoría y el sync atómico — nunca se escribe el stock a mano).
+    const [celdaEdit, setCeldaEdit] = useState<{ id: string; campo: 'precio' | 'stock' } | null>(null);
+    const [valorEdit, setValorEdit] = useState('');
+
+    const iniciarEdicion = (prod: ProductoLocal, campo: 'precio' | 'stock') => {
+        setCeldaEdit({ id: prod.id, campo });
+        setValorEdit(String(campo === 'precio' ? prod.precio_venta : prod.stock_actual));
+    };
+
+    const cancelarEdicion = () => { setCeldaEdit(null); setValorEdit(''); };
+
+    const guardarEdicion = async (prod: ProductoLocal) => {
+        if (!celdaEdit || celdaEdit.id !== prod.id) return;
+        const campo = celdaEdit.campo;
+        const num = parseFloat(valorEdit);
+        if (isNaN(num) || num < 0) { cancelarEdicion(); return; }
+        // Manejador de evento (blur/Enter), no se ejecuta en render: Date.now() es seguro.
+        // (onGuardar es un prop personalizado, por eso el linter no lo reconoce como handler.)
+        // eslint-disable-next-line react-hooks/purity
+        const ahora = Date.now();
+        try {
+            if (campo === 'precio') {
+                if (num !== prod.precio_venta) {
+                    await db.productos.update(prod.id, { precio_venta: num, estado_sincronizacion: 0, fecha_actualizacion: ahora });
+                    showToast('Precio actualizado.', 'success');
+                }
+            } else {
+                if (num !== prod.stock_actual) {
+                    await registrarMovimientoStock({ productoId: prod.id, tipo: 'conteo', valorAbsoluto: num });
+                    showToast('Stock ajustado por conteo.', 'success');
+                }
+            }
+        } catch (e) {
+            console.error('[edicion rapida]', e);
+            showToast('No se pudo guardar el cambio.', 'error');
+        }
+        cancelarEdicion();
+    };
+
     const productosFiltrados = useMemo(() => {
         const q = norm(busqueda).trim();
         const terminos = q ? q.split(/\s+/) : [];
 
         const lista = productosConCosto.filter(p => {
-            const tipo = (p as any).tipo || 'simple';
+            const tipo = p.tipo || 'simple';
 
             // Filtro por categoría / estado de stock
             if (filtro === 'simple' && tipo !== 'simple') return false;
@@ -141,8 +226,15 @@ export default function InventarioPage() {
 
     const ITEMS_POR_PAGINA = 20;
     const [pagina, setPagina] = useState(1);
-    // Al cambiar búsqueda/filtro/orden, volver a la primera página
-    useEffect(() => { setPagina(1); }, [busqueda, filtro, orden]);
+    // Al cambiar búsqueda/filtro/orden, volver a la primera página.
+    // Patrón de "ajustar estado durante el render" (sin useEffect): comparamos
+    // una firma de los filtros con la anterior y reseteamos si cambió.
+    const firmaFiltros = `${busqueda}|${filtro}|${orden}`;
+    const [firmaPrev, setFirmaPrev] = useState(firmaFiltros);
+    if (firmaFiltros !== firmaPrev) {
+        setFirmaPrev(firmaFiltros);
+        setPagina(1);
+    }
 
     const productosPaginados = useMemo(() => {
         const inicio = (pagina - 1) * ITEMS_POR_PAGINA;
@@ -152,14 +244,14 @@ export default function InventarioPage() {
 
     // Conteos para las pastillas de filtro (sobre el catálogo completo, no el filtrado)
     const conteos = useMemo(() => {
-        const simples = productosConCosto.filter(p => ((p as any).tipo || 'simple') === 'simple');
+        const simples = productosConCosto.filter(p => (p.tipo || 'simple') === 'simple');
         return {
             todos: productosConCosto.length,
             por_agotarse: simples.filter(p => p.stock_actual > 0 && p.stock_actual <= p.stock_minimo).length,
             agotados: simples.filter(p => p.stock_actual <= 0).length,
             simple: simples.length,
-            insumo: productosConCosto.filter(p => (p as any).tipo === 'insumo').length,
-            combo: productosConCosto.filter(p => (p as any).tipo === 'combo').length,
+            insumo: productosConCosto.filter(p => p.tipo === 'insumo').length,
+            combo: productosConCosto.filter(p => p.tipo === 'combo').length,
         };
     }, [productosConCosto]);
 
@@ -214,6 +306,53 @@ export default function InventarioPage() {
             .slice(0, 15);
     }, [productos, composiciones, detalles14]);
 
+    // Exporta los productos actualmente filtrados a Excel, con las mismas columnas
+    // que acepta el importador (se puede exportar, editar en Excel y reimportar).
+    const exportarInventario = async () => {
+        if (productosFiltrados.length === 0) { showToast('No hay productos para exportar.', 'info'); return; }
+        try {
+            const XLSX = await import('xlsx');
+            const datos = [
+                ['Nombre', 'Precio Venta', 'Costo', 'Stock', 'Stock Minimo', 'Codigo de Barras', 'Ubicacion', 'Tipo'],
+                ...productosFiltrados.map(p => [
+                    p.nombre,
+                    p.tipo === 'insumo' ? 0 : p.precio_venta,
+                    p.costo,
+                    parseFloat(Number(p.stock_actual).toFixed(3)),
+                    p.stock_minimo,
+                    p.codigo_barras || '',
+                    p.ubicacion || '',
+                    p.tipo || 'simple',
+                ]),
+            ];
+            const ws = XLSX.utils.aoa_to_sheet(datos);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, 'Inventario');
+            const fecha = new Date().toISOString().slice(0, 10);
+            XLSX.writeFile(wb, `inventario_ventard_${fecha}.xlsx`);
+            showToast(`${productosFiltrados.length} productos exportados.`, 'success');
+        } catch (e) {
+            console.error('[exportar]', e);
+            showToast('No se pudo exportar el inventario.', 'error');
+        }
+    };
+
+    // Resalta en amarillo los términos buscados dentro de un texto (el nombre).
+    const resaltar = (texto: string): React.ReactNode => {
+        const raw = busqueda.trim();
+        if (!raw) return texto;
+        const crudos = raw.split(/\s+/).filter(Boolean);
+        if (crudos.length === 0) return texto;
+        const escapados = crudos.map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+        const re = new RegExp(`(${escapados.join('|')})`, 'gi');
+        const bajos = new Set(crudos.map(t => t.toLowerCase()));
+        return texto.split(re).map((parte, i) =>
+            bajos.has(parte.toLowerCase())
+                ? <mark key={i} className="bg-gold/25 text-gold rounded px-0.5">{parte}</mark>
+                : <span key={i}>{parte}</span>
+        );
+    };
+
     const enviarListaCompras = () => {
         const lineas = sugerenciasReorden.map(s =>
             `• ${s.producto.nombre} — comprar ~${s.sugerido} (quedan ${parseFloat(s.producto.stock_actual.toFixed(1))})`
@@ -232,6 +371,12 @@ export default function InventarioPage() {
             .filter(p => (p as any).tipo !== 'combo')
             .reduce((acc, p) => acc + (p.costo * p.stock_actual), 0);
 
+        // Ganancia potencial: lo que ganarías si vendieras todo el stock actual
+        // (solo productos vendibles con stock positivo).
+        const gananciaPotencial = vendibles
+            .filter(p => p.stock_actual > 0)
+            .reduce((acc, p) => acc + ((p.precio_venta - p.costo) * p.stock_actual), 0);
+
         const mejorMargen = [...productosConCosto]
             .filter(p => (p as any).tipo === 'simple')
             .sort((a, b) => (b.precio_venta - b.costo) - (a.precio_venta - a.costo))[0];
@@ -240,6 +385,7 @@ export default function InventarioPage() {
             agotados: agotados.length,
             porAgotarse: porAgotarse.length,
             inversionTotal,
+            gananciaPotencial,
             mejorMargen
         };
     }, [productosConCosto]);
@@ -461,6 +607,14 @@ export default function InventarioPage() {
                             >
                                 📥 <span className="hidden sm:inline">Importar</span>
                             </Link>
+                            <button
+                                onClick={exportarInventario}
+                                disabled={productosConCosto.length === 0}
+                                className="px-3 sm:px-5 py-2.5 sm:py-3 bg-navy-2 border border-navy-3 text-vr-gray hover:text-gold hover:border-gold/40 font-bold rounded-xl transition-all text-sm sm:text-base whitespace-nowrap disabled:opacity-30 disabled:cursor-not-allowed"
+                                title="Exportar a Excel"
+                            >
+                                📤 <span className="hidden sm:inline">Exportar</span>
+                            </button>
                             <button onClick={abrirModalNuevo} className="px-4 sm:px-6 py-2.5 sm:py-3 bg-gold-gradient text-navy font-extrabold rounded-xl hover:brightness-110 transition-all shadow-md text-sm sm:text-base whitespace-nowrap">
                                 + Nuevo
                             </button>
@@ -484,6 +638,11 @@ export default function InventarioPage() {
                             <div className="p-3 sm:p-5 rounded-2xl border border-navy-3 bg-navy-2">
                                 <p className="text-xs font-bold text-vr-gray uppercase tracking-wider leading-tight">Capital Estante</p>
                                 <h3 className="text-lg sm:text-2xl font-black font-mono mt-1 text-gold truncate">{formatDOP(insights.inversionTotal)}</h3>
+                                {insights.gananciaPotencial > 0 && (
+                                    <p className="text-[11px] text-vr-green mt-0.5 font-bold font-mono truncate" title="Ganancia si vendes todo el stock">
+                                        +{formatDOP(insights.gananciaPotencial)} <span className="font-normal text-vr-gray">al vender todo</span>
+                                    </p>
+                                )}
                             </div>
 
                             <div className="p-3 sm:p-5 rounded-2xl border border-navy-3 bg-navy-2">
@@ -698,7 +857,7 @@ export default function InventarioPage() {
                                                     // eslint-disable-next-line @next/next/no-img-element
                                                     <img src={miniatura(prod.imagen_url, 72)} alt="" loading="lazy" className="w-9 h-9 rounded-lg object-cover bg-white border border-navy-3 shrink-0 hidden sm:block" />
                                                 )}
-                                                <span className="font-bold text-white text-sm block">{prod.nombre}</span>
+                                                <span className="font-bold text-white text-sm block">{resaltar(prod.nombre)}</span>
                                             </div>
                                             <div className="flex items-center flex-wrap gap-1.5 mt-1">
                                                 <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-black uppercase ${esCombo ? 'bg-purple-500/15 text-purple-400' : esInsumo ? 'bg-vr-orange/15 text-vr-orange' : 'bg-gold/15 text-gold'}`}>
@@ -710,11 +869,19 @@ export default function InventarioPage() {
                                                     </span>
                                                 )}
                                             </div>
-                                            <span className="sm:hidden block text-xs font-mono text-vr-green mt-0.5">
-                                                {esInsumo ? '' : formatDOP(prod.precio_venta)}
-                                            </span>
+                                            {!esInsumo && (
+                                                <span className="sm:hidden block text-xs font-mono text-vr-green mt-0.5">
+                                                    {(celdaEdit?.id === prod.id && celdaEdit.campo === 'precio')
+                                                        ? <CeldaEditInput valor={valorEdit} onValor={setValorEdit} onGuardar={() => guardarEdicion(prod)} onCancelar={cancelarEdicion} />
+                                                        : <button type="button" onClick={() => iniciarEdicion(prod, 'precio')} className="underline decoration-dotted decoration-vr-green/40 underline-offset-2" title="Editar precio">{formatDOP(prod.precio_venta)}</button>}
+                                                </span>
+                                            )}
                                         </td>
-                                        <td className="p-3 sm:p-4 font-medium font-mono text-vr-green text-sm hidden sm:table-cell">{esInsumo ? '-' : formatDOP(prod.precio_venta)}</td>
+                                        <td className="p-3 sm:p-4 font-medium font-mono text-vr-green text-sm hidden sm:table-cell">
+                                            {esInsumo ? '-' : (celdaEdit?.id === prod.id && celdaEdit.campo === 'precio')
+                                                ? <CeldaEditInput valor={valorEdit} onValor={setValorEdit} onGuardar={() => guardarEdicion(prod)} onCancelar={cancelarEdicion} />
+                                                : <button type="button" onClick={() => iniciarEdicion(prod, 'precio')} className="hover:text-gold underline decoration-dotted decoration-transparent hover:decoration-gold/60 underline-offset-4 transition-colors" title="Editar precio">{formatDOP(prod.precio_venta)}</button>}
+                                        </td>
                                         <td className="p-3 sm:p-4 text-vr-gray font-mono text-sm hidden md:table-cell">{formatDOP(prod.costo)} {esCombo && <span className="text-[10px] italic ml-1">(calc)</span>}</td>
                                         <td className="p-3 sm:p-4 font-bold font-mono text-sm hidden md:table-cell">
                                             {esInsumo ? '-' : (
@@ -724,11 +891,21 @@ export default function InventarioPage() {
                                             )}
                                         </td>
                                         <td className="p-3 sm:p-4">
-                                            <span className={`px-2 py-1 rounded-md text-sm font-bold font-mono ${stockClass}`}>
-                                                {parseFloat(Number(prod.stock_actual).toFixed(3))}
-                                                {esCombo && <span className="text-[10px] ml-1 opacity-60">calc.</span>}
-                                                {esInsumo && <span className="text-[10px] ml-1 opacity-60">ing.</span>}
-                                            </span>
+                                            {(celdaEdit?.id === prod.id && celdaEdit.campo === 'stock')
+                                                ? <CeldaEditInput valor={valorEdit} onValor={setValorEdit} onGuardar={() => guardarEdicion(prod)} onCancelar={cancelarEdicion} />
+                                                : (
+                                                    <button
+                                                        type="button"
+                                                        disabled={esCombo}
+                                                        onClick={() => { if (!esCombo) iniciarEdicion(prod, 'stock'); }}
+                                                        className={`px-2 py-1 rounded-md text-sm font-bold font-mono ${stockClass} ${esCombo ? 'cursor-default' : 'hover:ring-1 hover:ring-gold/50 transition-all'}`}
+                                                        title={esCombo ? '' : 'Editar stock (conteo físico)'}
+                                                    >
+                                                        {parseFloat(Number(prod.stock_actual).toFixed(3))}
+                                                        {esCombo && <span className="text-[10px] ml-1 opacity-60">calc.</span>}
+                                                        {esInsumo && <span className="text-[10px] ml-1 opacity-60">ing.</span>}
+                                                    </button>
+                                                )}
                                         </td>
                                         <td className="p-3 sm:p-4 hidden lg:table-cell text-vr-gray font-mono text-sm">
                                             {esCombo ? '—' : prod.stock_minimo}
@@ -796,6 +973,14 @@ export default function InventarioPage() {
                                     <span className="text-sm text-vr-gray font-bold">Stock actual</span>
                                     <span className="font-mono font-black text-white text-lg">{parseFloat(Number(productoAjustando.stock_actual).toFixed(3))}</span>
                                 </div>
+
+                                <button
+                                    type="button"
+                                    onClick={() => setProductoHistorial(productoAjustando)}
+                                    className="w-full -mt-2 text-xs font-bold text-gold/80 hover:text-gold transition-colors text-center py-1"
+                                >
+                                    🕑 Ver historial de movimientos
+                                </button>
 
                                 {/* Entrada serializable: inputs de números de serie */}
                                 {productoAjustando?.serializable && tipoAjuste === 'entrada' ? (
@@ -886,6 +1071,55 @@ export default function InventarioPage() {
                                     <button type="submit" className="flex-1 py-3 bg-gold-gradient text-navy font-extrabold rounded-xl hover:brightness-110 transition-all">Aplicar</button>
                                 </div>
                             </form>
+                        </div>
+                    </div>
+                )}
+
+                {/* MODAL HISTORIAL DE MOVIMIENTOS */}
+                {productoHistorial && (
+                    <div className="fixed inset-0 bg-black/70 backdrop-blur-md z-[60] flex items-end sm:items-center justify-center sm:p-4 animate-fade-in">
+                        <div className="bg-navy-2 w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl border border-navy-3 shadow-2xl overflow-hidden max-h-[85vh] flex flex-col animate-scale-in">
+                            <div className="p-4 sm:p-6 border-b border-navy-3 flex justify-between items-center">
+                                <div className="min-w-0">
+                                    <h2 className="text-xl font-display font-bold text-white">Movimientos</h2>
+                                    <p className="text-sm text-vr-gray mt-0.5 truncate">{productoHistorial.nombre}</p>
+                                </div>
+                                <button onClick={() => setProductoHistorial(null)} className="text-vr-gray hover:text-white font-bold text-xl transition-colors shrink-0">✕</button>
+                            </div>
+                            <div className="overflow-y-auto p-3 sm:p-4">
+                                {movimientosHistorial.length === 0 ? (
+                                    <div className="py-12 text-center text-vr-gray">
+                                        <span className="text-3xl block mb-2">🕑</span>
+                                        <p className="text-sm">Aún no hay movimientos registrados.</p>
+                                    </div>
+                                ) : (
+                                    <div className="space-y-1.5">
+                                        {movimientosHistorial.map(m => {
+                                            const meta = META_MOVIMIENTO[m.tipo];
+                                            const esConteo = m.valor_absoluto !== undefined;
+                                            const texto = esConteo
+                                                ? `= ${parseFloat(Number(m.valor_absoluto).toFixed(3))}`
+                                                : `${m.delta > 0 ? '+' : ''}${parseFloat(Number(m.delta).toFixed(3))}`;
+                                            const fecha = new Date(m.fecha_creacion).toLocaleString('es-DO', {
+                                                day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit',
+                                            });
+                                            return (
+                                                <div key={m.id} className="flex items-center gap-3 bg-navy-3/40 rounded-xl px-3 py-2.5">
+                                                    <span className="text-base shrink-0">{meta.icono}</span>
+                                                    <div className="flex-1 min-w-0">
+                                                        <p className="text-sm font-bold text-white">{meta.label}</p>
+                                                        <p className="text-[11px] text-vr-gray">{fecha}</p>
+                                                    </div>
+                                                    <span className={`font-mono font-black text-sm whitespace-nowrap shrink-0 ${meta.color}`}>{texto}</span>
+                                                </div>
+                                            );
+                                        })}
+                                        {movimientosHistorial.length >= 50 && (
+                                            <p className="text-[11px] text-vr-gray text-center pt-2">Mostrando los 50 más recientes</p>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
                         </div>
                     </div>
                 )}
