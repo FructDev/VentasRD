@@ -32,5 +32,17 @@ export async function PATCH(
     const { error } = await admin.from('negocios').update(updateData).eq('id', id);
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
+    // Bitácora de pagos (best-effort: no rompe la acción si la tabla no existe)
+    if ('acceso_hasta' in body) {
+        try {
+            await admin.from('pagos_log').insert({
+                negocio_id: id,
+                dias: typeof body.dias === 'number' ? body.dias : null,
+                nuevo_acceso_hasta: body.acceso_hasta ?? null,
+                nota: typeof body.nota === 'string' ? body.nota : null,
+            });
+        } catch { /* tabla pagos_log no creada aún */ }
+    }
+
     return NextResponse.json({ ok: true });
 }

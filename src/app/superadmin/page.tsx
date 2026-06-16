@@ -49,7 +49,25 @@ const TIPOS: Record<string, string> = {
     otro: 'Otro',
 };
 
+interface DetalleNegocio {
+    sucursales: number;
+    productos: number;
+    ventas: number;
+    clientes: number;
+    empleados: number;
+    ultimaVenta: number | null;
+    totalFacturado: number | null;
+    pagos: { dias: number | null; nuevo_acceso_hasta: number | null; nota: string | null; creado_en: string }[];
+}
+
 const SESSION_KEY = 'vrd_sa_secret';
+
+const fmtDOP = (n: number) => `RD$${n.toLocaleString('es-DO', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+const haceDias = (ts: number | null) => {
+    if (!ts) return null;
+    const d = Math.floor((Date.now() - ts) / 86400000);
+    return d <= 0 ? 'hoy' : d === 1 ? 'ayer' : `hace ${d}d`;
+};
 
 // ── Login screen ─────────────────────────────────────────────────────────────
 function LoginPanel({ onUnlock }: { onUnlock: (secret: string) => void }) {
@@ -158,6 +176,8 @@ function Panel({ secret, onLogout }: { secret: string; onLogout: () => void }) {
     const [busqueda, setBusqueda] = useState('');
     const [accionando, setAccionando] = useState<string | null>(null);
     const [confirmandoCorte, setConfirmandoCorte] = useState<string | null>(null);
+    const [filtro, setFiltro] = useState<'todos' | 'vigentes' | 'porvencer' | 'vencidos' | 'sinactivar'>('todos');
+    const [detalle, setDetalle] = useState<{ negocio: Negocio; data: DetalleNegocio | null } | null>(null);
 
     const fetchNegocios = async () => {
         setLoading(true);
@@ -187,14 +207,21 @@ function Panel({ secret, onLogout }: { secret: string; onLogout: () => void }) {
 
     // Extiende el acceso: parte de la fecha actual de vencimiento si aún es futura,
     // o de hoy si ya venció (no regala días al que pagó tarde, no quita al que pagó antes)
-    const extender = (n: Negocio, dias: number) => {
+    const extender = (n: Negocio, dias: number, nota: string) => {
         const vence = venceDe(n);
         const base = vence && vence > Date.now() ? vence : Date.now();
-        accion(n.id, { acceso_hasta: base + dias * DIA });
+        accion(n.id, { acceso_hasta: base + dias * DIA, dias, nota });
     };
-    const registrarPago = (n: Negocio) => extender(n, 30);
+    const registrarPago = (n: Negocio) => extender(n, 30, 'Pago +30d');
 
-    const cortarAcceso = (n: Negocio) => accion(n.id, { acceso_hasta: Date.now() });
+    const cortarAcceso = (n: Negocio) => accion(n.id, { acceso_hasta: Date.now(), nota: 'Corte de acceso' });
+
+    // Fijar una fecha exacta de vencimiento (corrección manual)
+    const fijarFecha = (n: Negocio, fechaISO: string) => {
+        const ts = new Date(fechaISO + 'T23:59:59').getTime();
+        if (isNaN(ts)) return;
+        accion(n.id, { acceso_hasta: ts, nota: 'Ajuste manual de fecha' });
+    };
 
     const whatsapp = (n: Negocio) => {
         const tel = (n.whatsapp_dueno || n.telefono || '').replace(/\D/g, '');
@@ -203,15 +230,34 @@ function Panel({ secret, onLogout }: { secret: string; onLogout: () => void }) {
         window.open(`https://wa.me/${tel}?text=${msg}`, '_blank');
     };
 
+    // Abrir el panel de detalle de un negocio (carga métricas de actividad)
+    const abrirDetalle = async (n: Negocio) => {
+        setDetalle({ negocio: n, data: null });
+        try {
+            const res = await fetch(`/api/superadmin/negocios/${n.id}/detalle`, {
+                headers: { 'x-superadmin-secret': secret },
+            });
+            if (res.ok) setDetalle({ negocio: n, data: await res.json() });
+        } catch { /* sin métricas */ }
+    };
+
     const negociosFiltrados = useMemo(() => {
-        if (!busqueda.trim()) return negocios;
-        const q = busqueda.toLowerCase();
-        return negocios.filter(n =>
-            n.nombre.toLowerCase().includes(q) ||
-            n.email.toLowerCase().includes(q) ||
-            (n.tipo_negocio || '').toLowerCase().includes(q)
-        );
-    }, [negocios, busqueda]);
+        const now = Date.now();
+        const pasaFiltro = (n: Negocio) => {
+            const v = venceDe(n);
+            if (filtro === 'todos') return true;
+            if (filtro === 'sinactivar') return v == null;
+            if (v == null) return false;
+            if (filtro === 'vigentes') return now <= v;
+            if (filtro === 'porvencer') return now <= v && (v - now) <= 5 * DIA;
+            if (filtro === 'vencidos') return now > v;
+            return true;
+        };
+        const q = busqueda.trim().toLowerCase();
+        return negocios.filter(n => pasaFiltro(n) && (
+            !q || n.nombre.toLowerCase().includes(q) || n.email.toLowerCase().includes(q) || (n.tipo_negocio || '').toLowerCase().includes(q)
+        ));
+    }, [negocios, busqueda, filtro]);
 
     const ahora = Date.now();
     const stats = {
@@ -278,16 +324,37 @@ function Panel({ secret, onLogout }: { secret: string; onLogout: () => void }) {
                     ))}
                 </div>
 
-                {/* Búsqueda */}
-                <div className="relative mb-4">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-vr-gray pointer-events-none" />
-                    <input
-                        type="text"
-                        placeholder="Buscar por nombre, email o tipo..."
-                        className="w-full sm:max-w-sm pl-9 pr-4 py-2.5 bg-navy-2 border border-navy-3 rounded-xl text-sm text-white placeholder-vr-gray/50 focus:border-gold outline-none transition-all"
-                        value={busqueda}
-                        onChange={e => setBusqueda(e.target.value)}
-                    />
+                {/* Búsqueda + filtros por estado */}
+                <div className="flex flex-col sm:flex-row sm:items-center gap-3 mb-4">
+                    <div className="relative sm:max-w-sm flex-1">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-vr-gray pointer-events-none" />
+                        <input
+                            type="text"
+                            placeholder="Buscar por nombre, email o tipo..."
+                            className="w-full pl-9 pr-4 py-2.5 bg-navy-2 border border-navy-3 rounded-xl text-sm text-white placeholder-vr-gray/50 focus:border-gold outline-none transition-all"
+                            value={busqueda}
+                            onChange={e => setBusqueda(e.target.value)}
+                        />
+                    </div>
+                    <div className="flex gap-1.5 flex-wrap">
+                        {([
+                            { k: 'todos', l: 'Todos' },
+                            { k: 'vigentes', l: 'Vigentes' },
+                            { k: 'porvencer', l: 'Por vencer' },
+                            { k: 'vencidos', l: 'Vencidos' },
+                            { k: 'sinactivar', l: 'Sin activar' },
+                        ] as const).map(({ k, l }) => (
+                            <button
+                                key={k}
+                                onClick={() => setFiltro(k)}
+                                className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-all ${
+                                    filtro === k ? 'bg-gold/15 border-gold/30 text-gold' : 'bg-navy-2 border-navy-3 text-vr-gray hover:text-white'
+                                }`}
+                            >
+                                {l}
+                            </button>
+                        ))}
+                    </div>
                 </div>
 
                 {/* Tabla */}
@@ -328,12 +395,14 @@ function Panel({ secret, onLogout }: { secret: string; onLogout: () => void }) {
 
                                                 {/* Negocio */}
                                                 <td className="px-4 py-3">
-                                                    <p className="font-bold text-white">{n.nombre || '—'}</p>
-                                                    <p className="text-xs text-vr-gray mt-0.5">
-                                                        {n.tipo_negocio ? TIPOS[n.tipo_negocio] || n.tipo_negocio : 'Sin tipo'}
-                                                        {!n.onboarding_completado && <span className="ml-2 text-gold/70">· onboarding pendiente</span>}
-                                                    </p>
-                                                    <p className="md:hidden text-xs text-vr-gray font-mono mt-0.5 truncate max-w-[180px]">{n.email}</p>
+                                                    <button onClick={() => abrirDetalle(n)} className="text-left group/n">
+                                                        <p className="font-bold text-white group-hover/n:text-gold transition-colors">{n.nombre || '—'} <span className="text-vr-gray font-normal text-xs">· ver</span></p>
+                                                        <p className="text-xs text-vr-gray mt-0.5">
+                                                            {n.tipo_negocio ? TIPOS[n.tipo_negocio] || n.tipo_negocio : 'Sin tipo'}
+                                                            {!n.onboarding_completado && <span className="ml-2 text-gold/70">· onboarding pendiente</span>}
+                                                        </p>
+                                                        <p className="md:hidden text-xs text-vr-gray font-mono mt-0.5 truncate max-w-[180px]">{n.email}</p>
+                                                    </button>
                                                 </td>
 
                                                 {/* Contacto */}
@@ -375,7 +444,7 @@ function Panel({ secret, onLogout }: { secret: string; onLogout: () => void }) {
 
                                                         {/* Extensión corta (gracia / cortesía) */}
                                                         <button
-                                                            onClick={() => { setConfirmandoCorte(null); extender(n, 7); }}
+                                                            onClick={() => { setConfirmandoCorte(null); extender(n, 7, '+7d cortesía'); }}
                                                             disabled={cargando}
                                                             title="Extender 7 días (cortesía)"
                                                             className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold bg-gold/10 text-gold border border-gold/20 hover:bg-gold/20 transition-all disabled:opacity-40"
@@ -430,6 +499,109 @@ function Panel({ secret, onLogout }: { secret: string; onLogout: () => void }) {
                     )}
                 </div>
             </main>
+
+            {/* Panel de detalle del negocio */}
+            {detalle && (() => {
+                const n = detalle.negocio;
+                const d = detalle.data;
+                const estado = getEstado(n);
+                const vence = venceDe(n);
+                const fechaInput = vence ? new Date(vence).toISOString().slice(0, 10) : '';
+                const tel = (n.whatsapp_dueno || n.telefono || '').replace(/\D/g, '');
+                return (
+                    <div className="fixed inset-0 z-[60] flex justify-end">
+                        <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setDetalle(null)} />
+                        <div className="relative w-full max-w-md bg-navy-2 border-l border-navy-3 h-full overflow-y-auto animate-fade-in">
+                            {/* Header */}
+                            <div className="sticky top-0 bg-navy-2 border-b border-navy-3 px-5 py-4 flex items-start justify-between gap-3">
+                                <div className="min-w-0">
+                                    <h2 className="font-display font-extrabold text-white text-lg truncate">{n.nombre || '—'}</h2>
+                                    <span className={`inline-flex items-center text-xs font-bold px-2 py-0.5 rounded-full border mt-1 ${estado.color}`}>{estado.label}</span>
+                                </div>
+                                <button onClick={() => setDetalle(null)} className="text-vr-gray hover:text-white text-xl shrink-0">✕</button>
+                            </div>
+
+                            <div className="p-5 space-y-5">
+                                {/* Contacto */}
+                                <div className="space-y-1 text-sm">
+                                    <p className="text-vr-gray font-mono text-xs break-all">{n.email || 'sin email'}</p>
+                                    {(n.whatsapp_dueno || n.telefono) && <p className="text-vr-gray text-xs">📞 {n.whatsapp_dueno || n.telefono}</p>}
+                                    <p className="text-vr-gray text-xs">
+                                        Registro: {n.created_at ? new Date(n.created_at).toLocaleDateString('es-DO') : '—'} ·
+                                        Vence: {vence ? new Date(vence).toLocaleDateString('es-DO') : '—'}
+                                    </p>
+                                </div>
+
+                                {/* Métricas de actividad */}
+                                <div>
+                                    <p className="text-[10px] font-bold text-vr-gray uppercase tracking-wider mb-2">Actividad</p>
+                                    {!d ? (
+                                        <p className="text-vr-gray text-sm animate-pulse">Cargando métricas…</p>
+                                    ) : (
+                                        <div className="grid grid-cols-2 gap-2">
+                                            {[
+                                                { l: 'Ventas', v: d.ventas },
+                                                { l: 'Facturado', v: d.totalFacturado != null ? fmtDOP(d.totalFacturado) : '—' },
+                                                { l: 'Productos', v: d.productos },
+                                                { l: 'Clientes', v: d.clientes },
+                                                { l: 'Sucursales', v: d.sucursales },
+                                                { l: 'Empleados', v: d.empleados },
+                                            ].map(m => (
+                                                <div key={m.l} className="bg-navy border border-navy-3 rounded-xl p-3">
+                                                    <p className="text-[10px] text-vr-gray uppercase tracking-wider">{m.l}</p>
+                                                    <p className="text-lg font-black font-mono text-white truncate">{m.v}</p>
+                                                </div>
+                                            ))}
+                                            <div className="col-span-2 bg-navy border border-navy-3 rounded-xl p-3">
+                                                <p className="text-[10px] text-vr-gray uppercase tracking-wider">Última venta</p>
+                                                <p className={`text-sm font-bold ${!d.ultimaVenta ? 'text-vr-gray' : haceDias(d.ultimaVenta)?.includes('hace') && (Date.now() - d.ultimaVenta) > 14 * DIA ? 'text-vr-red' : 'text-vr-green'}`}>
+                                                    {d.ultimaVenta ? haceDias(d.ultimaVenta) : 'Nunca ha vendido'}
+                                                </p>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+
+                                {/* Acciones de cobro */}
+                                <div>
+                                    <p className="text-[10px] font-bold text-vr-gray uppercase tracking-wider mb-2">Cobro</p>
+                                    <div className="flex gap-2 flex-wrap">
+                                        <button onClick={() => registrarPago(n)} disabled={accionando === n.id}
+                                            className="flex-1 py-2.5 bg-vr-green/15 text-vr-green border border-vr-green/20 rounded-xl text-sm font-bold hover:bg-vr-green/25 transition-all disabled:opacity-40">
+                                            💵 Registrar pago (+30d)
+                                        </button>
+                                        <button onClick={() => extender(n, 7, '+7d cortesía')} disabled={accionando === n.id}
+                                            className="px-4 py-2.5 bg-gold/10 text-gold border border-gold/20 rounded-xl text-sm font-bold hover:bg-gold/20 transition-all disabled:opacity-40">
+                                            +7d
+                                        </button>
+                                    </div>
+                                    <label className="block text-[11px] text-vr-gray mt-3 mb-1">O fija una fecha exacta de vencimiento:</label>
+                                    <input type="date" defaultValue={fechaInput}
+                                        onChange={e => e.target.value && fijarFecha(n, e.target.value)}
+                                        className="w-full bg-navy border border-navy-3 rounded-xl px-3 py-2 text-sm text-white outline-none focus:border-gold" />
+                                </div>
+
+                                {/* Historial de pagos */}
+                                <div>
+                                    <p className="text-[10px] font-bold text-vr-gray uppercase tracking-wider mb-2">Historial</p>
+                                    {!d || d.pagos.length === 0 ? (
+                                        <p className="text-vr-gray text-xs">{d ? 'Sin movimientos registrados.' : '…'}</p>
+                                    ) : (
+                                        <div className="space-y-1.5">
+                                            {d.pagos.map((p, i) => (
+                                                <div key={i} className="flex items-center justify-between text-xs border-b border-navy-3/40 pb-1.5">
+                                                    <span className="text-white">{p.nota || 'Cambio de acceso'}</span>
+                                                    <span className="text-vr-gray">{new Date(p.creado_en).toLocaleDateString('es-DO', { day: '2-digit', month: 'short' })}</span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                );
+            })()}
         </div>
     );
 }
