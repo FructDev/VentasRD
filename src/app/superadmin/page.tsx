@@ -73,25 +73,33 @@ const haceDias = (ts: number | null) => {
 function LoginPanel({ onUnlock }: { onUnlock: (secret: string) => void }) {
     const [value, setValue] = useState('');
     const [show, setShow] = useState(false);
-    const [error, setError] = useState(false);
+    const [error, setError] = useState<string | null>(null);
     const [loading, setLoading] = useState(false);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        setError(false);
+        setError(null);
         setLoading(true);
 
-        // Verify against the API — if 401, wrong password
-        const res = await fetch('/api/superadmin/negocios', {
-            headers: { 'x-superadmin-secret': value },
-        });
+        try {
+            const res = await fetch('/api/superadmin/negocios', {
+                headers: { 'x-superadmin-secret': value },
+            });
+            setLoading(false);
 
-        setLoading(false);
-        if (res.ok) {
-            sessionStorage.setItem(SESSION_KEY, value);
-            onUnlock(value);
-        } else {
-            setError(true);
+            if (res.ok) {
+                sessionStorage.setItem(SESSION_KEY, value);
+                onUnlock(value);
+            } else if (res.status === 401) {
+                setError('Contraseña incorrecta.');
+            } else {
+                // La clave es correcta pero el servidor falló (ej. falta correr un SQL)
+                const body = await res.json().catch(() => ({}));
+                setError(`Error del servidor (${res.status}): ${body.error || 'revisa la configuración de la base de datos.'}`);
+            }
+        } catch {
+            setLoading(false);
+            setError('No se pudo conectar con el servidor.');
         }
     };
 
@@ -122,7 +130,7 @@ function LoginPanel({ onUnlock }: { onUnlock: (secret: string) => void }) {
                                     error ? 'border-vr-red focus:border-vr-red' : 'border-navy-3 focus:border-gold'
                                 }`}
                                 value={value}
-                                onChange={e => { setValue(e.target.value); setError(false); }}
+                                onChange={e => { setValue(e.target.value); setError(null); }}
                             />
                             <button
                                 type="button"
@@ -134,9 +142,9 @@ function LoginPanel({ onUnlock }: { onUnlock: (secret: string) => void }) {
                         </div>
 
                         {error && (
-                            <p className="text-xs text-vr-red flex items-center gap-1.5">
-                                <AlertCircle className="w-3.5 h-3.5" />
-                                Contraseña incorrecta.
+                            <p className="text-xs text-vr-red flex items-start gap-1.5">
+                                <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                                {error}
                             </p>
                         )}
 
