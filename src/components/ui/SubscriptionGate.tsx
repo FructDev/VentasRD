@@ -1,44 +1,59 @@
 'use client';
 
+import { useEffect } from 'react';
 import { useConfigStore } from '@/store/useConfigStore';
 import { MessageCircle, ShoppingCart } from 'lucide-react';
 
 const WHATSAPP_NUMBER = '18294515303';
-const WHATSAPP_MSG = encodeURIComponent('Hola, quiero activar mi cuenta de VentaRD');
+const WHATSAPP_MSG = encodeURIComponent('Hola, quiero activar/renovar mi cuenta de VentaRD');
+
+const DIA = 24 * 60 * 60 * 1000;
+const GRACIA_DIAS = 5; // días de tolerancia tras el vencimiento antes de bloquear
 
 export default function SubscriptionGate({ children }: { children: React.ReactNode }) {
-    const { planActivo, trialHasta, negocioNombre } = useConfigStore();
+    const { accesoHasta, ultimaFechaVista, planActivo, trialHasta, negocioNombre, marcarTiempoVisto } = useConfigStore();
 
-    const ahora = Date.now();
-    const enTrial = trialHasta !== null && ahora < trialHasta;
-    const tieneAcceso = planActivo || enTrial;
+    // Avanzar la marca de agua de tiempo al montar (anti-retroceso de reloj offline)
+    useEffect(() => { marcarTiempoVisto(); }, [marcarTiempoVisto]);
 
-    // Calcular días restantes de trial
-    const diasRestantes = trialHasta
-        ? Math.max(0, Math.ceil((trialHasta - ahora) / (1000 * 60 * 60 * 24)))
-        : 0;
+    // Tiempo efectivo: nunca menor que el máximo real ya visto (si atrasan el reloj, no sirve)
+    const ahora = Math.max(Date.now(), ultimaFechaVista);
+    const vence = accesoHasta ?? trialHasta; // fallback legado
 
-    const trialVencido = trialHasta !== null && ahora >= trialHasta && !planActivo;
+    // Determinar estado de acceso
+    let estado: 'ok' | 'gracia' | 'bloqueado';
+    let diasParaVencer = 0;
+    let diasDeGracia = 0;
 
-    if (tieneAcceso) {
+    if (vence == null) {
+        estado = planActivo ? 'ok' : 'bloqueado'; // negocio viejo sin fecha
+    } else if (ahora <= vence) {
+        estado = 'ok';
+        diasParaVencer = Math.ceil((vence - ahora) / DIA);
+    } else {
+        const diasVencido = (ahora - vence) / DIA;
+        if (diasVencido <= GRACIA_DIAS) {
+            estado = 'gracia';
+            diasDeGracia = Math.max(1, Math.ceil(GRACIA_DIAS - diasVencido));
+        } else {
+            estado = 'bloqueado';
+        }
+    }
+
+    const linkWhatsApp = `https://wa.me/${WHATSAPP_NUMBER}?text=${WHATSAPP_MSG}`;
+
+    if (estado === 'ok') {
         return (
             <>
-                {/* Banner de trial — solo si está en prueba y quedan pocos días */}
-                {enTrial && diasRestantes <= 7 && (
+                {/* Aviso suave cuando faltan pocos días para vencer */}
+                {diasParaVencer > 0 && diasParaVencer <= 7 && (
                     <div className="bg-gold/10 border-b border-gold/20 px-4 py-2 flex items-center justify-center gap-3 text-center flex-wrap">
                         <span className="text-gold text-sm font-bold">
-                            {diasRestantes === 0
-                                ? 'Tu período de prueba termina hoy'
-                                : `${diasRestantes} día${diasRestantes !== 1 ? 's' : ''} de prueba restante${diasRestantes !== 1 ? 's' : ''}`}
+                            {diasParaVencer === 1 ? 'Tu acceso vence mañana' : `Tu acceso vence en ${diasParaVencer} días`}
                         </span>
-                        <a
-                            href={`https://wa.me/${WHATSAPP_NUMBER}?text=${WHATSAPP_MSG}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1.5 bg-gold text-navy px-3 py-1 rounded-full text-xs font-extrabold hover:brightness-110 transition-all"
-                        >
-                            <MessageCircle className="w-3 h-3" />
-                            Activar cuenta
+                        <a href={linkWhatsApp} target="_blank" rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1.5 bg-gold text-navy px-3 py-1 rounded-full text-xs font-extrabold hover:brightness-110 transition-all">
+                            <MessageCircle className="w-3 h-3" /> Renovar
                         </a>
                     </div>
                 )}
@@ -47,7 +62,25 @@ export default function SubscriptionGate({ children }: { children: React.ReactNo
         );
     }
 
-    // Trial vencido o sin plan — mostrar gate completo
+    if (estado === 'gracia') {
+        // Vencido pero dentro del período de gracia: deja trabajar con aviso fuerte
+        return (
+            <>
+                <div className="bg-vr-red/15 border-b border-vr-red/30 px-4 py-2.5 flex items-center justify-center gap-3 text-center flex-wrap">
+                    <span className="text-vr-red text-sm font-bold">
+                        ⚠️ Tu pago venció. El sistema se bloqueará en {diasDeGracia} día{diasDeGracia !== 1 ? 's' : ''}.
+                    </span>
+                    <a href={linkWhatsApp} target="_blank" rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1.5 bg-vr-red text-white px-3 py-1 rounded-full text-xs font-extrabold hover:brightness-110 transition-all">
+                        <MessageCircle className="w-3 h-3" /> Regularizar ahora
+                    </a>
+                </div>
+                {children}
+            </>
+        );
+    }
+
+    // Bloqueado — los datos se conservan; solo se bloquea la pantalla
     return (
         <div className="min-h-screen bg-navy flex items-center justify-center p-6">
             <div className="max-w-lg w-full text-center">
@@ -55,41 +88,24 @@ export default function SubscriptionGate({ children }: { children: React.ReactNo
                     <ShoppingCart className="w-8 h-8 text-gold" />
                 </div>
 
-                <h1 className="text-3xl font-display font-black text-white mb-3">
-                    {negocioNombre || 'VentaRD'}
-                </h1>
+                <h1 className="text-3xl font-display font-black text-white mb-3">{negocioNombre || 'VentaRD'}</h1>
 
-                {trialVencido ? (
-                    <p className="text-vr-gray text-base mb-2">
-                        Tu período de prueba gratuita ha terminado.
-                    </p>
-                ) : (
-                    <p className="text-vr-gray text-base mb-2">
-                        Tu cuenta aún no está activada.
-                    </p>
-                )}
-
+                <p className="text-vr-gray text-base mb-2">
+                    {vence == null ? 'Tu cuenta aún no está activada.' : 'Tu acceso está vencido.'}
+                </p>
                 <p className="text-vr-gray text-sm mb-8">
-                    Para continuar usando VentaRD, activa tu cuenta escribiéndonos por WhatsApp.
-                    El proceso toma menos de 5 minutos.
+                    Tus datos están a salvo. Para reactivar y seguir usando VentaRD, escríbenos por WhatsApp —
+                    el proceso toma menos de 5 minutos.
                 </p>
 
-                <a
-                    href={`https://wa.me/${WHATSAPP_NUMBER}?text=${WHATSAPP_MSG}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-2 bg-gold-gradient text-navy px-8 py-4 rounded-2xl font-extrabold text-lg hover:brightness-110 transition-all shadow-[0_0_30px_rgba(212,160,23,0.3)] mb-4"
-                >
-                    <MessageCircle className="w-5 h-5" />
-                    Activar por WhatsApp
+                <a href={linkWhatsApp} target="_blank" rel="noopener noreferrer"
+                    className="inline-flex items-center gap-2 bg-gold-gradient text-navy px-8 py-4 rounded-2xl font-extrabold text-lg hover:brightness-110 transition-all shadow-[0_0_30px_rgba(212,160,23,0.3)] mb-4">
+                    <MessageCircle className="w-5 h-5" /> Reactivar por WhatsApp
                 </a>
 
                 <p className="text-vr-gray text-xs">
-                    ¿Ya activaste y sigue bloqueado?{' '}
-                    <button
-                        onClick={() => window.location.reload()}
-                        className="text-gold hover:underline"
-                    >
+                    ¿Ya pagaste y sigue bloqueado?{' '}
+                    <button onClick={() => window.location.reload()} className="text-gold hover:underline">
                         Recargar la página
                     </button>
                 </p>

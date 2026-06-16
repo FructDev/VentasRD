@@ -80,3 +80,6 @@ jobs:
 
       - name: Smoke de roles (vendedor restringido vs admin)
         run: node scripts/smoke-roles.mjs
+
+      - name: Smoke de suscripción (acceso, gracia, bloqueo)
+        run: node scripts/smoke-suscripcion.mjs

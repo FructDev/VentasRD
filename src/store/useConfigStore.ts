@@ -80,7 +80,9 @@ interface ConfigState {
     toast: { message: string, type: 'success' | 'error' | 'info' } | null;
     // Plan / suscripcion
     planActivo: boolean;
-    trialHasta: number | null; // timestamp ms
+    trialHasta: number | null; // timestamp ms (legado)
+    accesoHasta: number | null; // hasta cuándo es válido el acceso (trial o pago). Vence solo.
+    ultimaFechaVista: number;   // marca de agua anti-retroceso de reloj (máx tiempo real visto)
     // NCF / Comprobantes Fiscales
     ncf: NcfConfig;
     // Ajustes de impresión (por dispositivo)
@@ -94,6 +96,10 @@ interface ConfigState {
     setPinAdmin: (pin: string | null) => void;
     setRol: (rol: RolUsuario, nombre?: string | null) => void;
     setPlan: (planActivo: boolean, trialHasta: number | null) => void;
+    /** Fija la fecha de acceso válido (trial o pago) traída de la nube */
+    setAcceso: (accesoHasta: number | null) => void;
+    /** Avanza la marca de agua de tiempo (anti-retroceso de reloj) */
+    marcarTiempoVisto: () => void;
     setSucursal: (sucursalId: string | null) => void;
     setAdminMode: (status: boolean) => void;
     showToast: (message: string, type?: 'success' | 'error' | 'info') => void;
@@ -126,8 +132,13 @@ const configCreator: StateCreator<ConfigState> = (set) => ({
             toast: null,
             planActivo: false,
             trialHasta: null,
+            accesoHasta: null,
+            ultimaFechaVista: 0,
             ncf: NCF_DEFAULT,
             impresion: IMPRESION_DEFAULT,
+
+            setAcceso: (accesoHasta) => set({ accesoHasta }),
+            marcarTiempoVisto: () => set(s => ({ ultimaFechaVista: Math.max(s.ultimaFechaVista, Date.now()) })),
 
             setNcfConfig: (config) => set(state => ({ ncf: { ...state.ncf, ...config } })),
             setImpresion: (config) => set(state => ({ impresion: { ...state.impresion, ...config } })),
@@ -254,6 +265,8 @@ export const useConfigStore = create<ConfigState>()(
             negocioLogo: state.negocioLogo,
             planActivo: state.planActivo,
             trialHasta: state.trialHasta,
+            accesoHasta: state.accesoHasta,
+            ultimaFechaVista: state.ultimaFechaVista,
             ncf: state.ncf,
             impresion: state.impresion,
         }),
