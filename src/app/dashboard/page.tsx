@@ -48,7 +48,7 @@ function getRango(periodo: Periodo): { desde: number; hasta: number } {
 }
 
 export default function DashboardPage() {
-    const { negocioId, rolUsuario, nombreUsuario } = useConfigStore();
+    const { negocioId, rolUsuario, nombreUsuario, planTier } = useConfigStore();
     const [periodo, setPeriodo] = useState<Periodo>('hoy');
 
     // El vendedor ve un panel restringido: solo SUS ventas, sin ganancias,
@@ -168,6 +168,32 @@ export default function DashboardPage() {
     }, [ventasPeriodo]);
 
     const chartLabel = periodo === 'hoy' ? 'Ventas por Hora' : 'Ventas por Día';
+
+    // ── Pro: Reparaciones y Apartados del período ─────────────────────────────
+    const esPro = planTier === 'pro' && !esVendedor;
+    const reparacionesAllRaw = useLiveQuery(
+        () => (esPro && negocioId) ? db.reparaciones.where('negocio_id').equals(negocioId).toArray() : [],
+        [esPro, negocioId]
+    );
+    const apartadosAllRaw = useLiveQuery(
+        () => (esPro && negocioId) ? db.apartados.where('negocio_id').equals(negocioId).toArray() : [],
+        [esPro, negocioId]
+    );
+    const reparacionesAll = useMemo(() => reparacionesAllRaw ?? [], [reparacionesAllRaw]);
+    const apartadosAll = useMemo(() => apartadosAllRaw ?? [], [apartadosAllRaw]);
+
+    const resumenPro = useMemo(() => {
+        const repEntregadas = reparacionesAll.filter(r => r.estado === 'entregado' && r.fecha_entrega && r.fecha_entrega >= desde && r.fecha_entrega <= hasta);
+        const repIngreso = repEntregadas.reduce((s, r) => s + r.total, 0);
+        const repGanancia = repEntregadas.reduce((s, r) => s + (r.total - r.repuestos.reduce((sr, x) => sr + x.costo * x.cantidad, 0)), 0);
+        const repEnProceso = reparacionesAll.filter(r => r.estado !== 'entregado' && r.estado !== 'cancelado').length;
+
+        const apAbonado = apartadosAll.reduce((s, a) => s + a.abonos.filter(ab => ab.fecha >= desde && ab.fecha <= hasta).reduce((sa, ab) => sa + ab.monto, 0), 0);
+        const apActivos = apartadosAll.filter(a => a.estado === 'activo');
+        const apPorCobrar = apActivos.reduce((s, a) => s + Math.max(0, a.total - a.abonado), 0);
+
+        return { repEntregadas: repEntregadas.length, repIngreso, repGanancia, repEnProceso, apAbonado, apActivos: apActivos.length, apPorCobrar };
+    }, [reparacionesAll, apartadosAll, desde, hasta]);
 
     return (
         <div className="min-h-screen bg-navy flex flex-col">
@@ -399,6 +425,38 @@ export default function DashboardPage() {
                             )}
                         </div>
                     </div>
+
+                    {/* Pro: Reparaciones y Apartados */}
+                    {esPro && (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                            <div className="bg-navy-2 p-6 rounded-2xl border border-navy-3">
+                                <h3 className="text-white font-display font-bold mb-4 flex items-center gap-2">
+                                    🔧 Reparaciones
+                                    <span className="text-[9px] font-black bg-gold/15 text-gold px-1.5 py-0.5 rounded-full uppercase tracking-wider">Pro</span>
+                                    <Link href="/reparaciones" className="ml-auto text-xs font-bold text-gold hover:underline">Ver →</Link>
+                                </h3>
+                                <div className="grid grid-cols-2 gap-3">
+                                    <div><p className="text-vr-gray text-[10px] font-bold uppercase tracking-widest">Entregadas</p><p className="text-xl font-black font-mono text-white mt-1">{resumenPro.repEntregadas}</p></div>
+                                    <div><p className="text-vr-gray text-[10px] font-bold uppercase tracking-widest">En proceso</p><p className="text-xl font-black font-mono text-vr-orange mt-1">{resumenPro.repEnProceso}</p></div>
+                                    <div><p className="text-vr-gray text-[10px] font-bold uppercase tracking-widest">Ingreso</p><p className="text-lg font-black font-mono text-vr-green mt-1">{formatDOP(resumenPro.repIngreso)}</p></div>
+                                    <div><p className="text-vr-gray text-[10px] font-bold uppercase tracking-widest">Ganancia</p><p className="text-lg font-black font-mono text-gold mt-1">{formatDOP(resumenPro.repGanancia)}</p></div>
+                                </div>
+                            </div>
+
+                            <div className="bg-navy-2 p-6 rounded-2xl border border-navy-3">
+                                <h3 className="text-white font-display font-bold mb-4 flex items-center gap-2">
+                                    🔖 Apartados
+                                    <span className="text-[9px] font-black bg-gold/15 text-gold px-1.5 py-0.5 rounded-full uppercase tracking-wider">Pro</span>
+                                    <Link href="/apartados" className="ml-auto text-xs font-bold text-gold hover:underline">Ver →</Link>
+                                </h3>
+                                <div className="grid grid-cols-2 gap-3">
+                                    <div><p className="text-vr-gray text-[10px] font-bold uppercase tracking-widest">Activos</p><p className="text-xl font-black font-mono text-white mt-1">{resumenPro.apActivos}</p></div>
+                                    <div><p className="text-vr-gray text-[10px] font-bold uppercase tracking-widest">Abonado ({periodo === 'hoy' ? 'hoy' : 'período'})</p><p className="text-lg font-black font-mono text-vr-green mt-1">{formatDOP(resumenPro.apAbonado)}</p></div>
+                                    <div className="col-span-2"><p className="text-vr-gray text-[10px] font-bold uppercase tracking-widest">Por cobrar (activos)</p><p className="text-lg font-black font-mono text-vr-orange mt-1">{formatDOP(resumenPro.apPorCobrar)}</p></div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
 
                     {/* Consejo */}
                     <div className="bg-gold/5 border border-gold/15 p-6 rounded-2xl">

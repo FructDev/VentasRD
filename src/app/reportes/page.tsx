@@ -4,8 +4,8 @@ import { useState } from 'react';
 import { useConfigStore } from '@/store/useConfigStore';
 import TopBar from '@/components/shared/TopBar';
 import PinGuard from '@/components/ui/PinGuard';
-import { FileSpreadsheet, FileText, TrendingUp, Package, Users, Receipt, Loader2, AlertCircle } from 'lucide-react';
-import { getReporteVentas, getReporteInventario, getReporteFiado, getReporteNcf, getReporte607 } from '@/lib/exports/queries';
+import { FileSpreadsheet, FileText, TrendingUp, Package, Users, Receipt, Loader2, AlertCircle, Wrench, Bookmark } from 'lucide-react';
+import { getReporteVentas, getReporteInventario, getReporteFiado, getReporteNcf, getReporte607, getReporteReparaciones, getReporteApartados } from '@/lib/exports/queries';
 import { descargarExcel } from '@/lib/exports/excel';
 import { descargarPdf } from '@/lib/exports/pdf';
 
@@ -79,7 +79,7 @@ function TarjetaReporte({
 
 // ── Página principal ─────────────────────────────────────────────────────────
 export default function ReportesPage() {
-    const { negocioId, negocioNombre, negocioRnc, negocioDireccion, ncf: ncfConfig } = useConfigStore();
+    const { negocioId, negocioNombre, negocioRnc, negocioDireccion, ncf: ncfConfig, planTier } = useConfigStore();
     const [periodo, setPeriodo] = useState('mes');
     const [cargando, setCargando] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
@@ -377,6 +377,99 @@ export default function ReportesPage() {
         ]);
     });
 
+    // ── REPARACIONES (Pro) ───────────────────────────────────────────────────
+    const reparacionesExcel = () => ejecutar('reparaciones', async () => {
+        const { desde, hasta, label } = rangoDesde(periodo);
+        const r = await getReporteReparaciones(negocioId!, desde, hasta);
+        descargarExcel(`VentaRD_Reparaciones_${label.replace(/ /g, '_')}`, [
+            {
+                nombre: 'Resumen',
+                columnas: ['Métrica', 'Valor'],
+                filas: [
+                    ['Período', label],
+                    ['Recibidas', r.resumen.recibidas],
+                    ['Entregadas', r.resumen.entregadas],
+                    ['En proceso (actual)', r.resumen.enProceso],
+                    ['Ingreso (entregadas)', r.fmtDOP(r.resumen.ingreso)],
+                    ['Costo repuestos', r.fmtDOP(r.resumen.costoRepuestos)],
+                    ['Ganancia', r.fmtDOP(r.resumen.ganancia)],
+                ],
+            },
+            {
+                nombre: 'Reparaciones',
+                columnas: ['Folio', 'Fecha', 'Cliente', 'Equipo', 'IMEI', 'Estado', 'Mano obra', 'Repuestos', 'Total', 'Abono', 'Saldo'],
+                filas: r.reparaciones.map(x => [
+                    x.folio, r.fmtFecha(x.fecha_creacion), x.cliente_nombre,
+                    [x.equipo_marca, x.equipo_modelo].filter(Boolean).join(' '),
+                    x.equipo_imei || '—', r.ESTADO_REP[x.estado] || x.estado,
+                    x.mano_obra, x.repuestos.reduce((s, p) => s + p.precio * p.cantidad, 0),
+                    x.total, x.abono, Math.max(0, x.total - x.abono),
+                ]),
+            },
+        ]);
+    });
+    const reparacionesPdf = () => ejecutar('reparaciones', async () => {
+        const { desde, hasta, label } = rangoDesde(periodo);
+        const r = await getReporteReparaciones(negocioId!, desde, hasta);
+        descargarPdf(`VentaRD_Reparaciones_${label.replace(/ /g, '_')}`, [
+            {
+                titulo: `Reparaciones · ${label}`,
+                columnas: ['Folio', 'Fecha', 'Cliente', 'Equipo', 'Estado', 'Total'],
+                filas: r.reparaciones.map(x => [
+                    x.folio, r.fmtFecha(x.fecha_creacion), x.cliente_nombre,
+                    [x.equipo_marca, x.equipo_modelo].filter(Boolean).join(' '),
+                    r.ESTADO_REP[x.estado] || x.estado, r.fmtDOP(x.total),
+                ]),
+                pieTabla: `Entregadas: ${r.resumen.entregadas} · Ingreso: ${r.fmtDOP(r.resumen.ingreso)} · Ganancia: ${r.fmtDOP(r.resumen.ganancia)}`,
+            },
+        ], negocio, label);
+    });
+
+    // ── APARTADOS (Pro) ──────────────────────────────────────────────────────
+    const apartadosExcel = () => ejecutar('apartados', async () => {
+        const { desde, hasta, label } = rangoDesde(periodo);
+        const r = await getReporteApartados(negocioId!, desde, hasta);
+        descargarExcel(`VentaRD_Apartados_${label.replace(/ /g, '_')}`, [
+            {
+                nombre: 'Resumen',
+                columnas: ['Métrica', 'Valor'],
+                filas: [
+                    ['Período', label],
+                    ['Nuevos', r.resumen.nuevos],
+                    ['Abonado en el período', r.fmtDOP(r.resumen.abonadoEnRango)],
+                    ['Completados', r.resumen.completados],
+                    ['Ingreso (completados)', r.fmtDOP(r.resumen.ingresoCompletados)],
+                    ['Activos (actual)', r.resumen.activos],
+                    ['Por cobrar (activos)', r.fmtDOP(r.resumen.porCobrar)],
+                ],
+            },
+            {
+                nombre: 'Apartados',
+                columnas: ['Folio', 'Fecha', 'Cliente', 'Artículos', 'Total', 'Abonado', 'Saldo', 'Estado'],
+                filas: r.apartados.map(a => [
+                    a.folio, r.fmtFecha(a.fecha_creacion), a.cliente_nombre,
+                    a.items.map(i => `${i.cantidad}x ${i.nombre}`).join(', '),
+                    a.total, a.abonado, Math.max(0, a.total - a.abonado), r.ESTADO_AP[a.estado] || a.estado,
+                ]),
+            },
+        ]);
+    });
+    const apartadosPdf = () => ejecutar('apartados', async () => {
+        const { desde, hasta, label } = rangoDesde(periodo);
+        const r = await getReporteApartados(negocioId!, desde, hasta);
+        descargarPdf(`VentaRD_Apartados_${label.replace(/ /g, '_')}`, [
+            {
+                titulo: `Apartados · ${label}`,
+                columnas: ['Folio', 'Fecha', 'Cliente', 'Total', 'Abonado', 'Saldo', 'Estado'],
+                filas: r.apartados.map(a => [
+                    a.folio, r.fmtFecha(a.fecha_creacion), a.cliente_nombre,
+                    r.fmtDOP(a.total), r.fmtDOP(a.abonado), r.fmtDOP(Math.max(0, a.total - a.abonado)), r.ESTADO_AP[a.estado] || a.estado,
+                ]),
+                pieTabla: `Abonado en el período: ${r.fmtDOP(r.resumen.abonadoEnRango)} · Por cobrar (activos): ${r.fmtDOP(r.resumen.porCobrar)}`,
+            },
+        ], negocio, label);
+    });
+
     const PERIODOS = [
         { key: 'hoy', label: 'Hoy' },
         { key: 'semana', label: '7 días' },
@@ -467,6 +560,30 @@ export default function ReportesPage() {
                                     onExcel={ncfExcel}
                                     onPdf={ncfPdf}
                                     cargando={cargando === 'ncf'}
+                                />
+                            )}
+
+                            {planTier === 'pro' && (
+                                <TarjetaReporte
+                                    icono={Wrench}
+                                    titulo="Reparaciones (Pro)"
+                                    descripcion={`Reparaciones recibidas/entregadas, ingreso y ganancia. Período: ${PERIODOS.find(p => p.key === periodo)?.label}`}
+                                    color="bg-gold/10 text-gold"
+                                    onExcel={reparacionesExcel}
+                                    onPdf={reparacionesPdf}
+                                    cargando={cargando === 'reparaciones'}
+                                />
+                            )}
+
+                            {planTier === 'pro' && (
+                                <TarjetaReporte
+                                    icono={Bookmark}
+                                    titulo="Apartados (Pro)"
+                                    descripcion={`Apartados nuevos, abonado, completados y saldo por cobrar. Período: ${PERIODOS.find(p => p.key === periodo)?.label}`}
+                                    color="bg-vr-green/10 text-vr-green"
+                                    onExcel={apartadosExcel}
+                                    onPdf={apartadosPdf}
+                                    cargando={cargando === 'apartados'}
                                 />
                             )}
                         </div>

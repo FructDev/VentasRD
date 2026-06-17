@@ -10,13 +10,25 @@ import { v4 as uuidv4 } from 'uuid';
 import PinGuard from '@/components/ui/PinGuard';
 import ConfirmModal from '@/components/ui/ConfirmModal';
 import { db } from '@/lib/db/dexie';
+import { useLiveQuery } from 'dexie-react-hooks';
 import { formatDOP, hashPin } from '@/lib/utils';
 import TopBar from '@/components/shared/TopBar';
 import OfflineBanner from '@/components/shared/OfflineBanner';
 
 export default function AdminDashboard() {
-    const { negocioId, negocioNombre, sucursalId, user, isOnline, setSucursal, setAuth, setPinAdmin, showToast, cerrarSesionUsuario, desconectarDispositivo } = useConfigStore();
+    const { negocioId, negocioNombre, sucursalId, user, isOnline, planTier, setSucursal, setAuth, setPinAdmin, showToast, cerrarSesionUsuario, desconectarDispositivo } = useConfigStore();
     const router = useRouter();
+
+    // Pro: métricas de reparaciones y apartados (lectura local)
+    const esPro = planTier === 'pro';
+    const reparacionesPro = useLiveQuery(
+        () => (esPro && negocioId) ? db.reparaciones.where('negocio_id').equals(negocioId).toArray() : [],
+        [esPro, negocioId]
+    ) ?? [];
+    const apartadosPro = useLiveQuery(
+        () => (esPro && negocioId) ? db.apartados.where('negocio_id').equals(negocioId).toArray() : [],
+        [esPro, negocioId]
+    ) ?? [];
 
     const [sucursales, setSucursales] = useState<any[]>([]);
     const [ventas, setVentas] = useState<any[]>([]);
@@ -196,6 +208,15 @@ export default function AdminDashboard() {
     const top5 = rankingProductos.slice(0, 5);
     const productosMuertos = rankingProductos.filter(p => p.cantidad === 0);
 
+    // Pro: cálculos de reparaciones y apartados (histórico)
+    const repEntregadas = reparacionesPro.filter(r => r.estado === 'entregado');
+    const repIngreso = repEntregadas.reduce((s, r) => s + r.total, 0);
+    const repEnProceso = reparacionesPro.filter(r => r.estado !== 'entregado' && r.estado !== 'cancelado').length;
+    const apActivosList = apartadosPro.filter(a => a.estado === 'activo');
+    const apPorCobrar = apActivosList.reduce((s, a) => s + Math.max(0, a.total - a.abonado), 0);
+    const apCompletados = apartadosPro.filter(a => a.estado === 'completado');
+    const apIngreso = apCompletados.reduce((s, a) => s + a.total, 0);
+
     if (isLoading) {
         return <div className="min-h-screen flex items-center justify-center bg-navy"><div className="animate-pulse flex flex-col items-center"><div className="w-8 h-8 border-4 border-gold border-t-transparent rounded-full animate-spin mb-4"></div><p className="text-vr-gray font-medium">Cargando Panel...</p></div></div>;
     }
@@ -251,6 +272,32 @@ export default function AdminDashboard() {
                         <h3 className="text-2xl sm:text-4xl font-black font-mono mt-2 text-white">{sucursales.length}</h3>
                     </div>
                 </div>
+
+                {/* Pro: Reparaciones y Apartados (histórico) */}
+                {esPro && (
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6 mb-6 sm:mb-8">
+                        <div className="bg-navy-2 border border-navy-3 p-4 sm:p-6 rounded-2xl">
+                            <p className="text-xs font-bold text-vr-gray uppercase tracking-wider flex items-center gap-1.5">🔧 Reparac. Ingreso</p>
+                            <h3 className="text-xl sm:text-3xl font-black font-mono mt-2 text-vr-green truncate">{formatDOP(repIngreso)}</h3>
+                            <p className="text-[11px] text-vr-gray mt-1">{repEntregadas.length} entregadas</p>
+                        </div>
+                        <div className="bg-navy-2 border border-navy-3 p-4 sm:p-6 rounded-2xl">
+                            <p className="text-xs font-bold text-vr-gray uppercase tracking-wider">🔧 En proceso</p>
+                            <h3 className="text-xl sm:text-3xl font-black font-mono mt-2 text-vr-orange">{repEnProceso}</h3>
+                            <p className="text-[11px] text-vr-gray mt-1">reparaciones activas</p>
+                        </div>
+                        <div className="bg-navy-2 border border-navy-3 p-4 sm:p-6 rounded-2xl">
+                            <p className="text-xs font-bold text-vr-gray uppercase tracking-wider">🔖 Apartados activos</p>
+                            <h3 className="text-xl sm:text-3xl font-black font-mono mt-2 text-white">{apActivosList.length}</h3>
+                            <p className="text-[11px] text-vr-orange mt-1">{formatDOP(apPorCobrar)} por cobrar</p>
+                        </div>
+                        <div className="bg-navy-2 border border-navy-3 p-4 sm:p-6 rounded-2xl">
+                            <p className="text-xs font-bold text-vr-gray uppercase tracking-wider">🔖 Apartados Ingreso</p>
+                            <h3 className="text-xl sm:text-3xl font-black font-mono mt-2 text-vr-green truncate">{formatDOP(apIngreso)}</h3>
+                            <p className="text-[11px] text-vr-gray mt-1">{apCompletados.length} completados</p>
+                        </div>
+                    </div>
+                )}
 
                 {/* SÚPER DASHBOARD DE INTELIGENCIA */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6 mb-6 sm:mb-8">

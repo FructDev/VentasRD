@@ -228,6 +228,57 @@ export async function getReporte607(negocioId: string, anio: number, mes: number
     return { filas, totales, cantidad: filas.length, fmtDOP };
 }
 
+// ── REPARACIONES (Plan Pro) ─────────────────────────────────────────────────
+const ESTADO_REP: Record<string, string> = {
+    recibido: 'Recibido', diagnostico: 'En diagnóstico', esperando_repuesto: 'Esperando repuesto',
+    listo: 'Listo', entregado: 'Entregado', cancelado: 'Cancelado',
+};
+
+export async function getReporteReparaciones(negocioId: string, desde: number, hasta: number) {
+    const todas = await db.reparaciones.where('negocio_id').equals(negocioId).toArray();
+    // Listado: las recibidas (creadas) en el rango
+    const reparaciones = todas
+        .filter(r => r.fecha_creacion >= desde && r.fecha_creacion <= hasta)
+        .sort((a, b) => b.fecha_creacion - a.fecha_creacion);
+
+    // Entregadas en el rango (por fecha de entrega) → ingreso y ganancia reales
+    const entregadas = todas.filter(r => r.estado === 'entregado' && r.fecha_entrega && r.fecha_entrega >= desde && r.fecha_entrega <= hasta);
+    const ingreso = entregadas.reduce((s, r) => s + r.total, 0);
+    const costoRepuestos = entregadas.reduce((s, r) => s + r.repuestos.reduce((sr, x) => sr + x.costo * x.cantidad, 0), 0);
+    const ganancia = ingreso - costoRepuestos;
+
+    const enProceso = todas.filter(r => r.estado !== 'entregado' && r.estado !== 'cancelado').length;
+
+    return {
+        reparaciones,
+        resumen: { recibidas: reparaciones.length, entregadas: entregadas.length, ingreso, costoRepuestos, ganancia, enProceso },
+        ESTADO_REP, fmtFecha, fmtDOP,
+    };
+}
+
+// ── APARTADOS (Plan Pro) ──────────────────────────────────────────────────────
+const ESTADO_AP: Record<string, string> = { activo: 'Activo', completado: 'Completado', cancelado: 'Cancelado' };
+
+export async function getReporteApartados(negocioId: string, desde: number, hasta: number) {
+    const todos = await db.apartados.where('negocio_id').equals(negocioId).toArray();
+    const apartados = todos
+        .filter(a => a.fecha_creacion >= desde && a.fecha_creacion <= hasta)
+        .sort((a, b) => b.fecha_creacion - a.fecha_creacion);
+
+    const abonadoEnRango = todos.reduce((s, a) =>
+        s + a.abonos.filter(ab => ab.fecha >= desde && ab.fecha <= hasta).reduce((sa, ab) => sa + ab.monto, 0), 0);
+    const completados = todos.filter(a => a.estado === 'completado' && a.fecha_completado && a.fecha_completado >= desde && a.fecha_completado <= hasta);
+    const ingresoCompletados = completados.reduce((s, a) => s + a.total, 0);
+    const activos = todos.filter(a => a.estado === 'activo');
+    const porCobrar = activos.reduce((s, a) => s + Math.max(0, a.total - a.abonado), 0);
+
+    return {
+        apartados,
+        resumen: { nuevos: apartados.length, abonadoEnRango, completados: completados.length, ingresoCompletados, activos: activos.length, porCobrar },
+        ESTADO_AP, fmtFecha, fmtDOP,
+    };
+}
+
 // ── NCF ───────────────────────────────────────────────────────────────────────
 
 export async function getReporteNcf(negocioId: string, desde: number, hasta: number) {
