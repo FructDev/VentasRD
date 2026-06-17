@@ -69,7 +69,7 @@ const ProductCard = memo(function ProductCard({
 });
 
 export default function POSPage() {
-  const { negocioId, negocioNombre, sucursalId, showToast, negocioRnc, negocioTelefono, negocioDireccion, negocioMensajeTicket, negocioLogo, nombreUsuario, rolUsuario, consumirNcf, ncf: ncfConfig, impresion, dispositivoId } = useConfigStore();
+  const { negocioId, negocioNombre, sucursalId, showToast, negocioRnc, negocioTelefono, negocioDireccion, negocioMensajeTicket, negocioLogo, nombreUsuario, rolUsuario, consumirNcf, ncf: ncfConfig, impresion, dispositivoId, planTier, garantiaDiasDefault } = useConfigStore();
   const { items, subtotal, itbis, descuento, total, tipoDescuento, valorDescuento, addItem, addItemConSerial, clearCart, updateQuantity, setDescuento, setCliente, clienteActivoId, tipoPrecios } = useCartStore();
 
   const [searchTerm, setSearchTerm] = useState('');
@@ -373,13 +373,24 @@ export default function POSPage() {
       // Marcar seriales como vendidos (fuera de la transacción principal para no bloquearla)
       const serialesVendidos = items.filter(i => i.serial_id);
       if (serialesVendidos.length > 0) {
+        // Manejador de evento (checkout): Date.now() es seguro aquí.
+        // eslint-disable-next-line react-hooks/purity
+        const ahoraSerial = Date.now();
+        // Garantía (Plan Pro): se fija con el default del negocio; si es 0, sin garantía
+        const dias = planTier === 'pro' ? (garantiaDiasDefault || 0) : 0;
+        const garantiaHasta = dias > 0 ? ahoraSerial + dias * 24 * 60 * 60 * 1000 : null;
+        const clienteVenta = clienteSeleccionadoId ? clientes.find(c => c.id === clienteSeleccionadoId) : null;
         await Promise.all(serialesVendidos.map(i =>
           db.seriales.update(i.serial_id!, {
             estado: 'vendido',
             venta_id: idVenta,
-            fecha_venta: Date.now(),
+            fecha_venta: ahoraSerial,
+            garantia_dias: dias,
+            garantia_hasta: garantiaHasta,
+            precio_venta: i.precio_venta,
+            cliente_nombre: clienteVenta?.nombre ?? null,
             estado_sincronizacion: 0,
-            fecha_actualizacion: Date.now(),
+            fecha_actualizacion: ahoraSerial,
           })
         ));
       }
@@ -470,6 +481,10 @@ export default function POSPage() {
             estado: 'disponible',
             venta_id: null,
             fecha_venta: null,
+            garantia_dias: null,
+            garantia_hasta: null,
+            cliente_nombre: null,
+            precio_venta: null,
             estado_sincronizacion: 0,
             fecha_actualizacion: Date.now(),
           })

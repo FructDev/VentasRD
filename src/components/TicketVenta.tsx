@@ -94,6 +94,7 @@ export const TicketVenta = forwardRef<HTMLDivElement, TicketProps>(({
                             <td className="py-1 align-top">{item.cantidad}</td>
                             <td className="py-1 pr-2 align-top break-words">
                                 {item.nombre}
+                                {item.serial_numero && <div className="text-[10px] text-gray-600">S/N: {item.serial_numero}</div>}
                                 {item.cantidad > 1 && <div className="text-[10px] text-gray-500">@ {item.precio_venta.toFixed(2)}</div>}
                             </td>
                             <td className="py-1 text-right align-top">{(item.precio_venta * item.cantidad).toFixed(2)}</td>

@@ -6,7 +6,7 @@ import { db } from '@/lib/db/dexie';
 import { registrarMovimientoStock } from '@/lib/db/stock';
 import { useVentasTenant, useVentaDetallesPorVentas, useDevolucionesTenant, useClientesTenant, useProductosTenant } from '@/lib/db/tenantQuery';
 import { useConfigStore } from '@/store/useConfigStore';
-import { VentaLocal, VentaDetalleLocal } from '@/types/database';
+import { VentaLocal, VentaDetalleLocal, SerialLocal } from '@/types/database';
 import { formatDOP, formatTicket } from '@/lib/utils';
 import { v4 as uuidv4 } from 'uuid';
 import { useLiveQuery } from 'dexie-react-hooks';
@@ -70,6 +70,13 @@ export default function HistorialPage() {
     const abrirReimpresion = async (venta: VentaLocal) => {
         const detallesVenta = detallesPorVenta.get(venta.id) || [];
         const prods = await db.productos.bulkGet(detallesVenta.map(d => d.producto_id));
+        // Seriales de esta venta agrupados por producto (para mostrar el S/N en el ticket)
+        const serialesPorProducto = new Map<string, string[]>();
+        (serialesPorVenta.get(venta.id) || []).forEach(s => {
+            const arr = serialesPorProducto.get(s.producto_id) || [];
+            arr.push(s.numero_serial);
+            serialesPorProducto.set(s.producto_id, arr);
+        });
         const cartItems: CartItem[] = detallesVenta.map((d, i) => ({
             id: d.producto_id,
             nombre: prods[i]?.nombre || 'Producto eliminado',
@@ -82,6 +89,7 @@ export default function HistorialPage() {
             stock_minimo: prods[i]?.stock_minimo || 0,
             tasa_itbis: prods[i]?.tasa_itbis || 0,
             tipo: prods[i]?.tipo || 'simple',
+            ...(serialesPorProducto.has(d.producto_id) && { serial_numero: serialesPorProducto.get(d.producto_id)!.join(', ') }),
         }));
         setItemsReimpresion(cartItems);
         setVentaReimprimiendo(venta);
@@ -153,6 +161,24 @@ export default function HistorialPage() {
         clientes.forEach(c => m.set(c.id, c.nombre));
         return m;
     }, [clientes]);
+
+    // Seriales (IMEI) vendidos, agrupados por venta — para mostrarlos en el detalle
+    // y en la reimpresión. venta_id no está indexado, así que filtramos en memoria.
+    const serialesNegocioRaw = useLiveQuery(
+        () => negocioId ? db.seriales.where('negocio_id').equals(negocioId).toArray() : [],
+        [negocioId]
+    );
+    const serialesNegocio = useMemo(() => serialesNegocioRaw ?? [], [serialesNegocioRaw]);
+    const serialesPorVenta = useMemo(() => {
+        const m = new Map<string, SerialLocal[]>();
+        serialesNegocio.forEach(s => {
+            if (!s.venta_id) return;
+            const arr = m.get(s.venta_id) || [];
+            arr.push(s);
+            m.set(s.venta_id, arr);
+        });
+        return m;
+    }, [serialesNegocio]);
 
     const productosArr = useProductosTenant();
     const prodNombres = useMemo(() => {
@@ -443,6 +469,16 @@ export default function HistorialPage() {
                                                                                 <span className="font-mono">{formatDOP(d.subtotal)}</span>
                                                                             </div>
                                                                         ))}
+                                                                        {(serialesPorVenta.get(venta.id) || []).length > 0 && (
+                                                                            <div className="mt-2 pt-2 border-t border-navy-3 space-y-0.5">
+                                                                                {serialesPorVenta.get(venta.id)!.map(s => (
+                                                                                    <div key={s.id} className="flex items-center gap-2 text-xs">
+                                                                                        <span className="text-vr-gray">📱 IMEI/Serie:</span>
+                                                                                        <span className="font-mono font-bold text-gold">{s.numero_serial}</span>
+                                                                                    </div>
+                                                                                ))}
+                                                                            </div>
+                                                                        )}
                                                                         {venta.ncf && (
                                                                             <div className="mt-2 pt-2 border-t border-navy-3 flex items-center gap-2 text-xs">
                                                                                 <span className="text-vr-gray">NCF:</span>
