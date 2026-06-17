@@ -11,6 +11,7 @@ interface Negocio {
     tipo_negocio: string | null;
     whatsapp_dueno: string | null;
     plan_activo: boolean;
+    plan_tier: 'basico' | 'pro' | null;
     trial_hasta: number | null;
     acceso_hasta: number | null;
     onboarding_completado: boolean;
@@ -239,6 +240,9 @@ function Panel({ secret, onLogout }: { secret: string; onLogout: () => void }) {
     const registrarPago = (n: Negocio) => extender(n, 30, 'Pago +30d');
 
     const cortarAcceso = (n: Negocio) => accion(n.id, { acceso_hasta: Date.now(), nota: 'Corte de acceso' });
+
+    // Alterna el plan entre 'basico' y 'pro' (habilita módulo de reparaciones)
+    const togglePro = (n: Negocio) => accion(n.id, { plan_tier: n.plan_tier === 'pro' ? 'basico' : 'pro' });
 
     // Fijar una fecha exacta de vencimiento (corrección manual)
     const fijarFecha = (n: Negocio, fechaISO: string) => {
@@ -539,6 +543,19 @@ function Panel({ secret, onLogout }: { secret: string; onLogout: () => void }) {
                                                         >
                                                             <X className="w-3 h-3" />
                                                             <span className="hidden sm:inline">{confirmandoCorte === n.id ? '¿Seguro?' : 'Cortar'}</span>
+                                                        </button>
+
+                                                        <button
+                                                            onClick={() => togglePro(n)}
+                                                            disabled={cargando}
+                                                            title={n.plan_tier === 'pro' ? 'Quitar Plan Pro (reparaciones)' : 'Activar Plan Pro (reparaciones)'}
+                                                            className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold border transition-all disabled:opacity-40 ${
+                                                                n.plan_tier === 'pro'
+                                                                    ? 'bg-gold/20 text-gold border-gold/40 hover:bg-gold/30'
+                                                                    : 'bg-white/5 text-vr-gray border-white/10 hover:text-gold hover:border-gold/30'
+                                                            }`}
+                                                        >
+                                                            🔧 <span className="hidden sm:inline">{n.plan_tier === 'pro' ? 'Pro ✓' : 'Pro'}</span>
                                                         </button>
 
                                                         <button

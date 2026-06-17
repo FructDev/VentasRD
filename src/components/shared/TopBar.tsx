@@ -12,15 +12,18 @@ import { ACCESOS } from '@/lib/acceso';
 import ConfirmModal from '@/components/ui/ConfirmModal';
 
 const navItems = [
-    { href: '/',              label: 'Ventas',     icon: '💰' },
-    { href: '/historial',     label: 'Historial',  icon: '🗒️' },
-    { href: '/inventario',    label: 'Inventario', icon: '📦' },
-    { href: '/clientes',      label: 'Clientes',   icon: '👥' },
-    { href: '/gastos',        label: 'Gastos',     icon: '💸' },
-    { href: '/dashboard',     label: 'Resumen',    icon: '📊' },
-    { href: '/reportes',      label: 'Reportes',   icon: '📁' },
-    { href: '/configuracion', label: 'Ajustes',    icon: '⚙️' },
-    { href: '/admin',         label: 'Admin',      icon: '🛠️', soloAdmin: true },
+    { href: '/',              label: 'Ventas',       icon: '💰' },
+    { href: '/historial',     label: 'Historial',    icon: '🗒️' },
+    { href: '/inventario',    label: 'Inventario',   icon: '📦' },
+    { href: '/reparaciones',  label: 'Reparaciones', icon: '🔧', soloPro: true },
+    { href: '/garantias',     label: 'Garantías',    icon: '🛡️', soloPro: true },
+    { href: '/apartados',     label: 'Apartados',    icon: '🔖', soloPro: true },
+    { href: '/clientes',      label: 'Clientes',     icon: '👥' },
+    { href: '/gastos',        label: 'Gastos',       icon: '💸' },
+    { href: '/dashboard',     label: 'Resumen',      icon: '📊' },
+    { href: '/reportes',      label: 'Reportes',     icon: '📁' },
+    { href: '/configuracion', label: 'Ajustes',      icon: '⚙️' },
+    { href: '/admin',         label: 'Admin',        icon: '🛠️', soloAdmin: true },
 ];
 
 const ROL_LABEL: Record<string, string> = { admin: 'Admin', vendedor: 'Vendedor', cajero: 'Cajero', dueño: 'Dueño' };
@@ -28,7 +31,7 @@ const ROL_LABEL: Record<string, string> = { admin: 'Admin', vendedor: 'Vendedor'
 export default function TopBar() {
     const pathname = usePathname();
     const router = useRouter();
-    const { isOnline, isAdminMode, negocioNombre, rolUsuario, nombreUsuario, cerrarSesionUsuario } = useConfigStore();
+    const { isOnline, isAdminMode, negocioNombre, rolUsuario, nombreUsuario, planTier, cerrarSesionUsuario } = useConfigStore();
 
     const [menuOpen, setMenuOpen] = useState(false);
     const [confirmLogout, setConfirmLogout] = useState(false);
@@ -72,6 +75,7 @@ export default function TopBar() {
                     const rutasPermitidas = ACCESOS[rolUsuario] ?? ACCESOS.cajero;
                     if (!rutasPermitidas.includes(item.href)) return null;
                     if (item.soloAdmin && !isAdminMode) return null;
+                    if (item.soloPro && planTier !== 'pro') return null;
 
                     return (
                         <Link

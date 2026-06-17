@@ -150,10 +150,117 @@ export interface SerialLocal {
     negocio_id: string;
     producto_id: string;
     numero_serial: string;           // IMEI, serie, código único
-    estado: 'disponible' | 'vendido';
+    estado: 'disponible' | 'vendido' | 'apartado';
     venta_id?: string | null;        // Venta en la que se vendió
     fecha_venta?: number | null;
+    // Garantía (Plan Pro) — se fija al vender. Denormalizamos algunos datos para
+    // que la búsqueda por IMEI funcione aunque la venta vieja ya se haya purgado.
+    garantia_dias?: number | null;
+    garantia_hasta?: number | null;
+    cliente_nombre?: string | null;
+    precio_venta?: number | null;
     estado_sincronizacion: 0 | 1;
+    fecha_actualizacion: number;
+}
+
+// ─── Reparaciones (Plan Pro — tiendas de celulares) ───────────────────────────
+export type ReparacionEstado =
+    | 'recibido'
+    | 'diagnostico'
+    | 'esperando_repuesto'
+    | 'listo'
+    | 'entregado'
+    | 'cancelado';
+
+export type MetodoPagoReparacion = 'efectivo' | 'tarjeta' | 'transferencia';
+
+/** Un repuesto usado en una reparación. Puede venir del inventario (descuenta
+ *  stock) o anotarse manualmente (compra externa). */
+export interface RepuestoReparacion {
+    producto_id?: string;       // presente si el repuesto sale del inventario
+    nombre: string;
+    cantidad: number;
+    costo: number;              // costo unitario (para ganancia)
+    precio: number;             // precio unitario cobrado al cliente
+    desde_inventario: boolean;
+    // Marca interna: si ya se descontó del stock (evita doble descuento al editar)
+    stock_aplicado?: boolean;
+}
+
+export interface ReparacionLocal {
+    id: string;
+    negocio_id: string;
+    sucursal_id?: string;
+    folio: string;                       // consecutivo legible: "REP-001"
+    // Cliente (puede no estar registrado: se guarda nombre/teléfono sueltos)
+    cliente_id?: string;
+    cliente_nombre: string;
+    cliente_telefono?: string;
+    // Equipo
+    equipo_marca?: string;
+    equipo_modelo: string;
+    equipo_imei?: string;
+    equipo_color?: string;
+    patron_clave?: string;               // clave o patrón de desbloqueo
+    condicion_checklist?: string[];      // estado del equipo al recibirlo (checklist)
+    condicion_entrada?: string;          // otros detalles de condición (texto libre)
+    accesorios?: string;
+    // Servicio
+    problema_reportado: string;
+    diagnostico?: string;
+    estado: ReparacionEstado;
+    repuestos: RepuestoReparacion[];
+    mano_obra: number;
+    total: number;                       // mano_obra + Σ(repuesto.precio × cantidad)
+    // Pagos
+    abono: number;                       // adelanto al recibir (opcional, 0 por defecto)
+    metodo_abono?: MetodoPagoReparacion;
+    metodo_pago_final?: MetodoPagoReparacion;
+    // Garantía de la reparación (se fija al entregar)
+    garantia_dias?: number;
+    garantia_hasta?: number;
+    tecnico_nombre?: string;             // opcional (futuro: comisiones)
+    notas?: string;
+    fecha_creacion: number;
+    fecha_entrega?: number;
+    estado_sincronizacion?: 0 | 1;
+    fecha_actualizacion: number;
+}
+
+// ─── Apartados (Plan Pro — layaway / plan separe) ─────────────────────────────
+export interface AbonoApartado {
+    monto: number;
+    metodo: MetodoPagoReparacion;   // efectivo | tarjeta | transferencia
+    fecha: number;
+}
+
+export interface ItemApartado {
+    producto_id: string;
+    nombre: string;
+    cantidad: number;
+    precio_unitario: number;
+    serial_id?: string;             // si el item es un equipo serializado reservado
+    serial_numero?: string;
+}
+
+export interface ApartadoLocal {
+    id: string;
+    negocio_id: string;
+    sucursal_id?: string;
+    folio: string;                  // consecutivo legible: "AP-001"
+    cliente_id?: string;
+    cliente_nombre: string;
+    cliente_telefono?: string;
+    items: ItemApartado[];
+    total: number;
+    abonado: number;                // suma de abonos
+    abonos: AbonoApartado[];
+    estado: 'activo' | 'completado' | 'cancelado';
+    notas?: string;
+    fecha_creacion: number;
+    fecha_completado?: number;
+    fecha_cancelado?: number;
+    estado_sincronizacion?: 0 | 1;
     fecha_actualizacion: number;
 }
 
@@ -166,7 +273,7 @@ export interface MovimientoStockLocal {
     producto_id: string;
     delta: number;             // negativo = salida (venta/merma), positivo = entrada
     valor_absoluto?: number;   // solo para conteos físicos (establece el stock exacto)
-    tipo: 'venta' | 'devolucion' | 'entrada' | 'merma' | 'conteo' | 'importacion';
+    tipo: 'venta' | 'devolucion' | 'entrada' | 'merma' | 'conteo' | 'importacion' | 'reparacion' | 'apartado';
     referencia_id?: string;    // venta_id / devolucion_id que lo originó
     fecha_creacion: number;
     estado_sincronizacion: 0 | 1;

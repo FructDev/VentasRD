@@ -36,6 +36,8 @@ const META_MOVIMIENTO: Record<MovimientoStockLocal['tipo'], { label: string; ico
     entrada:     { label: 'Entrada',       icono: '📦', color: 'text-vr-green' },
     conteo:      { label: 'Conteo físico', icono: '🔢', color: 'text-gold' },
     importacion: { label: 'Importación',   icono: '📥', color: 'text-gold' },
+    reparacion:  { label: 'Reparación',    icono: '🔧', color: 'text-vr-red' },
+    apartado:    { label: 'Apartado',      icono: '🔖', color: 'text-vr-red' },
 };
 
 // Input de edición rápida en línea (Enter guarda, Escape cancela, blur guarda)

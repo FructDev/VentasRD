@@ -80,6 +80,7 @@ interface ConfigState {
     toast: { message: string, type: 'success' | 'error' | 'info' } | null;
     // Plan / suscripcion
     planActivo: boolean;
+    planTier: 'basico' | 'pro'; // 'pro' habilita módulos premium (reparaciones)
     trialHasta: number | null; // timestamp ms (legado)
     accesoHasta: number | null; // hasta cuándo es válido el acceso (trial o pago). Vence solo.
     ultimaFechaVista: number;   // marca de agua anti-retroceso de reloj (máx tiempo real visto)
@@ -87,6 +88,9 @@ interface ConfigState {
     ncf: NcfConfig;
     // Ajustes de impresión (por dispositivo)
     impresion: ImpresionConfig;
+    // Días de garantía por defecto para productos con número de serie (Plan Pro)
+    garantiaDiasDefault: number;
+    setGarantiaDiasDefault: (dias: number) => void;
     setImpresion: (config: Partial<ImpresionConfig>) => void;
     setConnection: (status: boolean) => void;
     setOfflineUnlock: (status: boolean) => void;
@@ -96,6 +100,8 @@ interface ConfigState {
     setPinAdmin: (pin: string | null) => void;
     setRol: (rol: RolUsuario, nombre?: string | null) => void;
     setPlan: (planActivo: boolean, trialHasta: number | null) => void;
+    /** Fija el nivel de plan ('basico' | 'pro') traído de la nube */
+    setPlanTier: (tier: 'basico' | 'pro') => void;
     /** Fija la fecha de acceso válido (trial o pago) traída de la nube */
     setAcceso: (accesoHasta: number | null) => void;
     /** Avanza la marca de agua de tiempo (anti-retroceso de reloj) */
@@ -131,17 +137,20 @@ const configCreator: StateCreator<ConfigState> = (set) => ({
             isOfflineUnlocked: false,
             toast: null,
             planActivo: false,
+            planTier: 'basico',
             trialHasta: null,
             accesoHasta: null,
             ultimaFechaVista: 0,
             ncf: NCF_DEFAULT,
             impresion: IMPRESION_DEFAULT,
+            garantiaDiasDefault: 30,
 
             setAcceso: (accesoHasta) => set({ accesoHasta }),
             marcarTiempoVisto: () => set(s => ({ ultimaFechaVista: Math.max(s.ultimaFechaVista, Date.now()) })),
 
             setNcfConfig: (config) => set(state => ({ ncf: { ...state.ncf, ...config } })),
             setImpresion: (config) => set(state => ({ impresion: { ...state.impresion, ...config } })),
+            setGarantiaDiasDefault: (dias) => set({ garantiaDiasDefault: Math.max(0, Math.floor(dias) || 0) }),
 
             consumirNcf: () => {
                 const state = useConfigStore.getState();
@@ -181,6 +190,7 @@ const configCreator: StateCreator<ConfigState> = (set) => ({
             setRol: (rol, nombre) => set({ rolUsuario: rol, nombreUsuario: nombre ?? null }),
             setConnection: (status) => set({ isOnline: status }),
             setPlan: (planActivo, trialHasta) => set({ planActivo, trialHasta }),
+            setPlanTier: (tier) => set({ planTier: tier }),
             setOfflineUnlock: (status) => set({ isOfflineUnlocked: status }),
             setSucursal: (sucursalId) => set({ sucursalId }),
             setAdminMode: (status) => set({ isAdminMode: status }),
@@ -264,11 +274,13 @@ export const useConfigStore = create<ConfigState>()(
             negocioMensajeTicket: state.negocioMensajeTicket,
             negocioLogo: state.negocioLogo,
             planActivo: state.planActivo,
+            planTier: state.planTier,
             trialHasta: state.trialHasta,
             accesoHasta: state.accesoHasta,
             ultimaFechaVista: state.ultimaFechaVista,
             ncf: state.ncf,
             impresion: state.impresion,
+            garantiaDiasDefault: state.garantiaDiasDefault,
         }),
         merge: (persisted, current) => {
             const p = persisted as Partial<ConfigState>;

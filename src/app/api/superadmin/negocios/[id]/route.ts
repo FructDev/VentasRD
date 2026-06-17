@@ -23,6 +23,7 @@ export async function PATCH(
 
     const updateData: Record<string, unknown> = {};
     if (typeof body.plan_activo === 'boolean') updateData.plan_activo = body.plan_activo;
+    if (body.plan_tier === 'pro' || body.plan_tier === 'basico') updateData.plan_tier = body.plan_tier;
     if ('trial_hasta' in body) updateData.trial_hasta = body.trial_hasta;
     if ('acceso_hasta' in body) updateData.acceso_hasta = body.acceso_hasta;
     if ('nota_operador' in body) updateData.nota_operador = body.nota_operador;

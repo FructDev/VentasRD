@@ -60,7 +60,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 // 2A. Buscar si es el DUEÑO del negocio
                 let { data: negocio, error } = await supabase
                     .from('negocios')
-                    .select('id, nombre, onboarding_completado, pin_admin, whatsapp_dueno, telefono, rnc, direccion, mensaje_ticket, logo_url, plan_activo, trial_hasta, acceso_hasta')
+                    .select('id, nombre, onboarding_completado, pin_admin, whatsapp_dueno, telefono, rnc, direccion, mensaje_ticket, logo_url, plan_activo, plan_tier, trial_hasta, acceso_hasta')
                     .eq('dueño_id', user.id)
                     .maybeSingle();
 
@@ -78,7 +78,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                         // Cargar el negocio del empleado
                         const { data: negEmp } = await supabase
                             .from('negocios')
-                            .select('id, nombre, onboarding_completado, pin_admin, whatsapp_dueno, telefono, rnc, direccion, mensaje_ticket, logo_url, plan_activo, trial_hasta, acceso_hasta')
+                            .select('id, nombre, onboarding_completado, pin_admin, whatsapp_dueno, telefono, rnc, direccion, mensaje_ticket, logo_url, plan_activo, plan_tier, trial_hasta, acceso_hasta')
                             .eq('id', empData.negocio_id)
                             .single();
                         negocio = negEmp;
@@ -101,6 +101,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                             logo_url: currentState.negocioLogo,
                             onboarding_completado: true,
                             plan_activo: currentState.planActivo,
+                            plan_tier: currentState.planTier,
                             trial_hasta: currentState.trialHasta,
                             acceso_hasta: currentState.accesoHasta,
                         };
@@ -118,7 +119,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                     const { data: nuevoNegocio, error: insertError } = await supabase
                         .from('negocios')
                         .insert({ dueño_id: user.id, nombre: nombreInicial, pin_admin: '1234', plan_activo: false, trial_hasta: trialHasta })
-                        .select('id, nombre, onboarding_completado, pin_admin, whatsapp_dueno, telefono, rnc, direccion, mensaje_ticket, logo_url, plan_activo, trial_hasta, acceso_hasta')
+                        .select('id, nombre, onboarding_completado, pin_admin, whatsapp_dueno, telefono, rnc, direccion, mensaje_ticket, logo_url, plan_activo, plan_tier, trial_hasta, acceso_hasta')
                         .single();
 
                     if (insertError) throw insertError;
@@ -152,6 +153,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                     negocio?.plan_activo ?? false,
                     negocio?.trial_hasta ?? null,
                 );
+                // Nivel de plan: 'pro' habilita el módulo de reparaciones.
+                // Si la fecha viene del servidor lo fijamos; si es el fallback offline
+                // (sin plan_tier) NO se toca, para no perder el "pro" sin conexión.
+                const tier = (negocio as { plan_tier?: string } | null)?.plan_tier;
+                if (tier === 'pro' || tier === 'basico') {
+                    useConfigStore.getState().setPlanTier(tier);
+                }
                 // Fecha de acceso (trial o pago). Fallback al trial legado si la
                 // columna aún no existe en negocios viejos.
                 useConfigStore.getState().setAcceso(negocio?.acceso_hasta ?? negocio?.trial_hasta ?? null);

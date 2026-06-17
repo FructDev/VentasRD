@@ -5,8 +5,8 @@
 import type { RolUsuario } from '@/store/useConfigStore';
 
 export const ACCESOS: Record<RolUsuario, string[]> = {
-    admin:    ['/', '/historial', '/inventario', '/clientes', '/gastos', '/dashboard', '/reportes', '/configuracion', '/admin'],
-    vendedor: ['/', '/historial', '/clientes', '/dashboard'],
+    admin:    ['/', '/historial', '/inventario', '/clientes', '/gastos', '/dashboard', '/reportes', '/configuracion', '/admin', '/reparaciones', '/garantias', '/apartados'],
+    vendedor: ['/', '/historial', '/clientes', '/dashboard', '/reparaciones', '/garantias', '/apartados'],
     cajero:   ['/'],
 };
 

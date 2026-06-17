@@ -359,14 +359,51 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                 setSyncTs('devoluciones', maxCreacionTs(cloudDevs));
             }
 
+            // ── 1.K  Reparaciones (Plan Pro) ──────────────────────────────────
+            const lastRepTs = getSyncTs('reparaciones');
+            const { data: cloudReps, error: pullRepErr } = await withTimeout(() =>
+                supabase.from('reparaciones').select('*').eq('negocio_id', negocioId).gt('fecha_actualizacion', lastRepTs)
+            );
+            if (!pullRepErr && cloudReps && cloudReps.length > 0) {
+                // No pisar reparaciones con cambios locales sin subir
+                const merged = await Promise.all(cloudReps.map(async r => {
+                    const local = await db.reparaciones.get(r.id);
+                    if (local && local.estado_sincronizacion === 0) return local;
+                    return { ...r, estado_sincronizacion: 1 as const };
+                }));
+                await db.reparaciones.bulkPut(merged);
+                setSyncTs('reparaciones', clampTs(maxTs(cloudReps)));
+            }
+
+            // ── 1.L  Apartados (Plan Pro) ─────────────────────────────────────
+            const lastApTs = getSyncTs('apartados');
+            const { data: cloudAps, error: pullApErr } = await withTimeout(() =>
+                supabase.from('apartados').select('*').eq('negocio_id', negocioId).gt('fecha_actualizacion', lastApTs)
+            );
+            if (!pullApErr && cloudAps && cloudAps.length > 0) {
+                const mergedAp = await Promise.all(cloudAps.map(async a => {
+                    const local = await db.apartados.get(a.id);
+                    if (local && local.estado_sincronizacion === 0) return local;
+                    return { ...a, estado_sincronizacion: 1 as const };
+                }));
+                await db.apartados.bulkPut(mergedAp);
+                setSyncTs('apartados', clampTs(maxTs(cloudAps)));
+            }
+
             // ── 1.J  Seriales ─────────────────────────────────────────────────
             const lastSerialesTs = getSyncTs('seriales');
             const { data: cloudSeriales, error: pullSerialesErr } = await withTimeout(() =>
                 supabase.from('seriales').select('*').eq('negocio_id', negocioId).gt('fecha_actualizacion', lastSerialesTs)
             );
             if (!pullSerialesErr && cloudSeriales && cloudSeriales.length > 0) {
-                await db.seriales.bulkPut(cloudSeriales.map(s => ({ ...s, estado_sincronizacion: 1 })));
-                setSyncTs('seriales', maxTs(cloudSeriales));
+                // No pisar seriales con cambios locales sin subir (ej. recién vendidos)
+                const mergedSer = await Promise.all(cloudSeriales.map(async s => {
+                    const local = await db.seriales.get(s.id);
+                    if (local && local.estado_sincronizacion === 0) return local;
+                    return { ...s, estado_sincronizacion: 1 as const };
+                }));
+                await db.seriales.bulkPut(mergedSer);
+                setSyncTs('seriales', clampTs(maxTs(cloudSeriales)));
             }
 
             // ── 1.J.2  Gastos ─────────────────────────────────────────────────
@@ -708,6 +745,10 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                             estado: s.estado,
                             venta_id: s.venta_id ?? null,
                             fecha_venta: s.fecha_venta ?? null,
+                            garantia_dias: s.garantia_dias ?? null,
+                            garantia_hasta: s.garantia_hasta ?? null,
+                            cliente_nombre: s.cliente_nombre ?? null,
+                            precio_venta: s.precio_venta ?? null,
                             fecha_actualizacion: s.fecha_actualizacion,
                         }))
                     )
@@ -772,6 +813,82 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                     })
                 );
                 if (!error) await db.cortes_caja.update(corte.id, { estado_sincronizacion: 1 });
+            }
+
+            // ── 2.K  Reparaciones (Plan Pro) ──────────────────────────────────
+            const reparacionesPendientes = await db.reparaciones.where('estado_sincronizacion').equals(0).toArray();
+            for (const rep of reparacionesPendientes) {
+                const { error } = await withTimeout(() =>
+                    supabase.from('reparaciones').upsert({
+                        id: rep.id,
+                        negocio_id: rep.negocio_id,
+                        sucursal_id: rep.sucursal_id || sucursalId || null,
+                        folio: rep.folio,
+                        cliente_id: rep.cliente_id ?? null,
+                        cliente_nombre: rep.cliente_nombre,
+                        cliente_telefono: rep.cliente_telefono ?? null,
+                        equipo_marca: rep.equipo_marca ?? null,
+                        equipo_modelo: rep.equipo_modelo,
+                        equipo_imei: rep.equipo_imei ?? null,
+                        equipo_color: rep.equipo_color ?? null,
+                        patron_clave: rep.patron_clave ?? null,
+                        condicion_checklist: rep.condicion_checklist ?? [],
+                        condicion_entrada: rep.condicion_entrada ?? null,
+                        accesorios: rep.accesorios ?? null,
+                        problema_reportado: rep.problema_reportado,
+                        diagnostico: rep.diagnostico ?? null,
+                        estado: rep.estado,
+                        repuestos: rep.repuestos,
+                        mano_obra: rep.mano_obra,
+                        total: rep.total,
+                        abono: rep.abono,
+                        metodo_abono: rep.metodo_abono ?? null,
+                        metodo_pago_final: rep.metodo_pago_final ?? null,
+                        garantia_dias: rep.garantia_dias ?? null,
+                        garantia_hasta: rep.garantia_hasta ?? null,
+                        tecnico_nombre: rep.tecnico_nombre ?? null,
+                        notas: rep.notas ?? null,
+                        fecha_creacion: rep.fecha_creacion,
+                        fecha_entrega: rep.fecha_entrega ?? null,
+                        fecha_actualizacion: rep.fecha_actualizacion || Date.now(),
+                    })
+                );
+                if (error) {
+                    console.error('[sync] reparaciones error:', error.code, error.message, error.details);
+                } else {
+                    await db.reparaciones.update(rep.id, { estado_sincronizacion: 1 });
+                }
+            }
+
+            // ── 2.L  Apartados (Plan Pro) ─────────────────────────────────────
+            const apartadosPendientes = await db.apartados.where('estado_sincronizacion').equals(0).toArray();
+            for (const ap of apartadosPendientes) {
+                const { error } = await withTimeout(() =>
+                    supabase.from('apartados').upsert({
+                        id: ap.id,
+                        negocio_id: ap.negocio_id,
+                        sucursal_id: ap.sucursal_id || sucursalId || null,
+                        folio: ap.folio,
+                        cliente_id: ap.cliente_id ?? null,
+                        cliente_nombre: ap.cliente_nombre,
+                        cliente_telefono: ap.cliente_telefono ?? null,
+                        items: ap.items,
+                        total: ap.total,
+                        abonado: ap.abonado,
+                        abonos: ap.abonos,
+                        estado: ap.estado,
+                        notas: ap.notas ?? null,
+                        fecha_creacion: ap.fecha_creacion,
+                        fecha_completado: ap.fecha_completado ?? null,
+                        fecha_cancelado: ap.fecha_cancelado ?? null,
+                        fecha_actualizacion: ap.fecha_actualizacion || Date.now(),
+                    })
+                );
+                if (error) {
+                    console.error('[sync] apartados error:', error.code, error.message, error.details);
+                } else {
+                    await db.apartados.update(ap.id, { estado_sincronizacion: 1 });
+                }
             }
 
             // ══════════════════════════════════════════════════════════════════

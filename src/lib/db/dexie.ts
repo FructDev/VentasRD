@@ -1,6 +1,6 @@
 // src/lib/db/dexie.ts
 import Dexie, { Table } from 'dexie';
-import { VentaLocal, ProductoLocal, ComposicionLocal, ClienteLocal, TransaccionFiadoLocal, VentaDetalleLocal, CajaLocal, SucursalLocal, DevolucionLocal, CorteCajaLocal, SerialLocal, MovimientoStockLocal, GastoLocal } from '@/types/database';
+import { VentaLocal, ProductoLocal, ComposicionLocal, ClienteLocal, TransaccionFiadoLocal, VentaDetalleLocal, CajaLocal, SucursalLocal, DevolucionLocal, CorteCajaLocal, SerialLocal, MovimientoStockLocal, GastoLocal, ReparacionLocal, ApartadoLocal } from '@/types/database';
 
 export class VentaRDDatabase extends Dexie {
     ventas!: Table<VentaLocal>;
@@ -16,6 +16,8 @@ export class VentaRDDatabase extends Dexie {
     seriales!: Table<SerialLocal>;
     movimientos_stock!: Table<MovimientoStockLocal>;
     gastos!: Table<GastoLocal>;
+    reparaciones!: Table<ReparacionLocal>;
+    apartados!: Table<ApartadoLocal>;
 
     constructor() {
         super('VentaRD_Vault');
@@ -83,6 +85,16 @@ export class VentaRDDatabase extends Dexie {
         this.version(18).stores({
             gastos: 'id, negocio_id, categoria, estado_sincronizacion, fecha_creacion, [negocio_id+fecha_creacion]',
         });
+
+        // v19: reparaciones (Plan Pro — tiendas de celulares)
+        this.version(19).stores({
+            reparaciones: 'id, negocio_id, sucursal_id, folio, estado, cliente_telefono, equipo_imei, estado_sincronizacion, fecha_creacion, fecha_actualizacion',
+        });
+
+        // v20: apartados (Plan Pro — layaway / plan separe)
+        this.version(20).stores({
+            apartados: 'id, negocio_id, sucursal_id, folio, estado, cliente_telefono, estado_sincronizacion, fecha_creacion, fecha_actualizacion',
+        });
     }
 }
 
@@ -124,6 +136,33 @@ export async function getNextTicketNumber(negocioId: string, cajaCodigo?: string
         .filter(v => v.numero_ticket != null)
         .reduce((m, v) => Math.max(m, v.numero_ticket!), 0);
     return maxGlobal + 1;
+}
+
+/**
+ * Genera el siguiente folio de reparación para el negocio (ej. "REP-001").
+ * Consecutivo simple por negocio basado en el máximo existente local.
+ */
+export async function getNextFolioReparacion(negocioId: string): Promise<string> {
+    const reps = await db.reparaciones.where('negocio_id').equals(negocioId).toArray();
+    let max = 0;
+    for (const r of reps) {
+        const m = /REP-(\d+)/i.exec(r.folio || '');
+        if (m) max = Math.max(max, parseInt(m[1], 10));
+    }
+    return `REP-${String(max + 1).padStart(3, '0')}`;
+}
+
+/**
+ * Genera el siguiente folio de apartado para el negocio (ej. "AP-001").
+ */
+export async function getNextFolioApartado(negocioId: string): Promise<string> {
+    const aps = await db.apartados.where('negocio_id').equals(negocioId).toArray();
+    let max = 0;
+    for (const a of aps) {
+        const m = /AP-(\d+)/i.exec(a.folio || '');
+        if (m) max = Math.max(max, parseInt(m[1], 10));
+    }
+    return `AP-${String(max + 1).padStart(3, '0')}`;
 }
 
 /**
