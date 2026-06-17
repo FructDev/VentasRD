@@ -173,6 +173,7 @@ export default function CajaModal({ isOpen, onClose }: Props) {
         setLoading(true);
 
         try {
+            const ahora = Date.now();
             await db.cajas.add({
                 id: uuidv4(),
                 negocio_id: negocioId,
@@ -180,10 +181,16 @@ export default function CajaModal({ isOpen, onClose }: Props) {
                 estado: 'abierta',
                 monto_apertura: totalContado,
                 denominaciones_apertura: { ...denominaciones },
-                fecha_apertura: Date.now(),
-                fecha_actualizacion: 0
+                fecha_apertura: ahora,
+                estado_sincronizacion: 0,
+                fecha_actualizacion: ahora,
             });
-            showToast(`Caja abierta con ${formatDOP(totalContado)}`, 'success');
+            showToast(
+                totalContado > 0
+                    ? `Caja abierta con ${formatDOP(totalContado)}`
+                    : 'Caja abierta en cero',
+                'success'
+            );
             onClose();
         } catch (e) {
             showToast('Error al abrir la caja', 'error');
@@ -204,6 +211,10 @@ export default function CajaModal({ isOpen, onClose }: Props) {
                 denominaciones_cierre: { ...denominaciones },
                 fecha_cierre: Date.now(),
                 notas: notas || undefined,
+                // Marcar para que el worker suba el cierre a la nube y no vuelva
+                // a traerse como "abierta" en otro dispositivo o tras limpiar caché.
+                estado_sincronizacion: 0,
+                fecha_actualizacion: Date.now(),
             });
 
             // Generar Corte Z (guarda + imprime automáticamente)
@@ -250,11 +261,9 @@ export default function CajaModal({ isOpen, onClose }: Props) {
         setLoading(false);
     };
 
-    if (!isOpen) return null;
-
-    const esCierre = !!cajaAbierta;
-
-    // Ticket oculto para impresión de cortes (fuera del modal para evitar clipping)
+    // Ticket oculto para impresión de cortes (fuera del modal para evitar clipping).
+    // Se mantiene montado aunque el modal se cierre, para que la impresión diferida
+    // del Corte Z (dispara ~120ms tras cerrar) encuentre el contenido del ticket.
     const ticketOculto = corteActual ? (
         <div style={{ display: 'none' }}>
             <TicketCorte
@@ -268,6 +277,11 @@ export default function CajaModal({ isOpen, onClose }: Props) {
             />
         </div>
     ) : null;
+
+    // Con el modal cerrado igual renderizamos el ticket pendiente de imprimir.
+    if (!isOpen) return <>{ticketOculto}</>;
+
+    const esCierre = !!cajaAbierta;
 
     return (
         <>
@@ -415,7 +429,7 @@ export default function CajaModal({ isOpen, onClose }: Props) {
 
                     <button
                         onClick={esCierre ? cerrarCaja : abrirCaja}
-                        disabled={loading || totalContado <= 0}
+                        disabled={loading}
                         className="w-full py-4 bg-gold-gradient text-navy font-extrabold rounded-xl hover:brightness-110 transition-all disabled:opacity-30 text-lg"
                     >
                         {loading ? 'Procesando...' : esCierre ? '🔒 Cerrar Caja' : '🔓 Abrir Caja'}
