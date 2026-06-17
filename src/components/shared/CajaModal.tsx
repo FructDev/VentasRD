@@ -80,6 +80,35 @@ export default function CajaModal({ isOpen, onClose }: Props) {
             .reduce((s, g) => s + g.monto, 0);
     }, [cajaAbierta, negocioId]) ?? 0;
 
+    // Ingresos en EFECTIVO de REPARACIONES en el turno (abono al recibir + saldo al entregar)
+    const efectivoReparacionesTurno = useLiveQuery(async () => {
+        if (!cajaAbierta || !negocioId) return 0;
+        const reps = await db.reparaciones.where('negocio_id').equals(negocioId).toArray();
+        let total = 0;
+        for (const r of reps) {
+            if (r.metodo_abono === 'efectivo' && r.abono > 0 && r.fecha_creacion > cajaAbierta.fecha_apertura) {
+                total += r.abono;
+            }
+            if (r.estado === 'entregado' && r.metodo_pago_final === 'efectivo' && r.fecha_entrega && r.fecha_entrega > cajaAbierta.fecha_apertura) {
+                total += Math.max(0, r.total - r.abono);
+            }
+        }
+        return total;
+    }, [cajaAbierta, negocioId]) ?? 0;
+
+    // Ingresos en EFECTIVO de APARTADOS en el turno (cada abono con su propia fecha/método)
+    const efectivoApartadosTurno = useLiveQuery(async () => {
+        if (!cajaAbierta || !negocioId) return 0;
+        const aps = await db.apartados.where('negocio_id').equals(negocioId).toArray();
+        let total = 0;
+        for (const a of aps) {
+            for (const ab of a.abonos) {
+                if (ab.metodo === 'efectivo' && ab.fecha > cajaAbierta.fecha_apertura) total += ab.monto;
+            }
+        }
+        return total;
+    }, [cajaAbierta, negocioId]) ?? 0;
+
     const totalContado = useMemo(() => {
         return DENOMINACIONES.reduce((sum, d) => {
             return sum + (d.valor * (denominaciones[String(d.valor)] || 0));
@@ -87,7 +116,7 @@ export default function CajaModal({ isOpen, onClose }: Props) {
     }, [denominaciones]);
 
     const montoEsperado = cajaAbierta
-        ? cajaAbierta.monto_apertura + ventasEfectivoDesdeApertura - gastosEfectivoTurno
+        ? cajaAbierta.monto_apertura + ventasEfectivoDesdeApertura + efectivoReparacionesTurno + efectivoApartadosTurno - gastosEfectivoTurno
         : 0;
     const diferencia = totalContado - montoEsperado;
 
@@ -243,6 +272,9 @@ export default function CajaModal({ isOpen, onClose }: Props) {
                     `*Resumen Efectivo:*\n` +
                     `💵 Apertura: ${formatDOP(cajaAbierta.monto_apertura)}\n` +
                     `📈 Ventas Efectivo: ${formatDOP(ventasEfectivoDesdeApertura)}\n` +
+                    (efectivoReparacionesTurno > 0 ? `🔧 Reparaciones Efectivo: ${formatDOP(efectivoReparacionesTurno)}\n` : '') +
+                    (efectivoApartadosTurno > 0 ? `🔖 Apartados Efectivo: ${formatDOP(efectivoApartadosTurno)}\n` : '') +
+                    (gastosEfectivoTurno > 0 ? `🧾 Gastos Efectivo: -${formatDOP(gastosEfectivoTurno)}\n` : '') +
                     `💰 Efectivo Esperado: ${formatDOP(montoEsperado)}\n` +
                     `🏦 Efectivo Físico Contado: ${formatDOP(totalContado)}\n\n` +
                     `*Cuadre:*\n` +
@@ -350,7 +382,7 @@ export default function CajaModal({ isOpen, onClose }: Props) {
                             </div>
                         </div>
 
-                        <div className={`grid gap-3 ${gastosEfectivoTurno > 0 ? 'grid-cols-3' : 'grid-cols-2'}`}>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                             <div className="bg-navy p-3 rounded-xl border border-navy-3">
                                 <p className="text-[10px] font-bold text-vr-gray uppercase tracking-wider">Apertura</p>
                                 <p className="text-lg font-black font-mono text-white">{formatDOP(cajaAbierta!.monto_apertura)}</p>
@@ -359,6 +391,18 @@ export default function CajaModal({ isOpen, onClose }: Props) {
                                 <p className="text-[10px] font-bold text-vr-gray uppercase tracking-wider">Ventas Efectivo</p>
                                 <p className="text-lg font-black font-mono text-vr-green">{formatDOP(ventasEfectivoDesdeApertura)}</p>
                             </div>
+                            {efectivoReparacionesTurno > 0 && (
+                                <div className="bg-navy p-3 rounded-xl border border-navy-3">
+                                    <p className="text-[10px] font-bold text-vr-gray uppercase tracking-wider">Reparac. Efectivo</p>
+                                    <p className="text-lg font-black font-mono text-vr-green">{formatDOP(efectivoReparacionesTurno)}</p>
+                                </div>
+                            )}
+                            {efectivoApartadosTurno > 0 && (
+                                <div className="bg-navy p-3 rounded-xl border border-navy-3">
+                                    <p className="text-[10px] font-bold text-vr-gray uppercase tracking-wider">Apartados Efectivo</p>
+                                    <p className="text-lg font-black font-mono text-vr-green">{formatDOP(efectivoApartadosTurno)}</p>
+                                </div>
+                            )}
                             {gastosEfectivoTurno > 0 && (
                                 <div className="bg-navy p-3 rounded-xl border border-vr-red/20">
                                     <p className="text-[10px] font-bold text-vr-red uppercase tracking-wider">Gastos Efectivo</p>
