@@ -2,6 +2,7 @@
 'use client';
 
 import React, { useState, useMemo, useEffect, useRef } from 'react';
+import Link from 'next/link';
 import { db } from '@/lib/db/dexie';
 import { registrarMovimientoStock } from '@/lib/db/stock';
 import { useVentasTenant, useVentaDetallesPorVentas, useDevolucionesTenant, useClientesTenant, useProductosTenant } from '@/lib/db/tenantQuery';
@@ -38,6 +39,15 @@ const METODO_COLOR: Record<string, string> = {
 
 const RAZONES = ['Producto defectuoso', 'Error de cobro', 'Cliente no lo quiso', 'Producto incorrecto', 'Otro'];
 
+// Config visual del feed unificado de movimientos
+const MOV_META: Record<string, { icono: string; label: string }> = {
+    venta: { icono: '💰', label: 'Venta' },
+    reparacion: { icono: '🔧', label: 'Reparación' },
+    apartado: { icono: '🔖', label: 'Apartado' },
+    devolucion: { icono: '↩️', label: 'Devolución' },
+    gasto: { icono: '💸', label: 'Gasto' },
+};
+
 interface ItemDevolucion {
     producto_id: string;
     nombre: string;
@@ -48,7 +58,7 @@ interface ItemDevolucion {
 }
 
 export default function HistorialPage() {
-    const { negocioId, showToast, negocioNombre, negocioRnc, negocioDireccion, negocioTelefono, negocioMensajeTicket, negocioLogo, impresion, rolUsuario } = useConfigStore();
+    const { negocioId, showToast, negocioNombre, negocioRnc, negocioDireccion, negocioTelefono, negocioMensajeTicket, negocioLogo, impresion, rolUsuario, planTier } = useConfigStore();
     const [confirmDevolucionPin, setConfirmDevolucionPin] = useState(false);
     const ventasRaw = useLiveQuery(
         () => negocioId ? db.ventas.where('negocio_id').equals(negocioId).limit(1).toArray() : [],
@@ -132,6 +142,11 @@ export default function HistorialPage() {
     };
 
     const [filtroMetodo, setFiltroMetodo] = useState<string>('todos');
+    // Vista: 'ventas' (tabla detallada de siempre) | 'movimientos' (todo unificado)
+    const [vista, setVista] = useState<'ventas' | 'movimientos'>('ventas');
+    const esPro = planTier === 'pro';
+    type MovTipo = 'venta' | 'reparacion' | 'apartado' | 'devolucion' | 'gasto';
+    const [movFiltro, setMovFiltro] = useState<MovTipo | 'todo'>('todo');
     const ITEMS_POR_PAGINA = 25;
     const [pagina, setPagina] = useState(1);
     const [ventaExpandida, setVentaExpandida] = useState<string | null>(null);
@@ -161,6 +176,64 @@ export default function HistorialPage() {
         clientes.forEach(c => m.set(c.id, c.nombre));
         return m;
     }, [clientes]);
+
+    // ── Fuentes para el feed de Movimientos ───────────────────────────────────
+    const reparacionesRaw = useLiveQuery(
+        () => (esPro && negocioId) ? db.reparaciones.where('negocio_id').equals(negocioId).toArray() : [],
+        [esPro, negocioId]
+    );
+    const apartadosMovRaw = useLiveQuery(
+        () => (esPro && negocioId) ? db.apartados.where('negocio_id').equals(negocioId).toArray() : [],
+        [esPro, negocioId]
+    );
+    const gastosRaw = useLiveQuery(
+        () => negocioId ? db.gastos.where('negocio_id').equals(negocioId).toArray() : [],
+        [negocioId]
+    );
+
+    interface Mov {
+        key: string; tipo: MovTipo; fecha: number; titulo: string; sub?: string;
+        monto: number; signo: 'in' | 'out'; estado?: string; href?: string;
+    }
+
+    const movimientos = useMemo<Mov[]>(() => {
+        const reps = reparacionesRaw ?? [];
+        const aps = apartadosMovRaw ?? [];
+        const gastos = (gastosRaw ?? []).filter(g => !g.eliminado);
+        const lista: Mov[] = [];
+
+        ventas.forEach(v => lista.push({
+            key: `v-${v.id}`, tipo: 'venta', fecha: v.fecha_creacion,
+            titulo: `Venta #${formatTicket(v.numero_ticket, v.caja_codigo)}`,
+            sub: v.metodo_pago === 'fiado' && v.cliente_id ? (clientesMap.get(v.cliente_id) || 'Fiado') : undefined,
+            monto: v.total, signo: 'in',
+        }));
+        reps.forEach(r => lista.push({
+            key: `r-${r.id}`, tipo: 'reparacion', fecha: r.fecha_creacion,
+            titulo: `${r.folio} · ${[r.equipo_marca, r.equipo_modelo].filter(Boolean).join(' ')}`,
+            sub: r.cliente_nombre, monto: r.total, signo: 'in', estado: r.estado, href: '/reparaciones',
+        }));
+        aps.forEach(a => lista.push({
+            key: `a-${a.id}`, tipo: 'apartado', fecha: a.fecha_creacion,
+            titulo: `${a.folio} · ${a.items.map(i => i.nombre).join(', ')}`,
+            sub: `${a.cliente_nombre} · abonado ${formatDOP(a.abonado)}`, monto: a.total, signo: 'in', estado: a.estado, href: '/apartados',
+        }));
+        devoluciones.forEach(d => lista.push({
+            key: `d-${d.id}`, tipo: 'devolucion', fecha: d.fecha_creacion,
+            titulo: 'Devolución', sub: d.razon, monto: d.monto_devuelto, signo: 'out',
+        }));
+        gastos.forEach(g => lista.push({
+            key: `g-${g.id}`, tipo: 'gasto', fecha: g.fecha_creacion,
+            titulo: g.descripcion || 'Gasto', sub: g.categoria, monto: g.monto, signo: 'out',
+        }));
+
+        return lista.sort((a, b) => b.fecha - a.fecha);
+    }, [ventas, reparacionesRaw, apartadosMovRaw, devoluciones, gastosRaw, clientesMap]);
+
+    const movimientosFiltrados = useMemo(
+        () => movFiltro === 'todo' ? movimientos : movimientos.filter(m => m.tipo === movFiltro),
+        [movimientos, movFiltro]
+    );
 
     // Seriales (IMEI) vendidos, agrupados por venta — para mostrarlos en el detalle
     // y en la reimpresión. venta_id no está indexado, así que filtramos en memoria.
@@ -192,13 +265,19 @@ export default function HistorialPage() {
         return ventas.filter(v => v.metodo_pago === filtroMetodo);
     }, [ventas, filtroMetodo]);
 
-    useEffect(() => { setPagina(1); }, [filtroMetodo]);
+    useEffect(() => { setPagina(1); }, [filtroMetodo, vista, movFiltro]);
 
     const ventasPaginadas = useMemo(() => {
         const inicio = (pagina - 1) * ITEMS_POR_PAGINA;
         return ventasFiltradas.slice(inicio, inicio + ITEMS_POR_PAGINA);
     }, [ventasFiltradas, pagina]);
     const totalPaginas = Math.ceil(ventasFiltradas.length / ITEMS_POR_PAGINA);
+
+    const movimientosPaginados = useMemo(() => {
+        const inicio = (pagina - 1) * ITEMS_POR_PAGINA;
+        return movimientosFiltrados.slice(inicio, inicio + ITEMS_POR_PAGINA);
+    }, [movimientosFiltrados, pagina]);
+    const totalPaginasMov = Math.ceil(movimientosFiltrados.length / ITEMS_POR_PAGINA);
 
     const abrirDevolucion = (venta: VentaLocal) => {
         const items = detallesPorVenta.get(venta.id) || [];
@@ -354,12 +433,27 @@ export default function HistorialPage() {
                         {/* Header */}
                         <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 mb-4 sm:mb-6">
                             <div>
-                                <h1 className="text-2xl sm:text-3xl font-display font-extrabold text-white">Historial de Ventas</h1>
-                                <p className="text-vr-gray mt-0.5 text-sm">{ventas.length} ventas registradas</p>
+                                <h1 className="text-2xl sm:text-3xl font-display font-extrabold text-white">Historial</h1>
+                                <p className="text-vr-gray mt-0.5 text-sm">
+                                    {vista === 'ventas' ? `${ventas.length} ventas registradas` : `${movimientosFiltrados.length} movimientos`}
+                                </p>
+                            </div>
+                            {/* Toggle de vista */}
+                            <div className="flex bg-navy-2 border border-navy-3 rounded-xl p-1 gap-1 self-start">
+                                {([['ventas', 'Ventas'], ['movimientos', 'Movimientos']] as const).map(([k, label]) => (
+                                    <button
+                                        key={k}
+                                        onClick={() => setVista(k)}
+                                        className={`px-3 py-1.5 rounded-lg text-sm font-bold transition-all ${vista === k ? 'bg-gold text-navy' : 'text-vr-gray hover:text-white'}`}
+                                    >
+                                        {label}
+                                    </button>
+                                ))}
                             </div>
                         </div>
 
-                        {/* Filtros */}
+                        {/* Filtros de método (solo vista Ventas) */}
+                        {vista === 'ventas' && (
                         <div className="flex gap-1.5 sm:gap-2 mb-4 sm:mb-6 flex-wrap">
                             {['todos', 'efectivo', 'tarjeta', 'transferencia', 'fiado', 'mixto'].map(m => (
                                 <button
@@ -375,8 +469,31 @@ export default function HistorialPage() {
                                 </button>
                             ))}
                         </div>
+                        )}
 
-                        {/* Tabla */}
+                        {/* Chips de tipo (solo vista Movimientos) */}
+                        {vista === 'movimientos' && (
+                        <div className="flex gap-1.5 sm:gap-2 mb-4 sm:mb-6 flex-wrap">
+                            {([
+                                ['todo', 'Todo'], ['venta', 'Ventas'],
+                                ...(esPro ? [['reparacion', 'Reparaciones'], ['apartado', 'Apartados']] as const : []),
+                                ['devolucion', 'Devoluciones'], ['gasto', 'Gastos'],
+                            ] as const).map(([k, label]) => (
+                                <button
+                                    key={k}
+                                    onClick={() => setMovFiltro(k as MovTipo | 'todo')}
+                                    className={`px-3 sm:px-4 py-1.5 rounded-full text-xs sm:text-sm font-bold border transition-all ${
+                                        movFiltro === k ? 'bg-gold/15 border-gold text-gold' : 'border-navy-3 text-vr-gray hover:text-white'
+                                    }`}
+                                >
+                                    {label}
+                                </button>
+                            ))}
+                        </div>
+                        )}
+
+                        {/* Tabla de ventas */}
+                        {vista === 'ventas' && (
                         <div className="bg-navy-2 rounded-2xl border border-navy-3 overflow-hidden">
                             {isLoading ? (
                                 <table className="w-full">
@@ -512,6 +629,54 @@ export default function HistorialPage() {
                                 </>
                             )}
                         </div>
+                        )}
+
+                        {/* Feed unificado de movimientos */}
+                        {vista === 'movimientos' && (
+                        <div className="bg-navy-2 rounded-2xl border border-navy-3 overflow-hidden">
+                            {isLoading ? (
+                                <table className="w-full"><tbody><SkeletonTable rows={8} cols={3} /></tbody></table>
+                            ) : movimientosFiltrados.length === 0 ? (
+                                <div className="flex flex-col items-center justify-center py-20 text-vr-gray">
+                                    <span className="text-4xl mb-3">🧾</span>
+                                    <p className="font-medium">No hay movimientos en esta vista</p>
+                                </div>
+                            ) : (
+                                <>
+                                <div className="divide-y divide-navy-3/50">
+                                    {movimientosPaginados.map(m => {
+                                        const meta = MOV_META[m.tipo];
+                                        const contenido = (
+                                            <div className="flex items-center gap-3 px-3 sm:px-4 py-3 hover:bg-navy-3/20 transition-colors">
+                                                <span className="text-lg shrink-0">{meta.icono}</span>
+                                                <div className="flex-1 min-w-0">
+                                                    <p className="text-sm font-bold text-white truncate">{m.titulo}</p>
+                                                    <p className="text-[11px] text-vr-gray truncate">
+                                                        {meta.label}{m.sub ? ` · ${m.sub}` : ''} · {formatFecha(m.fecha)}
+                                                        {m.estado ? ` · ${m.estado}` : ''}
+                                                    </p>
+                                                </div>
+                                                <span className={`font-mono font-black text-sm whitespace-nowrap shrink-0 ${m.signo === 'out' ? 'text-vr-red' : 'text-vr-green'}`}>
+                                                    {m.signo === 'out' ? '−' : '+'}{formatDOP(m.monto)}
+                                                </span>
+                                            </div>
+                                        );
+                                        return m.href
+                                            ? <Link key={m.key} href={m.href} className="block">{contenido}</Link>
+                                            : <div key={m.key}>{contenido}</div>;
+                                    })}
+                                </div>
+                                <Pagination
+                                    pagina={pagina}
+                                    totalPaginas={totalPaginasMov}
+                                    onCambiar={setPagina}
+                                    totalItems={movimientosFiltrados.length}
+                                    itemsPorPagina={ITEMS_POR_PAGINA}
+                                />
+                                </>
+                            )}
+                        </div>
+                        )}
                     </div>
                 </div>
 
