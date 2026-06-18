@@ -9,6 +9,28 @@ const supabaseAdmin = createClient(
     { auth: { autoRefreshToken: false, persistSession: false } }
 );
 
+// Dominio base para el link de invitación. Robusto: prioriza la env var explícita,
+// si no, usa el dominio real del request (en Vercel coincide con el dominio del
+// usuario), luego VERCEL_URL, y solo en desarrollo cae a localhost.
+function getBaseUrl(req: NextRequest): string {
+    const explicit = process.env.NEXT_PUBLIC_SITE_URL;
+    if (explicit) return explicit.replace(/\/$/, '');
+
+    const origin = req.headers.get('origin');
+    if (origin) return origin.replace(/\/$/, '');
+
+    const host = req.headers.get('host');
+    if (host) {
+        const proto = req.headers.get('x-forwarded-proto') || (host.startsWith('localhost') ? 'http' : 'https');
+        return `${proto}://${host}`;
+    }
+
+    const vercel = process.env.VERCEL_PROJECT_PRODUCTION_URL || process.env.VERCEL_URL;
+    if (vercel) return `https://${vercel}`;
+
+    return 'http://localhost:3000';
+}
+
 export async function POST(req: NextRequest) {
     try {
         const { email, nombre, rol, negocioId } = await req.json();
@@ -36,8 +58,7 @@ export async function POST(req: NextRequest) {
 
         if (insErr) return NextResponse.json({ error: insErr.message }, { status: 500 });
 
-        const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000';
-        const inviteLink = `${siteUrl}/unirse?token=${nuevo.invite_token}`;
+        const inviteLink = `${getBaseUrl(req)}/unirse?token=${nuevo.invite_token}`;
 
         return NextResponse.json({ ok: true, inviteLink });
     } catch (e: any) {
