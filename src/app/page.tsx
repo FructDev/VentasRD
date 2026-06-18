@@ -50,7 +50,12 @@ const ProductCard = memo(function ProductCard({
             className="w-10 h-10 sm:w-12 sm:h-12 rounded-lg object-cover bg-white shrink-0 border border-navy-3"
           />
         )}
-        <span className="font-semibold text-white line-clamp-2 text-xs sm:text-sm group-hover:text-gold-2 transition-colors">{producto.nombre}</span>
+        <div className="min-w-0 flex-1">
+          <span className="font-semibold text-white line-clamp-2 text-xs sm:text-sm group-hover:text-gold-2 transition-colors block">{producto.nombre}</span>
+          {producto.ubicacion && (
+            <span className="block text-[10px] text-vr-gray truncate mt-0.5" title={producto.ubicacion}>📍 {producto.ubicacion}</span>
+          )}
+        </div>
       </div>
       <div className="flex justify-between items-end mt-1">
         <span className="text-base sm:text-lg font-bold font-mono text-gold">{formatDOP(producto.precio_venta)}</span>
