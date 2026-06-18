@@ -87,37 +87,52 @@ export default function CajaModal({ isOpen, onClose }: Props) {
             .reduce((s, g) => s + g.monto, 0);
     }, [cajaAbierta, negocioId]) ?? 0;
 
-    // Ingresos en EFECTIVO de REPARACIONES en el turno (abono al recibir + saldo al entregar)
-    const efectivoReparacionesTurno = useLiveQuery(async () => {
-        if (!cajaAbierta || !negocioId) return 0;
+    const SIN_INGRESO = { efectivo: 0, tarjeta: 0, transferencia: 0, total: 0 };
+    // Ingresos de REPARACIONES en el turno, desglosados por método (abonos + saldo)
+    const ingresosReparacionesTurno = useLiveQuery(async () => {
+        if (!cajaAbierta || !negocioId) return { ...SIN_INGRESO };
         const reps = await db.reparaciones.where('negocio_id').equals(negocioId).toArray();
         const ap = cajaAbierta.fecha_apertura;
-        let total = 0;
+        const acc = { efectivo: 0, tarjeta: 0, transferencia: 0, total: 0 };
+        const sumar = (metodo: string, monto: number) => {
+            if (metodo === 'efectivo') acc.efectivo += monto;
+            else if (metodo === 'tarjeta') acc.tarjeta += monto;
+            else if (metodo === 'transferencia') acc.transferencia += monto;
+            acc.total += monto;
+        };
         for (const r of reps) {
             if (r.pagos && r.pagos.length) {
-                // Modelo nuevo: cada pago con su propia fecha y método
-                for (const p of r.pagos) if (p.metodo === 'efectivo' && p.fecha > ap) total += p.monto;
+                for (const p of r.pagos) if (p.fecha > ap) sumar(p.metodo, p.monto);
             } else {
                 // Legado: abono inicial + saldo a la entrega
-                if (r.metodo_abono === 'efectivo' && r.abono > 0 && r.fecha_creacion > ap) total += r.abono;
-                if (r.estado === 'entregado' && r.metodo_pago_final === 'efectivo' && r.fecha_entrega && r.fecha_entrega > ap) total += Math.max(0, r.total - r.abono);
+                if (r.abono > 0 && r.fecha_creacion > ap) sumar(r.metodo_abono ?? 'efectivo', r.abono);
+                if (r.estado === 'entregado' && r.fecha_entrega && r.fecha_entrega > ap) sumar(r.metodo_pago_final ?? 'efectivo', Math.max(0, r.total - r.abono));
             }
         }
-        return total;
-    }, [cajaAbierta, negocioId]) ?? 0;
+        return acc;
+    }, [cajaAbierta, negocioId]) ?? { ...SIN_INGRESO };
 
-    // Ingresos en EFECTIVO de APARTADOS en el turno (cada abono con su propia fecha/método)
-    const efectivoApartadosTurno = useLiveQuery(async () => {
-        if (!cajaAbierta || !negocioId) return 0;
+    // Ingresos de APARTADOS en el turno, desglosados por método (cada abono por su fecha)
+    const ingresosApartadosTurno = useLiveQuery(async () => {
+        if (!cajaAbierta || !negocioId) return { ...SIN_INGRESO };
         const aps = await db.apartados.where('negocio_id').equals(negocioId).toArray();
-        let total = 0;
+        const ap = cajaAbierta.fecha_apertura;
+        const acc = { efectivo: 0, tarjeta: 0, transferencia: 0, total: 0 };
         for (const a of aps) {
             for (const ab of a.abonos) {
-                if (ab.metodo === 'efectivo' && ab.fecha > cajaAbierta.fecha_apertura) total += ab.monto;
+                if (ab.fecha <= ap) continue;
+                if (ab.metodo === 'efectivo') acc.efectivo += ab.monto;
+                else if (ab.metodo === 'tarjeta') acc.tarjeta += ab.monto;
+                else if (ab.metodo === 'transferencia') acc.transferencia += ab.monto;
+                acc.total += ab.monto;
             }
         }
-        return total;
-    }, [cajaAbierta, negocioId]) ?? 0;
+        return acc;
+    }, [cajaAbierta, negocioId]) ?? { ...SIN_INGRESO };
+
+    // Atajos de efectivo (para el cuadre de la gaveta)
+    const efectivoReparacionesTurno = ingresosReparacionesTurno.efectivo;
+    const efectivoApartadosTurno = ingresosApartadosTurno.efectivo;
 
     // Detalle del efectivo del turno (hilo de dinero): cada movimiento que entra
     // o sale de la gaveta, para auditar de dónde sale el "efectivo esperado".
@@ -221,12 +236,15 @@ export default function CajaModal({ isOpen, onClose }: Props) {
             sucursal_id: sucursalId || undefined,
             tipo,
             fecha_creacion: Date.now(),
-            efectivo: resumenVentas.efectivo,
-            tarjeta: resumenVentas.tarjeta,
-            transferencia: resumenVentas.transferencia,
+            // Método combinado: ventas + reparaciones + apartados (todo el dinero del turno)
+            efectivo: resumenVentas.efectivo + ingresosReparacionesTurno.efectivo + ingresosApartadosTurno.efectivo,
+            tarjeta: resumenVentas.tarjeta + ingresosReparacionesTurno.tarjeta + ingresosApartadosTurno.tarjeta,
+            transferencia: resumenVentas.transferencia + ingresosReparacionesTurno.transferencia + ingresosApartadosTurno.transferencia,
             fiado: resumenVentas.fiado,
             mixto: resumenVentas.mixto,
             total_ventas: resumenVentas.total,
+            ingreso_reparaciones: ingresosReparacionesTurno.total,
+            ingreso_apartados: ingresosApartadosTurno.total,
             cantidad_transacciones: resumenVentas.cantidad,
             ...(tipo === 'Z' && extras && {
                 monto_apertura: cajaAbierta.monto_apertura,

@@ -192,8 +192,13 @@ export default function DashboardPage() {
         const apActivos = apartadosAll.filter(a => a.estado === 'activo');
         const apPorCobrar = apActivos.reduce((s, a) => s + Math.max(0, a.total - a.abonado), 0);
 
-        return { repEntregadas: repEntregadas.length, repIngreso, repGanancia, repEnProceso, apAbonado, apActivos: apActivos.length, apPorCobrar };
-    }, [reparacionesAll, apartadosAll, desde, hasta]);
+        // Ganancia de apartados completados en el período (precio - costo del producto)
+        const prodCost = new Map(productos.map(p => [p.id, p.costo]));
+        const apCompletados = apartadosAll.filter(a => a.estado === 'completado' && a.fecha_completado && a.fecha_completado >= desde && a.fecha_completado <= hasta);
+        const apGanancia = apCompletados.reduce((s, a) => s + a.items.reduce((si, it) => si + (it.precio_unitario - (prodCost.get(it.producto_id) ?? 0)) * it.cantidad, 0), 0);
+
+        return { repEntregadas: repEntregadas.length, repIngreso, repGanancia, repEnProceso, apAbonado, apActivos: apActivos.length, apPorCobrar, apGanancia };
+    }, [reparacionesAll, apartadosAll, productos, desde, hasta]);
 
     return (
         <div className="min-h-screen bg-navy flex flex-col">
@@ -259,14 +264,18 @@ export default function DashboardPage() {
                             <p className="text-vr-gray font-bold uppercase text-[10px] tracking-widest">Ganancia Neta</p>
                             {(() => {
                                 const totalGastos = gastosPeriodo.reduce((s, g) => s + g.monto, 0);
-                                const neta = gananciaBruta - totalGastos;
+                                const gananciaServicios = resumenPro.repGanancia + resumenPro.apGanancia; // 0 si no es Pro
+                                const brutaTotal = gananciaBruta + gananciaServicios;
+                                const neta = brutaTotal - totalGastos;
                                 return (
                                     <>
                                         <h2 className={`text-2xl font-black font-mono mt-2 ${neta >= 0 ? 'text-vr-green' : 'text-vr-red'}`}>{formatDOP(neta)}</h2>
                                         <p className="mt-1 text-vr-gray text-xs">
                                             {totalGastos > 0
-                                                ? <>Bruta {formatDOP(gananciaBruta)} − <Link href="/gastos" className="text-vr-red hover:underline">gastos {formatDOP(totalGastos)}</Link></>
-                                                : totalVentas > 0 ? `${((gananciaBruta / totalVentas) * 100).toFixed(0)}% margen` : '-'}
+                                                ? <>Bruta {formatDOP(brutaTotal)} − <Link href="/gastos" className="text-vr-red hover:underline">gastos {formatDOP(totalGastos)}</Link></>
+                                                : gananciaServicios > 0
+                                                    ? <>Ventas {formatDOP(gananciaBruta)} + servicios {formatDOP(gananciaServicios)}</>
+                                                    : totalVentas > 0 ? `${((gananciaBruta / totalVentas) * 100).toFixed(0)}% margen` : '-'}
                                         </p>
                                     </>
                                 );
