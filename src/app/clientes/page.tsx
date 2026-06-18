@@ -16,9 +16,20 @@ import { SkeletonTable } from '@/components/ui/Skeleton';
 import ConfirmModal from '@/components/ui/ConfirmModal';
 
 export default function ClientesPage() {
-    const { negocioId, showToast, negocioNombre } = useConfigStore();
+    const { negocioId, showToast, negocioNombre, planTier } = useConfigStore();
     const clientes = useClientesTenant();
     const transacciones = useTransaccionesFiadoTenant();
+    const esPro = planTier === 'pro';
+
+    // Fuentes Pro para la ficha del cliente
+    const reparacionesAll = useLiveQuery(
+        () => (esPro && negocioId) ? db.reparaciones.where('negocio_id').equals(negocioId).toArray() : [],
+        [esPro, negocioId]
+    );
+    const apartadosAll = useLiveQuery(
+        () => (esPro && negocioId) ? db.apartados.where('negocio_id').equals(negocioId).toArray() : [],
+        [esPro, negocioId]
+    );
 
     const clientesRaw = useLiveQuery(
         () => negocioId ? db.clientes.where('negocio_id').equals(negocioId).limit(1).toArray() : [],
@@ -41,6 +52,41 @@ export default function ClientesPage() {
 
     const [clienteAEliminar, setClienteAEliminar] = useState<ClienteLocal | null>(null);
     const [isModalAbonoOpen, setIsModalAbonoOpen] = useState(false);
+
+    // Ficha de cliente (trazabilidad)
+    const [fichaCliente, setFichaCliente] = useState<(ClienteLocal & { saldo_pendiente: number }) | null>(null);
+    const fichaData = useMemo(() => {
+        if (!fichaCliente) return null;
+        const reps = (reparacionesAll ?? []).filter(r => r.cliente_id === fichaCliente.id);
+        const aps = (apartadosAll ?? []).filter(a => a.cliente_id === fichaCliente.id);
+        const txs = transacciones.filter(t => t.cliente_id === fichaCliente.id);
+        const cargos = txs.filter(t => t.tipo === 'cargo').reduce((s, t) => s + t.monto, 0);
+
+        type FM = { key: string; icono: string; titulo: string; sub: string; fecha: number; monto: number; signo: 'in' | 'out' };
+        const movs: FM[] = [];
+        txs.forEach(t => movs.push({
+            key: `t-${t.id}`, icono: t.tipo === 'abono' ? '💵' : '🧾',
+            titulo: t.tipo === 'abono' ? 'Abono' : 'Compra a crédito', sub: t.concepto || '',
+            fecha: t.fecha_creacion, monto: t.monto, signo: t.tipo === 'abono' ? 'out' : 'in',
+        }));
+        reps.forEach(r => movs.push({
+            key: `r-${r.id}`, icono: '🔧', titulo: `${r.folio} · ${[r.equipo_marca, r.equipo_modelo].filter(Boolean).join(' ')}`,
+            sub: `Reparación · ${r.estado}`, fecha: r.fecha_creacion, monto: r.total, signo: 'in',
+        }));
+        aps.forEach(a => movs.push({
+            key: `a-${a.id}`, icono: '🔖', titulo: `${a.folio} · ${a.items.map(i => i.nombre).join(', ')}`,
+            sub: `Apartado · ${a.estado} · abonado ${formatDOP(a.abonado)}`, fecha: a.fecha_creacion, monto: a.total, signo: 'in',
+        }));
+        movs.sort((x, y) => y.fecha - x.fecha);
+
+        return {
+            movs,
+            totalFiado: cargos,
+            reparaciones: reps.length,
+            apartados: aps.length,
+            comprado: cargos + reps.reduce((s, r) => s + r.total, 0) + aps.reduce((s, a) => s + a.abonado, 0),
+        };
+    }, [fichaCliente, reparacionesAll, apartadosAll, transacciones]);
 
     const eliminarCliente = async () => {
         if (!clienteAEliminar) return;
@@ -250,7 +296,7 @@ export default function ClientesPage() {
                                         <tr key={cliente.id} className="border-b border-navy-3/50 hover:bg-navy-3/30 transition-colors">
                                             <td className="p-3 sm:p-4">
                                                 <div className="flex items-center gap-2 flex-wrap">
-                                                    <span className="font-bold text-white text-sm">{cliente.nombre}</span>
+                                                    <button onClick={() => setFichaCliente(cliente)} className="font-bold text-white text-sm hover:text-gold transition-colors text-left" title="Ver ficha del cliente">{cliente.nombre}</button>
                                                     {cliente.al_por_mayor && (
                                                         <span className="px-1.5 py-0.5 rounded text-[10px] font-black uppercase bg-vr-green/15 text-vr-green">Mayor</span>
                                                     )}
@@ -422,6 +468,80 @@ export default function ClientesPage() {
                                         <button type="button" onClick={() => setIsModalAbonoOpen(false)} className="w-full py-3 font-bold text-vr-gray hover:text-white hover:bg-navy-3 rounded-xl transition-all">Cancelar</button>
                                     </div>
                                 </form>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* FICHA DEL CLIENTE — trazabilidad */}
+                    {fichaCliente && fichaData && (
+                        <div className="fixed inset-0 bg-black/70 backdrop-blur-md z-50 flex items-end sm:items-center justify-center sm:p-4 animate-fade-in">
+                            <div className="bg-navy-2 w-full sm:max-w-lg rounded-t-2xl sm:rounded-2xl border border-navy-3 shadow-2xl overflow-hidden max-h-[92vh] sm:max-h-[88vh] flex flex-col animate-scale-in">
+                                <div className="p-4 sm:p-6 border-b border-navy-3 flex justify-between items-start gap-3">
+                                    <div className="min-w-0">
+                                        <h2 className="text-xl font-display font-bold text-white truncate">{fichaCliente.nombre}</h2>
+                                        <p className="text-sm text-vr-gray mt-0.5">{fichaCliente.telefono || 'Sin teléfono'}</p>
+                                    </div>
+                                    <div className="flex items-center gap-2 shrink-0">
+                                        {fichaCliente.telefono && (
+                                            <button onClick={() => enviarWhatsApp(fichaCliente)} className="px-3 py-1.5 bg-vr-green/10 text-vr-green font-bold rounded-lg hover:bg-vr-green/20 text-xs border border-vr-green/20 transition-all">📱 WhatsApp</button>
+                                        )}
+                                        <button onClick={() => setFichaCliente(null)} className="text-vr-gray hover:text-white font-bold text-xl transition-colors">✕</button>
+                                    </div>
+                                </div>
+
+                                {/* Resumen */}
+                                <div className="px-4 sm:px-6 pt-4 grid grid-cols-2 sm:grid-cols-4 gap-2">
+                                    <div className="bg-navy p-2.5 rounded-xl border border-navy-3">
+                                        <p className="text-[10px] font-bold text-vr-gray uppercase tracking-wider">Saldo</p>
+                                        <p className={`text-sm font-black font-mono mt-0.5 ${fichaCliente.saldo_pendiente > 0 ? 'text-vr-red' : 'text-vr-green'}`}>{formatDOP(fichaCliente.saldo_pendiente)}</p>
+                                    </div>
+                                    <div className="bg-navy p-2.5 rounded-xl border border-navy-3">
+                                        <p className="text-[10px] font-bold text-vr-gray uppercase tracking-wider">Total fiado</p>
+                                        <p className="text-sm font-black font-mono mt-0.5 text-white">{formatDOP(fichaData.totalFiado)}</p>
+                                    </div>
+                                    {esPro && (
+                                        <div className="bg-navy p-2.5 rounded-xl border border-navy-3">
+                                            <p className="text-[10px] font-bold text-vr-gray uppercase tracking-wider">Reparac.</p>
+                                            <p className="text-sm font-black font-mono mt-0.5 text-white">{fichaData.reparaciones}</p>
+                                        </div>
+                                    )}
+                                    {esPro && (
+                                        <div className="bg-navy p-2.5 rounded-xl border border-navy-3">
+                                            <p className="text-[10px] font-bold text-vr-gray uppercase tracking-wider">Apartados</p>
+                                            <p className="text-sm font-black font-mono mt-0.5 text-white">{fichaData.apartados}</p>
+                                        </div>
+                                    )}
+                                </div>
+
+                                {/* Movimientos del cliente */}
+                                <div className="flex-1 overflow-y-auto p-4 sm:p-6">
+                                    <p className="text-xs font-bold text-vr-gray uppercase tracking-wider mb-2">Actividad</p>
+                                    {fichaData.movs.length === 0 ? (
+                                        <p className="text-sm text-vr-gray text-center py-8">Este cliente aún no tiene movimientos.</p>
+                                    ) : (
+                                        <div className="space-y-1.5">
+                                            {fichaData.movs.map(m => (
+                                                <div key={m.key} className="flex items-center gap-3 bg-navy rounded-xl border border-navy-3 px-3 py-2.5">
+                                                    <span className="text-base shrink-0">{m.icono}</span>
+                                                    <div className="flex-1 min-w-0">
+                                                        <p className="text-sm font-bold text-white truncate">{m.titulo}</p>
+                                                        <p className="text-[11px] text-vr-gray truncate">{m.sub}{m.sub ? ' · ' : ''}{new Date(m.fecha).toLocaleDateString('es-DO')}</p>
+                                                    </div>
+                                                    <span className={`font-mono font-black text-sm whitespace-nowrap shrink-0 ${m.signo === 'out' ? 'text-vr-green' : 'text-white'}`}>
+                                                        {m.signo === 'out' ? '−' : ''}{formatDOP(m.monto)}
+                                                    </span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+
+                                <div className="p-4 sm:p-6 border-t border-navy-3 flex gap-3">
+                                    <button onClick={() => { abrirModalEditarCliente(fichaCliente); setFichaCliente(null); }} className="flex-1 py-3 font-bold text-gold border border-gold/30 rounded-xl hover:bg-gold/10 transition-colors">Editar</button>
+                                    {fichaCliente.saldo_pendiente > 0 && (
+                                        <button onClick={() => { abrirModalAbono(fichaCliente); setFichaCliente(null); }} className="flex-1 py-3 bg-vr-green text-white font-extrabold rounded-xl hover:bg-vr-green/90 transition-all">+ Abono</button>
+                                    )}
+                                </div>
                             </div>
                         </div>
                     )}
