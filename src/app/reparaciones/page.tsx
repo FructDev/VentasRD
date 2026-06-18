@@ -7,7 +7,7 @@ import { registrarMovimientoStock } from '@/lib/db/stock';
 import { useConfigStore } from '@/store/useConfigStore';
 import { useProductosTenant } from '@/lib/db/tenantQuery';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { ReparacionLocal, ReparacionEstado, RepuestoReparacion, MetodoPagoReparacion } from '@/types/database';
+import { ReparacionLocal, ReparacionEstado, RepuestoReparacion, MetodoPagoReparacion, ProductoLocal } from '@/types/database';
 import { formatDOP } from '@/lib/utils';
 import { v4 as uuidv4 } from 'uuid';
 import { useReactToPrint } from 'react-to-print';
@@ -89,6 +89,11 @@ export default function ReparacionesPage() {
 
     // Cancelar
     const [cancelando, setCancelando] = useState<ReparacionLocal | null>(null);
+
+    // Despiece: equipo abandonado del que se recuperan piezas para el inventario
+    const [despiezando, setDespiezando] = useState<ReparacionLocal | null>(null);
+    const [piezas, setPiezas] = useState<{ producto_id?: string; nombre: string; cantidad: number; costo: number }[]>([]);
+    const [busquedaPieza, setBusquedaPieza] = useState('');
 
     // Impresión
     const ticketRef = useRef<HTMLDivElement>(null);
@@ -244,20 +249,31 @@ export default function ReparacionesPage() {
             }
 
             // Descontar del inventario los repuestos nuevos que salen de stock
-            const repuestosFinal: RepuestoReparacion[] = [];
-            for (const rp of formData.repuestos) {
-                if (rp.desde_inventario && rp.producto_id && !rp.stock_aplicado) {
-                    await registrarMovimientoStock({
-                        productoId: rp.producto_id,
-                        tipo: 'reparacion',
-                        delta: -Math.abs(rp.cantidad),
-                        referenciaId: id,
-                    });
-                    repuestosFinal.push({ ...rp, stock_aplicado: true });
-                } else {
-                    repuestosFinal.push(rp);
+            // Reconciliación de stock de repuestos de inventario (maneja altas, bajas
+            // y cambios de cantidad al editar): se compara lo ya descontado contra lo
+            // deseado y se aplica solo la diferencia. Así el inventario nunca se descuadra.
+            const prevAplicado = new Map<string, number>();
+            (editando?.repuestos ?? []).forEach(rp => {
+                if (rp.desde_inventario && rp.producto_id && rp.stock_aplicado) {
+                    prevAplicado.set(rp.producto_id, (prevAplicado.get(rp.producto_id) ?? 0) + rp.cantidad);
+                }
+            });
+            const nuevoDeseado = new Map<string, number>();
+            formData.repuestos.forEach(rp => {
+                if (rp.desde_inventario && rp.producto_id) {
+                    nuevoDeseado.set(rp.producto_id, (nuevoDeseado.get(rp.producto_id) ?? 0) + rp.cantidad);
+                }
+            });
+            for (const pid of new Set([...prevAplicado.keys(), ...nuevoDeseado.keys()])) {
+                const diff = (nuevoDeseado.get(pid) ?? 0) - (prevAplicado.get(pid) ?? 0);
+                if (diff !== 0) {
+                    // diff>0 consume más (salida), diff<0 devuelve al stock (entrada)
+                    await registrarMovimientoStock({ productoId: pid, tipo: 'reparacion', delta: -diff, referenciaId: id });
                 }
             }
+            const repuestosFinal: RepuestoReparacion[] = formData.repuestos.map(rp =>
+                rp.desde_inventario && rp.producto_id ? { ...rp, stock_aplicado: true } : rp
+            );
 
             const total = repuestosFinal.reduce((s, r) => s + r.precio * r.cantidad, 0) + (parseFloat(formData.mano_obra) || 0);
             const abono = parseFloat(formData.abono) || 0;
@@ -342,9 +358,85 @@ export default function ReparacionesPage() {
 
     const confirmarCancelar = async () => {
         if (!cancelando) return;
-        await cambiarEstado(cancelando, 'cancelado');
+        const ahora = Date.now();
+        // Devolver al inventario los repuestos que ya se habían descontado
+        for (const rp of cancelando.repuestos) {
+            if (rp.desde_inventario && rp.producto_id && rp.stock_aplicado) {
+                await registrarMovimientoStock({ productoId: rp.producto_id, tipo: 'reparacion', delta: Math.abs(rp.cantidad), referenciaId: cancelando.id });
+            }
+        }
+        // Marcar cancelada y limpiar la marca de stock (ya se devolvió)
+        await db.reparaciones.update(cancelando.id, {
+            estado: 'cancelado',
+            repuestos: cancelando.repuestos.map(rp => rp.desde_inventario ? { ...rp, stock_aplicado: false } : rp),
+            estado_sincronizacion: 0,
+            fecha_actualizacion: ahora,
+        });
         setCancelando(null);
-        showToast('Reparación cancelada.', 'info');
+        showToast('Reparación cancelada. Los repuestos volvieron al inventario.', 'info');
+    };
+
+    // ── Despiece de equipo abandonado ────────────────────────────────────────
+    const abrirDespiece = (r: ReparacionLocal) => { setDespiezando(r); setPiezas([]); setBusquedaPieza(''); };
+    const agregarPiezaInventario = (prodId: string) => {
+        const p = productos.find(x => x.id === prodId);
+        if (!p || piezas.some(z => z.producto_id === prodId)) { setBusquedaPieza(''); return; }
+        setPiezas(prev => [...prev, { producto_id: p.id, nombre: p.nombre, cantidad: 1, costo: p.costo || 0 }]);
+        setBusquedaPieza('');
+    };
+    const agregarPiezaNueva = () => setPiezas(prev => [...prev, { nombre: '', cantidad: 1, costo: 0 }]);
+    const actualizarPieza = (idx: number, campo: 'nombre' | 'cantidad' | 'costo', valor: string) => {
+        setPiezas(prev => {
+            const arr = [...prev];
+            arr[idx] = { ...arr[idx], [campo]: campo === 'nombre' ? valor : (parseFloat(valor) || 0) };
+            return arr;
+        });
+    };
+    const quitarPieza = (idx: number) => setPiezas(prev => prev.filter((_, i) => i !== idx));
+
+    const piezasInventarioFiltradas = useMemo(() => {
+        const q = norm(busquedaPieza).trim();
+        if (!q) return [];
+        return productos.filter(p => norm(p.nombre).includes(q) || norm(p.codigo_barras).includes(q)).slice(0, 6);
+    }, [productos, busquedaPieza]);
+
+    const confirmarDespiece = async () => {
+        if (!despiezando || !negocioId) return;
+        const ahora = Date.now();
+        try {
+            // Devolver al inventario los repuestos que la reparación hubiera descontado
+            for (const rp of despiezando.repuestos) {
+                if (rp.desde_inventario && rp.producto_id && rp.stock_aplicado) {
+                    await registrarMovimientoStock({ productoId: rp.producto_id, tipo: 'reparacion', delta: Math.abs(rp.cantidad), referenciaId: despiezando.id });
+                }
+            }
+            // Agregar las piezas recuperadas al inventario (crea el insumo si es nuevo)
+            for (const pz of piezas) {
+                if (!pz.nombre.trim() || pz.cantidad <= 0) continue;
+                let pid = pz.producto_id;
+                if (!pid) {
+                    pid = uuidv4();
+                    await db.productos.put({
+                        id: pid, negocio_id: negocioId, nombre: pz.nombre.trim(), tipo: 'insumo',
+                        codigo_barras: '', precio_venta: 0, costo: pz.costo || 0,
+                        stock_actual: 0, stock_minimo: 0, tasa_itbis: 0,
+                        estado_sincronizacion: 0, fecha_actualizacion: ahora,
+                    } as ProductoLocal);
+                }
+                await registrarMovimientoStock({ productoId: pid, tipo: 'entrada', delta: Math.abs(pz.cantidad), referenciaId: despiezando.id });
+            }
+            await db.reparaciones.update(despiezando.id, {
+                estado: 'cancelado',
+                notas: `${despiezando.notas ? despiezando.notas + ' · ' : ''}Equipo abandonado y despiezado`,
+                repuestos: despiezando.repuestos.map(rp => rp.desde_inventario ? { ...rp, stock_aplicado: false } : rp),
+                estado_sincronizacion: 0, fecha_actualizacion: ahora,
+            });
+            setDespiezando(null);
+            showToast('Equipo despiezado: piezas agregadas al inventario.', 'success');
+        } catch (err) {
+            console.error('[despiece]', err);
+            showToast('No se pudo completar el despiece.', 'error');
+        }
     };
 
     const avisarWhatsApp = (r: ReparacionLocal) => {
@@ -512,6 +604,7 @@ export default function ReparacionesPage() {
                                                     {!terminada && (
                                                         <>
                                                             <button onClick={() => abrirEditar(r)} className="px-2.5 py-1.5 rounded-lg text-xs font-bold text-gold hover:bg-gold/10 transition-all">Editar</button>
+                                                            <button onClick={() => abrirDespiece(r)} className="px-2.5 py-1.5 rounded-lg text-xs font-bold text-vr-gray hover:text-white hover:bg-navy-3 transition-all" title="Equipo abandonado: recuperar piezas al inventario">🧩 Despiezar</button>
                                                             <button onClick={() => setCancelando(r)} className="px-2.5 py-1.5 rounded-lg text-xs font-bold text-vr-red hover:bg-vr-red/10 transition-all">Cancelar</button>
                                                         </>
                                                     )}
@@ -716,6 +809,64 @@ export default function ReparacionesPage() {
                         direccion={negocioDireccion || undefined}
                         telefono={negocioTelefono || undefined}
                     />
+                </div>
+            )}
+
+            {/* MODAL DESPIECE — equipo abandonado → piezas al inventario */}
+            {despiezando && (
+                <div className="fixed inset-0 bg-black/70 backdrop-blur-md z-50 flex items-end sm:items-center justify-center sm:p-4 animate-fade-in">
+                    <div className="bg-navy-2 w-full sm:max-w-lg rounded-t-2xl sm:rounded-2xl border border-navy-3 shadow-2xl overflow-hidden max-h-[92vh] flex flex-col animate-scale-in">
+                        <div className="p-4 sm:p-6 border-b border-navy-3 flex justify-between items-center shrink-0">
+                            <div>
+                                <h2 className="text-xl font-display font-bold text-white">🧩 Despiezar equipo</h2>
+                                <p className="text-sm text-vr-gray mt-0.5">{despiezando.folio} · {[despiezando.equipo_marca, despiezando.equipo_modelo].filter(Boolean).join(' ')}</p>
+                            </div>
+                            <button onClick={() => setDespiezando(null)} className="text-vr-gray hover:text-white font-bold text-xl transition-colors">✕</button>
+                        </div>
+                        <div className="p-4 sm:p-6 space-y-4 overflow-y-auto">
+                            <p className="text-xs text-vr-gray bg-navy rounded-xl border border-navy-3 p-3">
+                                El cliente dejó el equipo. Registra las piezas aprovechables: entrarán al inventario como repuestos y la reparación quedará cancelada.
+                            </p>
+
+                            <div className="relative">
+                                <div className="flex items-center justify-between mb-2">
+                                    <label className="text-sm font-bold text-vr-gray">Piezas recuperadas</label>
+                                    <button type="button" onClick={agregarPiezaNueva} className="text-xs font-bold text-gold hover:text-gold-2">+ Pieza nueva</button>
+                                </div>
+                                <input type="text" placeholder="Buscar repuesto existente en inventario…" className="w-full bg-navy-3 border border-navy-3 rounded-lg p-2.5 text-white text-sm focus:border-gold outline-none transition-all" value={busquedaPieza} onChange={e => setBusquedaPieza(e.target.value)} />
+                                {piezasInventarioFiltradas.length > 0 && (
+                                    <div className="absolute z-50 w-full bg-navy shadow-xl rounded-lg mt-1 border border-navy-3 max-h-48 overflow-y-auto">
+                                        {piezasInventarioFiltradas.map(p => (
+                                            <button key={p.id} type="button" onClick={() => agregarPiezaInventario(p.id)} className="w-full text-left p-2.5 hover:bg-navy-3 text-xs border-b border-navy-3 last:border-0 text-white truncate">{p.nombre}</button>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+
+                            {piezas.length > 0 && (
+                                <div className="space-y-2">
+                                    {piezas.map((pz, i) => (
+                                        <div key={i} className="flex items-center gap-2 bg-navy-3 rounded-lg p-2">
+                                            <div className="flex-1 min-w-0">
+                                                {pz.producto_id ? (
+                                                    <p className="text-xs font-bold text-white truncate">{pz.nombre} <span className="text-[10px] text-vr-green font-normal">(inventario)</span></p>
+                                                ) : (
+                                                    <input type="text" placeholder="Nombre de la pieza (ej. Pantalla iPhone 11 usada)" className="w-full bg-transparent border-b border-navy-2 text-white text-xs outline-none focus:border-gold pb-0.5" value={pz.nombre} onChange={e => actualizarPieza(i, 'nombre', e.target.value)} />
+                                                )}
+                                            </div>
+                                            <input type="number" step="any" min="1" title="Cantidad" className="w-12 bg-navy-2 border border-navy-2 rounded text-center text-white text-xs font-mono p-1 outline-none focus:border-gold" value={pz.cantidad} onChange={e => actualizarPieza(i, 'cantidad', e.target.value)} />
+                                            <input type="number" step="0.01" min="0" title="Costo estimado" placeholder="costo" className="w-16 bg-navy-2 border border-navy-2 rounded text-right text-white text-xs font-mono p-1 outline-none focus:border-gold" value={pz.costo} onChange={e => actualizarPieza(i, 'costo', e.target.value)} />
+                                            <button type="button" onClick={() => quitarPieza(i)} className="text-vr-red font-bold px-1 shrink-0">✕</button>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                        <div className="p-4 sm:p-6 border-t border-navy-3 flex gap-3 shrink-0">
+                            <button type="button" onClick={() => setDespiezando(null)} className="flex-1 py-3 font-bold text-vr-gray hover:text-white border border-navy-3 rounded-xl transition-colors">Cancelar</button>
+                            <button type="button" onClick={confirmarDespiece} className="flex-1 py-3 bg-gold-gradient text-navy font-extrabold rounded-xl hover:brightness-110 transition-all">Despiezar y guardar piezas</button>
+                        </div>
+                    </div>
                 </div>
             )}
 
