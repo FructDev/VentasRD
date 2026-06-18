@@ -174,6 +174,14 @@ export type ReparacionEstado =
 
 export type MetodoPagoReparacion = 'efectivo' | 'tarjeta' | 'transferencia';
 
+/** Un pago de una reparación (abono parcial o saldo final). */
+export interface PagoReparacion {
+    monto: number;
+    metodo: MetodoPagoReparacion;
+    fecha: number;
+    tipo?: 'abono' | 'final';
+}
+
 /** Un repuesto usado en una reparación. Puede venir del inventario (descuenta
  *  stock) o anotarse manualmente (compra externa). */
 export interface RepuestoReparacion {
@@ -213,9 +221,10 @@ export interface ReparacionLocal {
     mano_obra: number;
     total: number;                       // mano_obra + Σ(repuesto.precio × cantidad)
     // Pagos
-    abono: number;                       // adelanto al recibir (opcional, 0 por defecto)
-    metodo_abono?: MetodoPagoReparacion;
-    metodo_pago_final?: MetodoPagoReparacion;
+    abono: number;                       // TOTAL abonado hasta ahora (suma de pagos)
+    pagos?: PagoReparacion[];            // historial de pagos (abonos + saldo final)
+    metodo_abono?: MetodoPagoReparacion; // legado: método del abono inicial
+    metodo_pago_final?: MetodoPagoReparacion; // legado: método del saldo a la entrega
     // Garantía de la reparación (se fija al entregar)
     garantia_dias?: number;
     garantia_hasta?: number;

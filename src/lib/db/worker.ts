@@ -842,6 +842,7 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                         mano_obra: rep.mano_obra,
                         total: rep.total,
                         abono: rep.abono,
+                        pagos: rep.pagos ?? [],
                         metodo_abono: rep.metodo_abono ?? null,
                         metodo_pago_final: rep.metodo_pago_final ?? null,
                         garantia_dias: rep.garantia_dias ?? null,

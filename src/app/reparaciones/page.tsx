@@ -90,6 +90,11 @@ export default function ReparacionesPage() {
     // Cancelar
     const [cancelando, setCancelando] = useState<ReparacionLocal | null>(null);
 
+    // Abono adicional a una reparación
+    const [abonandoRep, setAbonandoRep] = useState<ReparacionLocal | null>(null);
+    const [montoAbonoRep, setMontoAbonoRep] = useState('');
+    const [metodoAbonoRep, setMetodoAbonoRep] = useState<MetodoPagoReparacion>('efectivo');
+
     // Despiece: equipo abandonado del que se recuperan piezas para el inventario
     const [despiezando, setDespiezando] = useState<ReparacionLocal | null>(null);
     const [piezas, setPiezas] = useState<{ producto_id?: string; nombre: string; cantidad: number; costo: number }[]>([]);
@@ -276,7 +281,13 @@ export default function ReparacionesPage() {
             );
 
             const total = repuestosFinal.reduce((s, r) => s + r.precio * r.cantidad, 0) + (parseFloat(formData.mano_obra) || 0);
-            const abono = parseFloat(formData.abono) || 0;
+            // Pagos: al crear, el abono inicial se registra como primer pago. Al editar,
+            // los pagos se conservan (se gestionan con el botón "+ Abono"), no se tocan aquí.
+            const initialAbono = editando ? 0 : (parseFloat(formData.abono) || 0);
+            const pagos: import('@/types/database').PagoReparacion[] = editando
+                ? (editando.pagos ?? [])
+                : (initialAbono > 0 ? [{ monto: initialAbono, metodo: formData.metodo_abono, fecha: ahora, tipo: 'abono' }] : []);
+            const abono = editando ? (editando.abono ?? 0) : initialAbono;
 
             const rep: ReparacionLocal = {
                 id,
@@ -301,7 +312,8 @@ export default function ReparacionesPage() {
                 mano_obra: parseFloat(formData.mano_obra) || 0,
                 total,
                 abono,
-                metodo_abono: abono > 0 ? formData.metodo_abono : undefined,
+                pagos,
+                metodo_abono: editando ? editando.metodo_abono : (initialAbono > 0 ? formData.metodo_abono : undefined),
                 metodo_pago_final: editando?.metodo_pago_final,
                 garantia_dias: editando?.garantia_dias,
                 garantia_hasta: editando?.garantia_hasta,
@@ -334,26 +346,41 @@ export default function ReparacionesPage() {
         if (!entregando) return;
         const dias = parseInt(garantiaDias) || 0;
         const ahora = Date.now();
-        await db.reparaciones.update(entregando.id, {
-            estado: 'entregado',
+        // Saldo pendiente cobrado a la entrega → se registra como pago final
+        const saldo = Math.max(0, entregando.total - (entregando.abono ?? 0));
+        const pagos = [...(entregando.pagos ?? [])];
+        if (saldo > 0) pagos.push({ monto: saldo, metodo: metodoPagoFinal, fecha: ahora, tipo: 'final' });
+        const abonoTotal = (entregando.abono ?? 0) + saldo;
+
+        const campos = {
+            estado: 'entregado' as ReparacionEstado,
+            pagos,
+            abono: abonoTotal,
             metodo_pago_final: metodoPagoFinal,
             garantia_dias: dias,
             garantia_hasta: dias > 0 ? ahora + dias * DIA : undefined,
             fecha_entrega: ahora,
-            estado_sincronizacion: 0,
+            estado_sincronizacion: 0 as const,
             fecha_actualizacion: ahora,
-        });
-        const actualizada: ReparacionLocal = {
-            ...entregando,
-            estado: 'entregado',
-            metodo_pago_final: metodoPagoFinal,
-            garantia_dias: dias,
-            garantia_hasta: dias > 0 ? ahora + dias * DIA : undefined,
-            fecha_entrega: ahora,
         };
+        await db.reparaciones.update(entregando.id, campos);
+        const actualizada: ReparacionLocal = { ...entregando, ...campos };
         setEntregando(null);
         showToast('Equipo entregado.', 'success');
         setTimeout(() => imprimir(actualizada, 'entrega'), 150);
+    };
+
+    const guardarAbonoRep = async () => {
+        if (!abonandoRep) return;
+        const monto = parseFloat(montoAbonoRep) || 0;
+        if (monto <= 0) { showToast('Ingresa un monto válido.', 'error'); return; }
+        const ahora = Date.now();
+        const pagos = [...(abonandoRep.pagos ?? []), { monto, metodo: metodoAbonoRep, fecha: ahora, tipo: 'abono' as const }];
+        const abono = (abonandoRep.abono ?? 0) + monto;
+        await db.reparaciones.update(abonandoRep.id, { pagos, abono, estado_sincronizacion: 0, fecha_actualizacion: ahora });
+        setAbonandoRep(null);
+        setMontoAbonoRep('');
+        showToast('Abono registrado.', 'success');
     };
 
     const confirmarCancelar = async () => {
@@ -568,6 +595,7 @@ export default function ReparacionesPage() {
                                                     </div>
                                                     <div className="text-right shrink-0">
                                                         <p className="font-mono font-black text-white text-sm">{formatDOP(r.total)}</p>
+                                                        {(r.abono ?? 0) > 0 && !terminada && <p className="text-[11px] text-vr-green">Abonado {formatDOP(r.abono ?? 0)}</p>}
                                                         {saldo > 0 && !terminada && <p className="text-[11px] font-bold text-vr-orange">Saldo {formatDOP(saldo)}</p>}
                                                         {r.estado === 'entregado' && r.garantia_hasta && (
                                                             <p className="text-[10px] text-vr-gray mt-0.5">Garantía: {new Date(r.garantia_hasta).toLocaleDateString('es-DO')}</p>
@@ -591,6 +619,11 @@ export default function ReparacionesPage() {
                                                     {r.estado === 'listo' && r.cliente_telefono && (
                                                         <button onClick={() => avisarWhatsApp(r)} className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-vr-green/10 text-vr-green border border-vr-green/20 hover:bg-vr-green/20 transition-all">
                                                             💬 Avisar
+                                                        </button>
+                                                    )}
+                                                    {!terminada && (r.total - (r.abono ?? 0)) > 0 && (
+                                                        <button onClick={() => { setAbonandoRep(r); setMontoAbonoRep(''); setMetodoAbonoRep('efectivo'); }} className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-vr-green/10 text-vr-green border border-vr-green/20 hover:bg-vr-green/20 transition-all">
+                                                            + Abono
                                                         </button>
                                                     )}
                                                     {!terminada && (
@@ -724,23 +757,28 @@ export default function ReparacionesPage() {
                                     )}
                                 </div>
 
-                                {/* Mano de obra y abono */}
-                                <div className="grid grid-cols-2 gap-3">
+                                {/* Mano de obra y abono inicial */}
+                                <div className={`grid ${editando ? 'grid-cols-1' : 'grid-cols-2'} gap-3`}>
                                     <div>
                                         <label className="block text-sm font-bold text-vr-gray mb-1.5">Mano de obra (RD$)</label>
                                         <input type="number" step="0.01" min="0" className="w-full bg-navy-3 border border-navy-3 rounded-xl p-3 text-white font-mono focus:border-gold outline-none transition-all" value={formData.mano_obra} onChange={e => setFormData({ ...formData, mano_obra: e.target.value })} />
                                     </div>
-                                    <div>
-                                        <label className="block text-sm font-bold text-vr-gray mb-1.5">Abono / adelanto (RD$)</label>
-                                        <input type="number" step="0.01" min="0" placeholder="0 (opcional)" className="w-full bg-navy-3 border border-navy-3 rounded-xl p-3 text-white font-mono focus:border-gold outline-none transition-all" value={formData.abono} onChange={e => setFormData({ ...formData, abono: e.target.value })} />
-                                    </div>
+                                    {!editando && (
+                                        <div>
+                                            <label className="block text-sm font-bold text-vr-gray mb-1.5">Abono inicial (RD$)</label>
+                                            <input type="number" step="0.01" min="0" placeholder="0 (opcional)" className="w-full bg-navy-3 border border-navy-3 rounded-xl p-3 text-white font-mono focus:border-gold outline-none transition-all" value={formData.abono} onChange={e => setFormData({ ...formData, abono: e.target.value })} />
+                                        </div>
+                                    )}
                                 </div>
-                                {(parseFloat(formData.abono) || 0) > 0 && (
+                                {!editando && (parseFloat(formData.abono) || 0) > 0 && (
                                     <div className="grid grid-cols-3 gap-2">
                                         {(['efectivo', 'tarjeta', 'transferencia'] as MetodoPagoReparacion[]).map(m => (
                                             <button key={m} type="button" onClick={() => setFormData({ ...formData, metodo_abono: m })} className={`py-2 rounded-lg border text-xs font-bold capitalize transition-all ${formData.metodo_abono === m ? 'border-gold bg-gold/15 text-gold' : 'border-navy-3 text-vr-gray hover:text-white'}`}>{m}</button>
                                         ))}
                                     </div>
+                                )}
+                                {editando && (
+                                    <p className="text-[11px] text-vr-gray">Para registrar más pagos usa el botón <span className="font-bold text-gold">+ Abono</span> en la lista.</p>
                                 )}
 
                                 {/* Total */}
@@ -809,6 +847,36 @@ export default function ReparacionesPage() {
                         direccion={negocioDireccion || undefined}
                         telefono={negocioTelefono || undefined}
                     />
+                </div>
+            )}
+
+            {/* MODAL ABONO A REPARACIÓN */}
+            {abonandoRep && (
+                <div className="fixed inset-0 bg-black/70 backdrop-blur-md z-50 flex items-end sm:items-center justify-center sm:p-4 animate-fade-in">
+                    <div className="bg-navy-2 w-full sm:max-w-sm rounded-t-2xl sm:rounded-2xl border border-navy-3 shadow-2xl overflow-hidden animate-scale-in">
+                        <div className="p-4 sm:p-6 border-b border-navy-3 flex justify-between items-center">
+                            <div>
+                                <h2 className="text-xl font-display font-bold text-white">Registrar abono</h2>
+                                <p className="text-sm text-vr-gray mt-0.5">{abonandoRep.folio} · Saldo {formatDOP(Math.max(0, abonandoRep.total - (abonandoRep.abono ?? 0)))}</p>
+                            </div>
+                            <button onClick={() => setAbonandoRep(null)} className="text-vr-gray hover:text-white font-bold text-xl transition-colors">✕</button>
+                        </div>
+                        <div className="p-4 sm:p-6 space-y-4">
+                            <div>
+                                <label className="block text-xs font-bold text-vr-gray uppercase tracking-wider mb-1.5">Monto</label>
+                                <input type="number" step="0.01" min="0" autoFocus className="w-full bg-navy-3 border border-navy-3 rounded-xl p-3 text-white font-mono text-xl text-center focus:border-gold outline-none transition-all" value={montoAbonoRep} onChange={e => setMontoAbonoRep(e.target.value)} placeholder="0" />
+                            </div>
+                            <div className="grid grid-cols-3 gap-2">
+                                {(['efectivo', 'tarjeta', 'transferencia'] as MetodoPagoReparacion[]).map(m => (
+                                    <button key={m} type="button" onClick={() => setMetodoAbonoRep(m)} className={`py-2.5 rounded-lg border text-xs font-bold capitalize transition-all ${metodoAbonoRep === m ? 'border-gold bg-gold/15 text-gold' : 'border-navy-3 text-vr-gray hover:text-white'}`}>{m}</button>
+                                ))}
+                            </div>
+                            <div className="flex gap-3">
+                                <button type="button" onClick={() => setAbonandoRep(null)} className="flex-1 py-3 font-bold text-vr-gray hover:text-white border border-navy-3 rounded-xl transition-colors">Cancelar</button>
+                                <button type="button" onClick={guardarAbonoRep} className="flex-1 py-3 bg-gold-gradient text-navy font-extrabold rounded-xl hover:brightness-110 transition-all">Guardar abono</button>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             )}
 

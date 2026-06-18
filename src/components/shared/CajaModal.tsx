@@ -91,13 +91,16 @@ export default function CajaModal({ isOpen, onClose }: Props) {
     const efectivoReparacionesTurno = useLiveQuery(async () => {
         if (!cajaAbierta || !negocioId) return 0;
         const reps = await db.reparaciones.where('negocio_id').equals(negocioId).toArray();
+        const ap = cajaAbierta.fecha_apertura;
         let total = 0;
         for (const r of reps) {
-            if (r.metodo_abono === 'efectivo' && r.abono > 0 && r.fecha_creacion > cajaAbierta.fecha_apertura) {
-                total += r.abono;
-            }
-            if (r.estado === 'entregado' && r.metodo_pago_final === 'efectivo' && r.fecha_entrega && r.fecha_entrega > cajaAbierta.fecha_apertura) {
-                total += Math.max(0, r.total - r.abono);
+            if (r.pagos && r.pagos.length) {
+                // Modelo nuevo: cada pago con su propia fecha y método
+                for (const p of r.pagos) if (p.metodo === 'efectivo' && p.fecha > ap) total += p.monto;
+            } else {
+                // Legado: abono inicial + saldo a la entrega
+                if (r.metodo_abono === 'efectivo' && r.abono > 0 && r.fecha_creacion > ap) total += r.abono;
+                if (r.estado === 'entregado' && r.metodo_pago_final === 'efectivo' && r.fecha_entrega && r.fecha_entrega > ap) total += Math.max(0, r.total - r.abono);
             }
         }
         return total;
@@ -131,8 +134,14 @@ export default function CajaModal({ isOpen, onClose }: Props) {
 
         const reps = await db.reparaciones.where('negocio_id').equals(negocioId).toArray();
         reps.forEach(r => {
-            if (r.metodo_abono === 'efectivo' && r.abono > 0 && r.fecha_creacion > ap) items.push({ key: `ra-${r.id}`, fecha: r.fecha_creacion, tipo: 'Reparación', titulo: `${r.folio} · abono`, monto: r.abono, signo: 'in' });
-            if (r.estado === 'entregado' && r.metodo_pago_final === 'efectivo' && r.fecha_entrega && r.fecha_entrega > ap) items.push({ key: `rf-${r.id}`, fecha: r.fecha_entrega, tipo: 'Reparación', titulo: `${r.folio} · saldo`, monto: Math.max(0, r.total - r.abono), signo: 'in' });
+            if (r.pagos && r.pagos.length) {
+                r.pagos.forEach((p, i) => {
+                    if (p.metodo === 'efectivo' && p.fecha > ap) items.push({ key: `rp-${r.id}-${i}`, fecha: p.fecha, tipo: 'Reparación', titulo: `${r.folio} · ${p.tipo === 'final' ? 'saldo' : 'abono'}`, monto: p.monto, signo: 'in' });
+                });
+            } else {
+                if (r.metodo_abono === 'efectivo' && r.abono > 0 && r.fecha_creacion > ap) items.push({ key: `ra-${r.id}`, fecha: r.fecha_creacion, tipo: 'Reparación', titulo: `${r.folio} · abono`, monto: r.abono, signo: 'in' });
+                if (r.estado === 'entregado' && r.metodo_pago_final === 'efectivo' && r.fecha_entrega && r.fecha_entrega > ap) items.push({ key: `rf-${r.id}`, fecha: r.fecha_entrega, tipo: 'Reparación', titulo: `${r.folio} · saldo`, monto: Math.max(0, r.total - r.abono), signo: 'in' });
+            }
         });
 
         const aps = await db.apartados.where('negocio_id').equals(negocioId).toArray();
