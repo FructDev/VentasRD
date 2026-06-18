@@ -230,8 +230,10 @@ export async function getReporte607(negocioId: string, anio: number, mes: number
 
 // ── REPARACIONES (Plan Pro) ─────────────────────────────────────────────────
 const ESTADO_REP: Record<string, string> = {
-    recibido: 'Recibido', diagnostico: 'En diagnóstico', esperando_repuesto: 'Esperando repuesto',
-    listo: 'Listo', entregado: 'Entregado', cancelado: 'Cancelado',
+    recibido: 'Recibido', diagnostico: 'En diagnóstico', cotizado: 'Cotizado',
+    en_reparacion: 'En reparación', esperando_repuesto: 'Esperando repuesto',
+    listo: 'Listo', entregado: 'Entregado', no_reparado: 'No reparado',
+    abandonado: 'Abandonado', cancelado: 'Cancelado',
 };
 
 export async function getReporteReparaciones(negocioId: string, desde: number, hasta: number) {

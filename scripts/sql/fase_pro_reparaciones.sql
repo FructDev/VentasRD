@@ -33,6 +33,9 @@ create table if not exists reparaciones (
     pagos jsonb not null default '[]'::jsonb,
     metodo_abono text,
     metodo_pago_final text,
+    es_garantia boolean default false,
+    reparacion_origen_id uuid,
+    bitacora jsonb not null default '[]'::jsonb,
     garantia_dias int,
     garantia_hasta bigint,
     tecnico_nombre text,
@@ -70,6 +73,9 @@ for each row execute function normalizar_fecha_actualizacion();
 -- ── Si ya creaste la tabla antes de esta versión, corre solo esto: ───────────
 -- alter table reparaciones add column if not exists condicion_checklist jsonb not null default '[]'::jsonb;
 -- alter table reparaciones add column if not exists pagos jsonb not null default '[]'::jsonb;
+-- alter table reparaciones add column if not exists es_garantia boolean default false;
+-- alter table reparaciones add column if not exists reparacion_origen_id uuid;
+-- alter table reparaciones add column if not exists bitacora jsonb not null default '[]'::jsonb;
 
 -- ════════════════════════════════════════════════════════════════════════════
 -- FASE 2 · GARANTÍAS POR IMEI (extiende la tabla seriales existente)

@@ -58,6 +58,10 @@ export interface CorteCajaLocal {
     mixto: number;
     total_ventas: number;
     cantidad_transacciones: number;
+    // Ingresos del turno por otros módulos (Plan Pro). Los campos efectivo/tarjeta/
+    // transferencia ya los incluyen; estos son los subtotales para el desglose.
+    ingreso_reparaciones?: number;
+    ingreso_apartados?: number;
     // Solo Z: datos del conteo físico
     monto_apertura?: number;
     monto_esperado?: number;
@@ -167,19 +171,23 @@ export interface SerialLocal {
 export type ReparacionEstado =
     | 'recibido'
     | 'diagnostico'
+    | 'cotizado'           // diagnóstico + precio listos, esperando decisión del cliente
+    | 'en_reparacion'      // cliente aprobó, en reparación
     | 'esperando_repuesto'
     | 'listo'
-    | 'entregado'
-    | 'cancelado';
+    | 'entregado'          // terminal
+    | 'no_reparado'        // cliente rechazó / irreparable y retiró el equipo (terminal)
+    | 'abandonado'         // equipo dejado en tienda (se puede despiezar)
+    | 'cancelado';         // terminal
 
 export type MetodoPagoReparacion = 'efectivo' | 'tarjeta' | 'transferencia';
 
-/** Un pago de una reparación (abono parcial o saldo final). */
+/** Un pago de una reparación (abono parcial, saldo final o cargo de revisión). */
 export interface PagoReparacion {
     monto: number;
     metodo: MetodoPagoReparacion;
     fecha: number;
-    tipo?: 'abono' | 'final';
+    tipo?: 'abono' | 'final' | 'revision';
 }
 
 /** Un repuesto usado en una reparación. Puede venir del inventario (descuenta
@@ -230,6 +238,11 @@ export interface ReparacionLocal {
     garantia_hasta?: number;
     tecnico_nombre?: string;             // opcional (futuro: comisiones)
     notas?: string;
+    // Garantía / reingreso: si esta reparación es un reingreso por garantía de otra
+    es_garantia?: boolean;
+    reparacion_origen_id?: string;       // folio/ID de la reparación original
+    // Bitácora de cambios de estado (auditoría): quién y cuándo en cada paso
+    bitacora?: { estado: ReparacionEstado; fecha: number; usuario: string }[];
     fecha_creacion: number;
     fecha_entrega?: number;
     estado_sincronizacion?: 0 | 1;

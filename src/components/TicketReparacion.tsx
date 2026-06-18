@@ -17,9 +17,13 @@ interface TicketReparacionProps {
 const ESTADO_LABEL: Record<string, string> = {
     recibido: 'Recibido',
     diagnostico: 'En diagnóstico',
+    cotizado: 'Cotizado',
+    en_reparacion: 'En reparación',
     esperando_repuesto: 'Esperando repuesto',
     listo: 'Listo para entregar',
     entregado: 'Entregado',
+    no_reparado: 'No reparado',
+    abandonado: 'Abandonado',
     cancelado: 'Cancelado',
 };
 
