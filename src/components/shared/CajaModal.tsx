@@ -6,7 +6,7 @@ import { useConfigStore } from '@/store/useConfigStore';
 import { db, getCajaAbierta } from '@/lib/db/dexie';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { CajaLocal } from '@/types/database';
-import { formatDOP } from '@/lib/utils';
+import { formatDOP, formatTicket } from '@/lib/utils';
 import { v4 as uuidv4 } from 'uuid';
 import { useReactToPrint } from 'react-to-print';
 import { TicketCorte, ProductoCorte } from '@/components/TicketCorte';
@@ -48,13 +48,14 @@ export default function CajaModal({ isOpen, onClose }: Props) {
     }, [negocioId, sucursalId]);
 
     // Todas las ventas desde que se abrió la caja (desglose por método)
-    const ventasDesdeApertura = useLiveQuery(async () => {
+    const ventasDesdeAperturaRaw = useLiveQuery(async () => {
         if (!cajaAbierta) return [];
         return db.ventas
             .where('fecha_creacion')
             .above(cajaAbierta.fecha_apertura)
             .toArray();
-    }, [cajaAbierta]) || [];
+    }, [cajaAbierta]);
+    const ventasDesdeApertura = useMemo(() => ventasDesdeAperturaRaw ?? [], [ventasDesdeAperturaRaw]);
 
     const resumenVentas = useMemo(() => {
         const r = { efectivo: 0, tarjeta: 0, transferencia: 0, fiado: 0, mixto: 0, total: 0, cantidad: 0 };
@@ -66,7 +67,13 @@ export default function CajaModal({ isOpen, onClose }: Props) {
         return r;
     }, [ventasDesdeApertura]);
 
-    const ventasEfectivoDesdeApertura = resumenVentas.efectivo;
+    // Efectivo de ventas en el turno: ventas en efectivo + la porción en efectivo
+    // de los pagos mixtos (lo demás no entra a la gaveta).
+    const ventasEfectivoDesdeApertura = useMemo(() =>
+        ventasDesdeApertura.reduce((s, v) =>
+            s + (v.metodo_pago === 'efectivo' ? v.total : v.metodo_pago === 'mixto' ? (v.monto_efectivo ?? 0) : 0)
+        , 0),
+        [ventasDesdeApertura]);
 
     // Gastos en EFECTIVO desde la apertura — salen de la gaveta, afectan el cuadre
     const gastosEfectivoTurno = useLiveQuery(async () => {
@@ -108,6 +115,37 @@ export default function CajaModal({ isOpen, onClose }: Props) {
         }
         return total;
     }, [cajaAbierta, negocioId]) ?? 0;
+
+    // Detalle del efectivo del turno (hilo de dinero): cada movimiento que entra
+    // o sale de la gaveta, para auditar de dónde sale el "efectivo esperado".
+    const detalleEfectivo = useLiveQuery(async () => {
+        if (!cajaAbierta || !negocioId) return [];
+        const ap = cajaAbierta.fecha_apertura;
+        const items: { key: string; fecha: number; tipo: string; titulo: string; monto: number; signo: 'in' | 'out' }[] = [];
+
+        const ventas = await db.ventas.where('negocio_id').equals(negocioId).filter(v => v.fecha_creacion > ap).toArray();
+        ventas.forEach(v => {
+            const cash = v.metodo_pago === 'efectivo' ? v.total : v.metodo_pago === 'mixto' ? (v.monto_efectivo ?? 0) : 0;
+            if (cash > 0) items.push({ key: `v-${v.id}`, fecha: v.fecha_creacion, tipo: 'Venta', titulo: `Venta #${formatTicket(v.numero_ticket, v.caja_codigo)}`, monto: cash, signo: 'in' });
+        });
+
+        const reps = await db.reparaciones.where('negocio_id').equals(negocioId).toArray();
+        reps.forEach(r => {
+            if (r.metodo_abono === 'efectivo' && r.abono > 0 && r.fecha_creacion > ap) items.push({ key: `ra-${r.id}`, fecha: r.fecha_creacion, tipo: 'Reparación', titulo: `${r.folio} · abono`, monto: r.abono, signo: 'in' });
+            if (r.estado === 'entregado' && r.metodo_pago_final === 'efectivo' && r.fecha_entrega && r.fecha_entrega > ap) items.push({ key: `rf-${r.id}`, fecha: r.fecha_entrega, tipo: 'Reparación', titulo: `${r.folio} · saldo`, monto: Math.max(0, r.total - r.abono), signo: 'in' });
+        });
+
+        const aps = await db.apartados.where('negocio_id').equals(negocioId).toArray();
+        aps.forEach(a => a.abonos.forEach((ab, i) => { if (ab.metodo === 'efectivo' && ab.fecha > ap) items.push({ key: `ap-${a.id}-${i}`, fecha: ab.fecha, tipo: 'Apartado', titulo: `${a.folio} · abono`, monto: ab.monto, signo: 'in' }); }));
+
+        const gastos = await db.gastos.where('[negocio_id+fecha_creacion]').between([negocioId, ap], [negocioId, Infinity]).toArray();
+        gastos.forEach(g => { if (!g.eliminado && g.metodo === 'efectivo') items.push({ key: `g-${g.id}`, fecha: g.fecha_creacion, tipo: 'Gasto', titulo: g.descripcion || 'Gasto', monto: g.monto, signo: 'out' }); });
+
+        items.sort((a, b) => b.fecha - a.fecha);
+        return items;
+    }, [cajaAbierta, negocioId]) ?? [];
+
+    const [verDetalle, setVerDetalle] = useState(false);
 
     const totalContado = useMemo(() => {
         return DENOMINACIONES.reduce((sum, d) => {
@@ -414,6 +452,32 @@ export default function CajaModal({ isOpen, onClose }: Props) {
                             <span className="text-sm font-bold text-gold">Deberías tener:</span>
                             <span className="text-xl font-black font-mono text-gold">{formatDOP(montoEsperado)}</span>
                         </div>
+
+                        {/* Hilo de dinero: detalle de cada movimiento de efectivo del turno */}
+                        <button
+                            type="button"
+                            onClick={() => setVerDetalle(v => !v)}
+                            className="w-full text-xs font-bold text-vr-gray hover:text-gold transition-colors text-center py-1"
+                        >
+                            {verDetalle ? '▲ Ocultar detalle del efectivo' : `▼ Ver detalle del efectivo (${detalleEfectivo.length})`}
+                        </button>
+                        {verDetalle && (
+                            <div className="bg-navy rounded-xl border border-navy-3 max-h-48 overflow-y-auto divide-y divide-navy-3/50">
+                                {detalleEfectivo.length === 0 ? (
+                                    <p className="text-xs text-vr-gray text-center py-4">Sin movimientos de efectivo en el turno.</p>
+                                ) : detalleEfectivo.map(m => (
+                                    <div key={m.key} className="flex items-center gap-2 px-3 py-2">
+                                        <div className="flex-1 min-w-0">
+                                            <p className="text-xs font-bold text-white truncate">{m.titulo}</p>
+                                            <p className="text-[10px] text-vr-gray">{m.tipo} · {new Date(m.fecha).toLocaleTimeString('es-DO', { hour: '2-digit', minute: '2-digit' })}</p>
+                                        </div>
+                                        <span className={`font-mono font-bold text-xs shrink-0 ${m.signo === 'out' ? 'text-vr-red' : 'text-vr-green'}`}>
+                                            {m.signo === 'out' ? '−' : '+'}{formatDOP(m.monto)}
+                                        </span>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
                     </div>
                 )}
 
