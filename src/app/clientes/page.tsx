@@ -15,6 +15,12 @@ import Pagination from '@/components/ui/Pagination';
 import { SkeletonTable } from '@/components/ui/Skeleton';
 import ConfirmModal from '@/components/ui/ConfirmModal';
 
+const norm = (s: string | null | undefined): string =>
+    (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+
+type FiltroCliente = 'todos' | 'deuda' | 'aldia' | 'mayor';
+type OrdenCliente = 'nombre' | 'deuda' | 'atraso';
+
 export default function ClientesPage() {
     const { negocioId, showToast, negocioNombre, planTier } = useConfigStore();
     const clientes = useClientesTenant();
@@ -189,13 +195,73 @@ export default function ClientesPage() {
             .slice(0, 5);
     }, [clientesConSaldo, transacciones]);
 
+    // ─── Buscador, filtros y orden ────────────────────────────────────────
+    const [busqueda, setBusqueda] = useState('');
+    const [filtro, setFiltro] = useState<FiltroCliente>('todos');
+    const [orden, setOrden] = useState<OrdenCliente>('nombre');
+
+    // Referencias de actividad por cliente (para ordenar por atraso)
+    const actividadMap = useMemo(() => {
+        const ultAbono = new Map<string, number>();
+        const primCargo = new Map<string, number>();
+        transacciones.forEach(t => {
+            if (t.tipo === 'abono') ultAbono.set(t.cliente_id, Math.max(ultAbono.get(t.cliente_id) ?? 0, t.fecha_creacion));
+            else primCargo.set(t.cliente_id, Math.min(primCargo.get(t.cliente_id) ?? Infinity, t.fecha_creacion));
+        });
+        return { ultAbono, primCargo };
+    }, [transacciones]);
+
+    const clientesFiltrados = useMemo(() => {
+        const q = norm(busqueda).trim();
+        const terminos = q ? q.split(/\s+/) : [];
+
+        const lista = clientesConSaldo.filter(c => {
+            if (filtro === 'deuda' && c.saldo_pendiente <= 0) return false;
+            if (filtro === 'aldia' && c.saldo_pendiente > 0) return false;
+            if (filtro === 'mayor' && !c.al_por_mayor) return false;
+            if (terminos.length > 0) {
+                const heno = norm(`${c.nombre} ${c.telefono || ''}`);
+                if (!terminos.every(t => heno.includes(t))) return false;
+            }
+            return true;
+        });
+
+        const refDe = (id: string) => actividadMap.ultAbono.get(id) ?? actividadMap.primCargo.get(id) ?? Infinity;
+        const ordenada = [...lista];
+        if (orden === 'nombre') {
+            ordenada.sort((a, b) => a.nombre.localeCompare(b.nombre, 'es', { sensitivity: 'base' }));
+        } else if (orden === 'deuda') {
+            ordenada.sort((a, b) => b.saldo_pendiente - a.saldo_pendiente);
+        } else if (orden === 'atraso') {
+            ordenada.sort((a, b) => {
+                const da = a.saldo_pendiente > 0 ? 1 : 0;
+                const dbb = b.saldo_pendiente > 0 ? 1 : 0;
+                if (da !== dbb) return dbb - da;
+                return refDe(a.id) - refDe(b.id);
+            });
+        }
+        return ordenada;
+    }, [clientesConSaldo, busqueda, filtro, orden, actividadMap]);
+
+    const conteos = useMemo(() => ({
+        todos: clientesConSaldo.length,
+        deuda: clientesConSaldo.filter(c => c.saldo_pendiente > 0).length,
+        aldia: clientesConSaldo.filter(c => c.saldo_pendiente <= 0).length,
+        mayor: clientesConSaldo.filter(c => c.al_por_mayor).length,
+    }), [clientesConSaldo]);
+
     const ITEMS_POR_PAGINA = 20;
     const [pagina, setPagina] = useState(1);
+    // Reseteo de página al cambiar filtros (patrón de render, sin useEffect)
+    const firmaFiltros = `${busqueda}|${filtro}|${orden}`;
+    const [firmaPrev, setFirmaPrev] = useState(firmaFiltros);
+    if (firmaFiltros !== firmaPrev) { setFirmaPrev(firmaFiltros); setPagina(1); }
+
     const clientesPaginados = useMemo(() => {
         const inicio = (pagina - 1) * ITEMS_POR_PAGINA;
-        return clientesConSaldo.slice(inicio, inicio + ITEMS_POR_PAGINA);
-    }, [clientesConSaldo, pagina]);
-    const totalPaginas = Math.ceil(clientesConSaldo.length / ITEMS_POR_PAGINA);
+        return clientesFiltrados.slice(inicio, inicio + ITEMS_POR_PAGINA);
+    }, [clientesFiltrados, pagina]);
+    const totalPaginas = Math.ceil(clientesFiltrados.length / ITEMS_POR_PAGINA);
 
     return (
         <div className="min-h-screen bg-navy flex flex-col">
@@ -267,6 +333,53 @@ export default function ClientesPage() {
                         </div>
                     )}
 
+                    {/* Buscador + filtros + orden */}
+                    {(clientesConSaldo.length > 0 || busqueda || filtro !== 'todos') && (
+                        <div className="mb-3 sm:mb-4 space-y-3">
+                            <div className="relative">
+                                <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-vr-gray pointer-events-none">
+                                    <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg>
+                                </span>
+                                <input
+                                    type="text"
+                                    inputMode="search"
+                                    placeholder="Buscar por nombre o teléfono…"
+                                    className="w-full bg-navy-2 border border-navy-3 rounded-xl pl-11 pr-10 py-3 text-white placeholder-vr-gray/50 focus:border-gold outline-none transition-all"
+                                    value={busqueda}
+                                    onChange={e => setBusqueda(e.target.value)}
+                                />
+                                {busqueda && (
+                                    <button type="button" onClick={() => setBusqueda('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-vr-gray hover:text-white font-bold transition-colors" title="Limpiar">✕</button>
+                                )}
+                            </div>
+                            <div className="flex items-center gap-2 flex-wrap">
+                                <div className="flex items-center gap-1.5 overflow-x-auto -mx-1 px-1 pb-1 flex-1 scrollbar-none">
+                                    {([
+                                        { key: 'todos', label: 'Todos', n: conteos.todos },
+                                        { key: 'deuda', label: 'Con deuda', n: conteos.deuda },
+                                        { key: 'aldia', label: 'Al día', n: conteos.aldia },
+                                        { key: 'mayor', label: 'Mayoristas', n: conteos.mayor },
+                                    ] as const).filter(c => c.key === 'todos' || c.n > 0).map(({ key, label, n }) => {
+                                        const activo = filtro === key;
+                                        const esDeuda = key === 'deuda' && n > 0;
+                                        return (
+                                            <button key={key} type="button" onClick={() => setFiltro(key)}
+                                                className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-all border shrink-0 ${activo ? 'bg-gold/15 text-gold border-gold/40' : esDeuda ? 'bg-vr-red/10 text-vr-red border-vr-red/20 hover:border-vr-red/40' : 'bg-navy-2 text-vr-gray border-navy-3 hover:text-white'}`}>
+                                                {label}<span className={`ml-1.5 ${activo ? 'text-gold/70' : 'opacity-60'}`}>{n}</span>
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                                <select value={orden} onChange={e => setOrden(e.target.value as OrdenCliente)}
+                                    className="bg-navy-2 border border-navy-3 rounded-lg py-1.5 pl-2.5 pr-7 text-xs font-bold text-vr-gray focus:border-gold outline-none transition-all shrink-0 cursor-pointer" title="Ordenar">
+                                    <option value="nombre">A–Z</option>
+                                    <option value="deuda">Más deuda</option>
+                                    <option value="atraso">Más atrasado</option>
+                                </select>
+                            </div>
+                        </div>
+                    )}
+
                     {/* Tabla */}
                     <div className="bg-navy-2 rounded-2xl border border-navy-3 overflow-hidden">
                         <div className="overflow-x-auto">
@@ -290,6 +403,12 @@ export default function ClientesPage() {
                                     <tr><td colSpan={5} className="p-8 text-center text-vr-gray">
                                         <span className="text-4xl block mb-3">👥</span>
                                         No hay clientes registrados.
+                                    </td></tr>
+                                ) : clientesFiltrados.length === 0 ? (
+                                    <tr><td colSpan={5} className="p-8 text-center text-vr-gray">
+                                        <span className="text-4xl block mb-3">🔍</span>
+                                        No se encontraron clientes.
+                                        <button type="button" onClick={() => { setBusqueda(''); setFiltro('todos'); }} className="block mx-auto mt-3 text-gold hover:text-gold-2 text-sm font-bold transition-colors">Limpiar búsqueda y filtros</button>
                                     </td></tr>
                                 ) : (
                                     clientesPaginados.map((cliente) => (
@@ -354,7 +473,7 @@ export default function ClientesPage() {
                             pagina={pagina}
                             totalPaginas={totalPaginas}
                             onCambiar={setPagina}
-                            totalItems={clientesConSaldo.length}
+                            totalItems={clientesFiltrados.length}
                             itemsPorPagina={ITEMS_POR_PAGINA}
                         />
                     </div>
