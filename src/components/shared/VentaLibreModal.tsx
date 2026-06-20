@@ -16,6 +16,7 @@ export default function VentaLibreModal({ isOpen, onClose }: Props) {
     const [nombre, setNombre] = useState('');
     const [precio, setPrecio] = useState('');
     const [cantidad, setCantidad] = useState('1');
+    const [tasaItbis, setTasaItbis] = useState('0.18'); // '0' = exento, '0.18' = 18%
     const inputRef = useRef<HTMLInputElement>(null);
 
     useEffect(() => {
@@ -23,6 +24,7 @@ export default function VentaLibreModal({ isOpen, onClose }: Props) {
             setNombre('');
             setPrecio('');
             setCantidad('1');
+            setTasaItbis('0.18');
             setTimeout(() => inputRef.current?.focus(), 100);
         }
     }, [isOpen]);
@@ -43,7 +45,7 @@ export default function VentaLibreModal({ isOpen, onClose }: Props) {
             costo: 0,
             stock_actual: 9999,
             stock_minimo: 0,
-            tasa_itbis: 0.18,
+            tasa_itbis: parseFloat(tasaItbis) || 0,
             tipo: 'simple',
         };
 
@@ -96,6 +98,25 @@ export default function VentaLibreModal({ isOpen, onClose }: Props) {
                                 className="w-full bg-navy-3 border border-navy-3 rounded-xl p-3 text-white font-mono text-lg focus:border-gold outline-none transition-all"
                                 value={cantidad} onChange={e => setCantidad(e.target.value)}
                             />
+                        </div>
+                    </div>
+
+                    <div>
+                        <label className="block text-sm font-bold text-vr-gray mb-1.5">ITBIS</label>
+                        <div className="grid grid-cols-2 gap-2">
+                            {([
+                                { val: '0.18', label: '18%' },
+                                { val: '0', label: 'Exento (0%)' },
+                            ] as const).map(o => (
+                                <button
+                                    key={o.val}
+                                    type="button"
+                                    onClick={() => setTasaItbis(o.val)}
+                                    className={`py-2.5 rounded-xl border font-bold text-sm transition-all ${tasaItbis === o.val ? 'border-gold bg-gold/15 text-gold' : 'border-navy-3 text-vr-gray hover:text-white'}`}
+                                >
+                                    {o.label}
+                                </button>
+                            ))}
                         </div>
                     </div>
 
