@@ -14,14 +14,20 @@ export default function ActualizarContrasenaPage() {
     const [sessionReady, setSessionReady] = useState(false);
 
     useEffect(() => {
-        // Supabase envía el token en el hash de la URL.
-        // onAuthStateChange con evento PASSWORD_RECOVERY detecta la sesión automáticamente.
-        const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
-            if (event === 'PASSWORD_RECOVERY') {
+        let montado = true;
+        // El token llega en la URL. El cliente de Supabase lo procesa al cargar y
+        // emite PASSWORD_RECOVERY — pero ese evento puede dispararse ANTES de que
+        // este listener se monte. Por eso también consultamos la sesión actual:
+        // si ya existe (el enlace fue válido), habilitamos el formulario igual.
+        const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+            if (event === 'PASSWORD_RECOVERY' || (event === 'SIGNED_IN' && session)) {
                 setSessionReady(true);
             }
         });
-        return () => subscription.unsubscribe();
+        supabase.auth.getSession().then(({ data: { session } }) => {
+            if (montado && session) setSessionReady(true);
+        });
+        return () => { montado = false; subscription.unsubscribe(); };
     }, []);
 
     const handleSubmit = async (e: React.FormEvent) => {

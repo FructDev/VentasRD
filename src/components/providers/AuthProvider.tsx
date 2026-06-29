@@ -182,7 +182,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 }
 
                 // 5. ENRUTADOR ESTRICTO
-                if (negocio) {
+                // Mientras el usuario está restableciendo su contraseña (llegó por el
+                // enlace de recuperación), NO redirigir a ningún lado: debe poder
+                // completar el cambio aunque la sesión ya esté activa.
+                const enRecuperacion = pathname.startsWith('/actualizar-contrasena') || pathname.startsWith('/recuperar-contrasena');
+                if (negocio && !enRecuperacion) {
                     const { sucursalId } = useConfigStore.getState();
 
                     if (!empleado && negocio.onboarding_completado === false && pathname !== '/onboarding') {
