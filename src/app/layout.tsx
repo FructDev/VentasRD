@@ -8,6 +8,10 @@ import GlobalToast from "@/components/ui/GlobalToast";
 import TutorialChecklist from "@/components/ui/TutorialChecklist";
 import Novedades from "@/components/ui/Novedades";
 import { ErrorBoundary } from "@/components/ui/ErrorBoundary";
+import ThemeApplier from "@/components/providers/ThemeApplier";
+
+// Aplica el tema guardado antes de pintar (evita parpadeo claro/oscuro)
+const themeInitScript = `(function(){try{var c=localStorage.getItem('ventard-config');if(c){var t=JSON.parse(c);if(t&&t.state&&t.state.tema==='claro'){document.documentElement.classList.add('light');}}}catch(e){}})();`;
 
 const syne = Syne({
   subsets: ["latin"],
@@ -59,10 +63,14 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="es" className={`${syne.variable} ${dmSans.variable} ${dmMono.variable}`}>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
+      </head>
       <body className="font-body antialiased">
         <ErrorBoundary>
           <SyncProvider>
             <AuthProvider>
+              <ThemeApplier />
               {children}
               <GlobalToast />
               <TutorialChecklist />

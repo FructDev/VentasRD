@@ -7,7 +7,7 @@
    VENTARD — SISTEMA DE DISEÑO NAVY+GOLD
    ============================================= */
 
-@theme inline {
+@theme {
   /* Colores de marca */
   --color-navy: #0D1B2E;
   --color-navy-2: #152438;
@@ -83,6 +83,47 @@
     @apply border-gold outline-none ring-1 ring-gold/30;
   }
 }
+
+/* =============================================
+   TEMA CLARO
+   Redefine las variables de marca; las utilidades (incluidas las de opacidad)
+   las heredan automáticamente. Abajo, los pocos casos que comparten variable
+   pero necesitan otro valor en claro.
+   ============================================= */
+html.light {
+  --color-navy: #EEF1F5;   /* fondo de página */
+  --color-navy-2: #FFFFFF; /* tarjetas y modales */
+  --color-navy-3: #DCE3EC; /* bordes, inputs y hover de superficies */
+  --color-navy-4: #C5CFDC;
+  --color-white: #16243A;  /* texto principal (todos los text-white) */
+  --color-vr-gray: #566273;
+  --color-vr-gray-2: #8A97A8;
+}
+
+html.light body {
+  background-color: #EEF1F5;
+  color: #16243A;
+}
+
+/* Casos puntuales: utilidades que usan la misma variable pero requieren otro valor */
+html.light .text-navy { color: #16243A; }            /* texto sobre botones dorados */
+html.light .bg-white { background-color: #FFFFFF; }  /* fondos de fotos de producto */
+
+/* Botones sólidos de color: mantener el texto blanco (no oscurecerlo) */
+html.light .bg-vr-green.text-white,
+html.light .bg-vr-red.text-white,
+html.light .bg-vr-red\/80.text-white,
+html.light .bg-vr-red\/90.text-white { color: #FFFFFF; }
+
+/* Superficies con color fijo (no usan variable) */
+html.light .surface { background-color: #FFFFFF; border-color: #DCE3EC; }
+html.light .glass { background: rgba(255, 255, 255, 0.72); border-color: rgba(16, 36, 58, 0.08); }
+html.light .glow-gold { box-shadow: 0 1px 3px rgba(16, 36, 58, 0.08); }
+
+/* Scrollbar en claro */
+html.light ::-webkit-scrollbar-track { background: #E2E8F0; }
+html.light ::-webkit-scrollbar-thumb { background: #C5CFDC; }
+html.light ::-webkit-scrollbar-thumb:hover { background: #D4A017; }
 
 /* =============================================
    UTILIDADES CUSTOM

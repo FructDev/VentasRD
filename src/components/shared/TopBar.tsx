@@ -31,7 +31,7 @@ const ROL_LABEL: Record<string, string> = { admin: 'Admin', vendedor: 'Vendedor'
 export default function TopBar() {
     const pathname = usePathname();
     const router = useRouter();
-    const { isOnline, isAdminMode, negocioNombre, rolUsuario, nombreUsuario, planTier, cerrarSesionUsuario } = useConfigStore();
+    const { isOnline, isAdminMode, negocioNombre, rolUsuario, nombreUsuario, planTier, tema, setTema, cerrarSesionUsuario } = useConfigStore();
 
     const [menuOpen, setMenuOpen] = useState(false);
     const [confirmLogout, setConfirmLogout] = useState(false);
@@ -140,6 +140,12 @@ export default function TopBar() {
                                     <p className="text-sm font-bold text-white truncate">{displayNombre}</p>
                                     <p className="text-xs text-vr-gray">{displayRol}</p>
                                 </div>
+                                <button
+                                    onClick={() => setTema(tema === 'claro' ? 'oscuro' : 'claro')}
+                                    className="w-full text-left px-4 py-3 text-sm font-bold text-vr-gray hover:text-white hover:bg-navy-3 transition-colors flex items-center gap-2 border-b border-navy-3"
+                                >
+                                    <span>{tema === 'claro' ? '🌙' : '☀️'}</span> {tema === 'claro' ? 'Tema oscuro' : 'Tema claro'}
+                                </button>
                                 <button
                                     onClick={() => { setMenuOpen(false); setConfirmLogout(true); }}
                                     className="w-full text-left px-4 py-3 text-sm font-bold text-vr-red hover:bg-vr-red/10 transition-colors flex items-center gap-2"

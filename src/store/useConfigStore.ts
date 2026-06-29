@@ -91,6 +91,9 @@ interface ConfigState {
     // Días de garantía por defecto para productos con número de serie (Plan Pro)
     garantiaDiasDefault: number;
     setGarantiaDiasDefault: (dias: number) => void;
+    // Tema de la interfaz (por dispositivo)
+    tema: 'oscuro' | 'claro';
+    setTema: (tema: 'oscuro' | 'claro') => void;
     setImpresion: (config: Partial<ImpresionConfig>) => void;
     setConnection: (status: boolean) => void;
     setOfflineUnlock: (status: boolean) => void;
@@ -144,6 +147,7 @@ const configCreator: StateCreator<ConfigState> = (set) => ({
             ncf: NCF_DEFAULT,
             impresion: IMPRESION_DEFAULT,
             garantiaDiasDefault: 30,
+            tema: 'oscuro',
 
             setAcceso: (accesoHasta) => set({ accesoHasta }),
             marcarTiempoVisto: () => set(s => ({ ultimaFechaVista: Math.max(s.ultimaFechaVista, Date.now()) })),
@@ -151,6 +155,7 @@ const configCreator: StateCreator<ConfigState> = (set) => ({
             setNcfConfig: (config) => set(state => ({ ncf: { ...state.ncf, ...config } })),
             setImpresion: (config) => set(state => ({ impresion: { ...state.impresion, ...config } })),
             setGarantiaDiasDefault: (dias) => set({ garantiaDiasDefault: Math.max(0, Math.floor(dias) || 0) }),
+            setTema: (tema) => set({ tema }),
 
             consumirNcf: () => {
                 const state = useConfigStore.getState();
@@ -281,6 +286,7 @@ export const useConfigStore = create<ConfigState>()(
             ncf: state.ncf,
             impresion: state.impresion,
             garantiaDiasDefault: state.garantiaDiasDefault,
+            tema: state.tema,
         }),
         merge: (persisted, current) => {
             const p = persisted as Partial<ConfigState>;
