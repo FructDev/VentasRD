@@ -162,7 +162,14 @@ export default function POSPage() {
       .toArray();
   }, [productoParaSerial]) ?? [];
 
-  const fuse = useMemo(() => new Fuse(productosEnDB, { keys: ['nombre', 'codigo_barras'], threshold: 0.4, ignoreLocation: true }), [productosEnDB]);
+  // Firma del catálogo buscable: solo cambia si cambian nombres/códigos (no el stock).
+  // Así el índice de Fuse no se reconstruye en cada tick de sincronización.
+  const fuseSig = useMemo(() => productosEnDB.map(p => `${p.id}:${p.nombre}:${p.codigo_barras}`).join('|'), [productosEnDB]);
+  const fuse = useMemo(
+    () => new Fuse(productosEnDB, { keys: ['nombre', 'codigo_barras'], threshold: 0.4, ignoreLocation: true }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [fuseSig]
+  );
   const productosFiltrados = useMemo(() => {
     if (!searchTerm) return productosEnDB;
     return fuse.search(searchTerm).map(result => result.item);
@@ -342,6 +349,7 @@ export default function POSPage() {
               venta_id: idVenta,
               producto_id: item.id,
               negocio_id: negocioId,
+              nombre: item.nombre,
               cantidad: item.cantidad,
               precio_unitario: item.precio_venta,
               subtotal: item.precio_venta * item.cantidad,

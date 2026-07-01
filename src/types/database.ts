@@ -87,6 +87,7 @@ export interface VentaDetalleLocal {
     producto_id: string;
     negocio_id: string;
     sucursal_id?: string;
+    nombre?: string;         // nombre del producto al momento de la venta (sobrevive a borrados y venta libre)
     cantidad: number;
     precio_unitario: number;
     subtotal: number;

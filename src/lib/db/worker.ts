@@ -71,6 +71,9 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
 
     activeInterval = setInterval(async () => {
         if (!navigator.onLine || isSyncing) return;
+        // No sincronizar cuando la app está en segundo plano (pestaña oculta/minimizada):
+        // evita gastar CPU, red y batería, y que la app se trabe al volver a abrirla.
+        if (typeof document !== 'undefined' && document.hidden) return;
 
         // Backoff: si hay 3+ errores consecutivos, reducir intentos gradualmente
         if (consecutiveErrors >= 3) {
@@ -170,7 +173,11 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
             // descarga el stock_actual de TODOS los productos desde Supabase y
             // actualiza Dexie ignorando timestamps, garantizando consistencia.
             const STOCK_RECON_KEY = 'vrd_stock_recon_ts';
-            const STOCK_RECON_INTERVAL = 30 * 1000;
+            // Red de seguridad (por si el pull incremental se perdió un cambio). Se
+            // hace con menos frecuencia porque descarga TODO el catálogo: cada 30s
+            // trababa la app en negocios con muchos productos. El pull incremental
+            // (cada ~15s) sigue trayendo los cambios al instante.
+            const STOCK_RECON_INTERVAL = 120 * 1000;
             const lastStockRecon = parseInt(localStorage.getItem(STOCK_RECON_KEY) || '0', 10);
             if (Date.now() - lastStockRecon > STOCK_RECON_INTERVAL) {
                 const { data: allStocks } = await withTimeout(() =>
@@ -529,6 +536,7 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                     producto_id: detalle.producto_id,
                     negocio_id: detalle.negocio_id,
                     sucursal_id: detalle.sucursal_id || sucursalId || null,
+                    nombre: detalle.nombre ?? null,
                     cantidad: detalle.cantidad,
                     precio_unitario: detalle.precio_unitario,
                     subtotal: detalle.subtotal,

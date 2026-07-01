@@ -89,7 +89,7 @@ export default function HistorialPage() {
         });
         const cartItems: CartItem[] = detallesVenta.map((d, i) => ({
             id: d.producto_id,
-            nombre: prods[i]?.nombre || 'Producto eliminado',
+            nombre: d.nombre || prods[i]?.nombre || 'Producto eliminado',
             precio_venta: d.precio_unitario,
             cantidad: d.cantidad,
             negocio_id: d.negocio_id,
@@ -283,7 +283,7 @@ export default function HistorialPage() {
         const items = detallesPorVenta.get(venta.id) || [];
         setItemsDevolucion(items.map(d => ({
             producto_id: d.producto_id,
-            nombre: `Producto`,
+            nombre: d.nombre || 'Producto',
             cantidad_original: d.cantidad,
             precio_unitario: d.precio_unitario,
             cantidad_devolver: d.cantidad,
@@ -293,7 +293,7 @@ export default function HistorialPage() {
         db.productos.bulkGet(items.map(d => d.producto_id)).then(prods => {
             setItemsDevolucion(items.map((d, i) => ({
                 producto_id: d.producto_id,
-                nombre: prods[i]?.nombre || 'Producto eliminado',
+                nombre: d.nombre || prods[i]?.nombre || 'Producto eliminado',
                 cantidad_original: d.cantidad,
                 precio_unitario: d.precio_unitario,
                 cantidad_devolver: d.cantidad,
@@ -582,7 +582,7 @@ export default function HistorialPage() {
                                                                     <div className="space-y-1">
                                                                         {items.map(d => (
                                                                             <div key={d.id} className="flex justify-between text-xs text-vr-gray">
-                                                                                <span>{d.cantidad}x <span className="text-white font-medium">{prodNombres.get(d.producto_id) || 'Producto eliminado'}</span></span>
+                                                                                <span>{d.cantidad}x <span className="text-white font-medium">{d.nombre || prodNombres.get(d.producto_id) || 'Producto eliminado'}</span></span>
                                                                                 <span className="font-mono">{formatDOP(d.subtotal)}</span>
                                                                             </div>
                                                                         ))}
