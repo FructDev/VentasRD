@@ -78,7 +78,7 @@ const FORM_VACIO = {
 };
 
 export default function ReparacionesPage() {
-    const { negocioId, sucursalId, planTier, showToast, negocioNombre, negocioRnc, negocioDireccion, negocioTelefono, nombreUsuario } = useConfigStore();
+    const { negocioId, sucursalId, planTier, showToast, negocioNombre, negocioRnc, negocioDireccion, negocioTelefono, nombreUsuario, cobrarRepuestosAparte, setCobrarRepuestosAparte } = useConfigStore();
     const usuarioActual = nombreUsuario || 'Dueño';
     // Agrega un evento a la bitácora de una reparación (auditoría de estados)
     const conEvento = (rep: ReparacionLocal, estado: ReparacionEstado, fecha: number): ReparacionLocal['bitacora'] =>
@@ -142,10 +142,12 @@ export default function ReparacionesPage() {
 
     // ─── Derivados ────────────────────────────────────────────────────────
     const totalForm = useMemo(() => {
-        const repuestos = formData.repuestos.reduce((s, r) => s + r.precio * r.cantidad, 0);
+        const repuestos = cobrarRepuestosAparte
+            ? formData.repuestos.reduce((s, r) => s + r.precio * r.cantidad, 0)
+            : 0;
         const mo = parseFloat(formData.mano_obra) || 0;
         return repuestos + mo;
-    }, [formData.repuestos, formData.mano_obra]);
+    }, [formData.repuestos, formData.mano_obra, cobrarRepuestosAparte]);
 
     const listaFiltrada = useMemo(() => {
         const q = norm(busqueda).trim();
@@ -221,7 +223,8 @@ export default function ReparacionesPage() {
                 nombre: prod.nombre,
                 cantidad: 1,
                 costo: prod.costo || 0,
-                precio: prod.precio_venta || prod.costo || 0,
+                // Si NO se cobra aparte, el precio va en 0 (lo cubre la mano de obra)
+                precio: cobrarRepuestosAparte ? (prod.precio_venta || prod.costo || 0) : 0,
                 desde_inventario: true,
                 stock_aplicado: false,
             }],
@@ -313,9 +316,12 @@ export default function ReparacionesPage() {
                     await registrarMovimientoStock({ productoId: pid, tipo: 'reparacion', delta: -diff, referenciaId: id });
                 }
             }
-            const repuestosFinal: RepuestoReparacion[] = formData.repuestos.map(rp =>
-                rp.desde_inventario && rp.producto_id ? { ...rp, stock_aplicado: true } : rp
-            );
+            const repuestosFinal: RepuestoReparacion[] = formData.repuestos.map(rp => {
+                const base = rp.desde_inventario && rp.producto_id ? { ...rp, stock_aplicado: true } : { ...rp };
+                // Si los repuestos NO se cobran aparte, su precio es 0 (lo cubre la mano de obra)
+                if (!cobrarRepuestosAparte) base.precio = 0;
+                return base;
+            });
 
             const total = repuestosFinal.reduce((s, r) => s + r.precio * r.cantidad, 0) + (parseFloat(formData.mano_obra) || 0);
             // Pagos: al crear, el abono inicial se registra como primer pago. Al editar,
@@ -879,6 +885,17 @@ export default function ReparacionesPage() {
                                         <p className="text-xs font-bold text-vr-gray uppercase tracking-wider">Repuestos</p>
                                         <button type="button" onClick={agregarRepuestoManual} className="text-xs font-bold text-gold hover:text-gold-2">+ Manual</button>
                                     </div>
+                                    {/* Política de cobro de repuestos (ajuste del negocio) */}
+                                    <button
+                                        type="button"
+                                        onClick={() => setCobrarRepuestosAparte(!cobrarRepuestosAparte)}
+                                        className={`w-full flex items-center justify-between px-2.5 py-2 rounded-lg border mb-2 text-left transition-all ${cobrarRepuestosAparte ? 'border-gold/40 bg-gold/10 text-gold' : 'border-navy-3 text-vr-gray'}`}
+                                    >
+                                        <span className="text-[11px] font-bold">{cobrarRepuestosAparte ? 'Cobrar repuestos aparte' : 'Mano de obra incluye repuestos'}</span>
+                                        <div className={`relative w-9 h-5 rounded-full transition-colors shrink-0 ml-2 ${cobrarRepuestosAparte ? 'bg-gold' : 'bg-navy-3'}`}>
+                                            <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${cobrarRepuestosAparte ? 'translate-x-4' : ''}`} />
+                                        </div>
+                                    </button>
                                     {/* Buscar en inventario */}
                                     <div className="relative mb-2">
                                         <input type="text" placeholder="Buscar repuesto en inventario…" className="w-full bg-navy-3 border border-navy-3 rounded-lg p-2.5 text-white text-sm focus:border-gold outline-none transition-all" value={busquedaRepuesto} onChange={e => setBusquedaRepuesto(e.target.value)} />
@@ -905,7 +922,9 @@ export default function ReparacionesPage() {
                                                         )}
                                                     </div>
                                                     <input type="number" step="any" min="0" title="Cantidad" className="w-12 bg-navy-2 border border-navy-2 rounded text-center text-white text-xs font-mono p-1 outline-none focus:border-gold" value={rp.cantidad} onChange={e => actualizarRepuesto(i, 'cantidad', e.target.value)} />
-                                                    <input type="number" step="0.01" min="0" title="Precio al cliente" className="w-20 bg-navy-2 border border-navy-2 rounded text-right text-white text-xs font-mono p-1 outline-none focus:border-gold" value={rp.precio} onChange={e => actualizarRepuesto(i, 'precio', e.target.value)} />
+                                                    {cobrarRepuestosAparte && (
+                                                        <input type="number" step="0.01" min="0" title="Precio al cliente" className="w-20 bg-navy-2 border border-navy-2 rounded text-right text-white text-xs font-mono p-1 outline-none focus:border-gold" value={rp.precio} onChange={e => actualizarRepuesto(i, 'precio', e.target.value)} />
+                                                    )}
                                                     <button type="button" onClick={() => quitarRepuesto(i)} className="text-vr-red font-bold px-1 shrink-0">✕</button>
                                                 </div>
                                             ))}

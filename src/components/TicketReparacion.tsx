@@ -126,7 +126,8 @@ export const TicketReparacion = forwardRef<HTMLDivElement, TicketReparacionProps
                             {r.repuestos.map((x, i) => (
                                 <tr key={i}>
                                     <td className="py-0.5 pr-1 break-words">{x.nombre} ×{x.cantidad}</td>
-                                    <td className="py-0.5 text-right">RD$ {fmtDOP(x.precio * x.cantidad)}</td>
+                                    {/* Precio solo si el repuesto se cobra aparte (precio > 0) */}
+                                    {x.precio > 0 && <td className="py-0.5 text-right">RD$ {fmtDOP(x.precio * x.cantidad)}</td>}
                                 </tr>
                             ))}
                         </tbody>

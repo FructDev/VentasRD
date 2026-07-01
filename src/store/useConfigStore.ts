@@ -94,6 +94,10 @@ interface ConfigState {
     // Tema de la interfaz (por dispositivo)
     tema: 'oscuro' | 'claro';
     setTema: (tema: 'oscuro' | 'claro') => void;
+    // Reparaciones: si los repuestos se cobran aparte en la factura. Por defecto
+    // false = la mano de obra ya incluye el repuesto (no se muestra su precio).
+    cobrarRepuestosAparte: boolean;
+    setCobrarRepuestosAparte: (v: boolean) => void;
     setImpresion: (config: Partial<ImpresionConfig>) => void;
     setConnection: (status: boolean) => void;
     setOfflineUnlock: (status: boolean) => void;
@@ -148,6 +152,7 @@ const configCreator: StateCreator<ConfigState> = (set) => ({
             impresion: IMPRESION_DEFAULT,
             garantiaDiasDefault: 30,
             tema: 'oscuro',
+            cobrarRepuestosAparte: false,
 
             setAcceso: (accesoHasta) => set({ accesoHasta }),
             marcarTiempoVisto: () => set(s => ({ ultimaFechaVista: Math.max(s.ultimaFechaVista, Date.now()) })),
@@ -156,6 +161,7 @@ const configCreator: StateCreator<ConfigState> = (set) => ({
             setImpresion: (config) => set(state => ({ impresion: { ...state.impresion, ...config } })),
             setGarantiaDiasDefault: (dias) => set({ garantiaDiasDefault: Math.max(0, Math.floor(dias) || 0) }),
             setTema: (tema) => set({ tema }),
+            setCobrarRepuestosAparte: (v) => set({ cobrarRepuestosAparte: v }),
 
             consumirNcf: () => {
                 const state = useConfigStore.getState();
@@ -287,6 +293,7 @@ export const useConfigStore = create<ConfigState>()(
             impresion: state.impresion,
             garantiaDiasDefault: state.garantiaDiasDefault,
             tema: state.tema,
+            cobrarRepuestosAparte: state.cobrarRepuestosAparte,
         }),
         merge: (persisted, current) => {
             const p = persisted as Partial<ConfigState>;
