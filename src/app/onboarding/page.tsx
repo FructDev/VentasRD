@@ -6,7 +6,6 @@ import { supabase } from '@/lib/supabase/client';
 import { useConfigStore } from '@/store/useConfigStore';
 import { ShoppingCart, Check } from 'lucide-react';
 import { db } from '@/lib/db/dexie';
-import { v4 as uuidv4 } from 'uuid';
 
 const STEPS = [
     { label: 'Cuenta creada', done: true },
@@ -40,44 +39,32 @@ export default function OnboardingPage() {
         setError(null);
 
         try {
-            // 1. Actualizar datos del negocio
-            const { error: negocioError } = await supabase
-                .from('negocios')
-                .update({
-                    telefono,
+            // El onboarding se completa en el servidor (service role): opera sobre el
+            // negocio del usuario autenticado por su token, evitando bloqueos de RLS.
+            const { data: { session } } = await supabase.auth.getSession();
+            const token = session?.access_token;
+            if (!token) throw new Error('Tu sesión expiró. Vuelve a iniciar sesión.');
+
+            const res = await fetch('/api/onboarding', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                body: JSON.stringify({
                     tipo_negocio: tipoNegocio,
+                    telefono,
                     direccion,
-                    onboarding_completado: true,
-                })
-                .eq('id', negocioId);
+                    nombre_sucursal: nombreSucursal,
+                }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(`${data.error || 'Error al guardar'}${data.code ? ` (código ${data.code})` : ''}`);
 
-            if (negocioError) throw negocioError;
-
-            // 2. Crear primera sucursal
-            const sucursalNombre = nombreSucursal.trim() || 'Local Principal';
-            // uuidv4 funciona en cualquier contexto (crypto.randomUUID solo en HTTPS/Chrome moderno)
-            const sucursalId = uuidv4();
-            const ahora = Date.now();
-
-            const { error: sucursalError } = await supabase
-                .from('sucursales')
-                .insert({
-                    id: sucursalId,
-                    negocio_id: negocioId,
-                    nombre: sucursalNombre,
-                    direccion,
-                    fecha_creacion: ahora,
-                });
-
-            if (sucursalError) throw sucursalError;
-
-            // 3. Cache offline
+            // Cache offline de la sucursal creada
             await db.sucursales.put({
-                id: sucursalId,
-                negocio_id: negocioId,
-                nombre: sucursalNombre,
+                id: data.sucursalId,
+                negocio_id: data.negocioId,
+                nombre: data.sucursalNombre,
                 direccion,
-                fecha_creacion: ahora,
+                fecha_creacion: data.fecha_creacion,
             });
 
             window.location.href = '/';
