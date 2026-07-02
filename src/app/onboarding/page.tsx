@@ -6,6 +6,7 @@ import { supabase } from '@/lib/supabase/client';
 import { useConfigStore } from '@/store/useConfigStore';
 import { ShoppingCart, Check } from 'lucide-react';
 import { db } from '@/lib/db/dexie';
+import { v4 as uuidv4 } from 'uuid';
 
 const STEPS = [
     { label: 'Cuenta creada', done: true },
@@ -54,7 +55,8 @@ export default function OnboardingPage() {
 
             // 2. Crear primera sucursal
             const sucursalNombre = nombreSucursal.trim() || 'Local Principal';
-            const sucursalId = crypto.randomUUID();
+            // uuidv4 funciona en cualquier contexto (crypto.randomUUID solo en HTTPS/Chrome moderno)
+            const sucursalId = uuidv4();
             const ahora = Date.now();
 
             const { error: sucursalError } = await supabase
@@ -80,9 +82,12 @@ export default function OnboardingPage() {
 
             window.location.href = '/';
         } catch (err: unknown) {
-            const msg = err instanceof Error ? err.message : 'Error desconocido';
-            console.error('Error en onboarding:', msg);
-            setError('Ocurrió un error al guardar. Intenta de nuevo.');
+            // Los errores de Supabase son objetos { message, code, details, hint },
+            // no instancias de Error — extraemos el mensaje real igual.
+            const e = err as { message?: string; code?: string; details?: string; hint?: string };
+            const msg = e?.message || (err instanceof Error ? err.message : 'Error desconocido');
+            console.error('Error en onboarding:', e?.code, msg, e?.details, e?.hint, err);
+            setError(`No se pudo guardar: ${msg}${e?.code ? ` (código ${e.code})` : ''}. Si persiste, envíanos una captura de este mensaje.`);
             setLoading(false);
         }
     };
