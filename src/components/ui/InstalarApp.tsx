@@ -60,6 +60,19 @@ export default function InstalarApp() {
         const onInstalled = () => { setPromptEvt(null); setMostrarIOS(false); };
         window.addEventListener('beforeinstallprompt', onPrompt);
         window.addEventListener('appinstalled', onInstalled);
+
+        // El evento pudo dispararse ANTES de montar este componente: el script
+        // inline del layout lo guarda en window.__vrdInstallEvt — recogerlo.
+        const previo = (window as unknown as { __vrdInstallEvt?: BeforeInstallPromptEvent }).__vrdInstallEvt;
+        if (previo) {
+            const t = setTimeout(() => setPromptEvt(previo), 0);
+            return () => {
+                clearTimeout(t);
+                window.removeEventListener('beforeinstallprompt', onPrompt);
+                window.removeEventListener('appinstalled', onInstalled);
+            };
+        }
+
         return () => {
             window.removeEventListener('beforeinstallprompt', onPrompt);
             window.removeEventListener('appinstalled', onInstalled);

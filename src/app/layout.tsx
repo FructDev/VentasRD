@@ -19,7 +19,10 @@ const themeInitScript = `(function(){try{
   var p=P[s.colorMarca]||P.dorado;el.style.setProperty('--color-gold',p[0]);el.style.setProperty('--color-gold-2',p[1]);
   var F={syne:'--font-syne',poppins:'--font-poppins',montserrat:'--font-montserrat',spacegro:'--font-space-grotesk',sora:'--font-sora',outfit:'--font-outfit',playfair:'--font-playfair'};
   var fv=F[s.fuenteMarca]||F.syne;el.style.setProperty('--font-display','var('+fv+')');
-}catch(e){}})();`;
+}catch(e){}})();
+// Capturar beforeinstallprompt ANTES de que React monte (el evento dispara
+// una sola vez y muy temprano; si se pierde, el banner de instalar no sale).
+window.addEventListener('beforeinstallprompt',function(e){e.preventDefault();window.__vrdInstallEvt=e;});`;
 
 const syne = Syne({
   subsets: ["latin"],
