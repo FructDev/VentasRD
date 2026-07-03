@@ -39,7 +39,7 @@ interface CartState {
     clearCart: () => void;
 }
 
-const calculateTotals = (
+export const calculateTotals = (
     items: CartItem[],
     tipoDescuento: 'porcentaje' | 'monto' = 'porcentaje',
     valorDescuento: number = 0

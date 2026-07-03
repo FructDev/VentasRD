@@ -36,6 +36,9 @@ jobs:
       - name: Verificar tipos (TypeScript)
         run: npm run typecheck
 
+      - name: Tests unitarios (dinero, NCF, carrito)
+        run: npm run test
+
       - name: Lint (informativo, no bloquea)
         run: npm run lint
         continue-on-error: true
