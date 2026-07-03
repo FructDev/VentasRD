@@ -9,6 +9,7 @@ import { useProductosTenant } from '@/lib/db/tenantQuery';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { ApartadoLocal, ItemApartado, MetodoPagoReparacion, AbonoApartado } from '@/types/database';
 import { formatDOP } from '@/lib/utils';
+import { linkWhatsApp } from '@/lib/whatsapp';
 import { v4 as uuidv4 } from 'uuid';
 import { useReactToPrint } from 'react-to-print';
 import { TicketApartado } from '@/components/TicketApartado';
@@ -288,15 +289,14 @@ export default function ApartadosPage() {
     };
 
     const avisarWhatsApp = (a: ApartadoLocal) => {
-        const tel = (a.cliente_telefono || '').replace(/\D/g, '');
-        if (!tel) { showToast('Este apartado no tiene teléfono del cliente.', 'info'); return; }
+        if (!a.cliente_telefono) { showToast('Este apartado no tiene teléfono del cliente.', 'info'); return; }
         const saldo = Math.max(0, a.total - a.abonado);
         const msg = `Hola ${a.cliente_nombre} 👋, le saluda *${negocioNombre || 'nuestra tienda'}*.\n\n` +
             `Le recordamos su apartado *${a.folio}*.\n` +
             `Total: *${formatDOP(a.total)}* · Abonado: *${formatDOP(a.abonado)}*\n` +
-            (saldo > 0 ? `Saldo pendiente: *${formatDOP(saldo)}*.\n` : 'Ya está saldado, ¡puede pasar a retirarlo! ✅\n');
-        const telFull = tel.length === 10 ? `1${tel}` : tel;
-        window.open(`https://wa.me/${telFull}?text=${encodeURIComponent(msg)}`, '_blank');
+            (saldo > 0 ? `Saldo pendiente: *${formatDOP(saldo)}*.\n` : 'Ya está saldado, ¡puede pasar a retirarlo! ✅\n') +
+            `\n_Hecho con VentaRD_`;
+        window.open(linkWhatsApp(msg, a.cliente_telefono), '_blank');
     };
 
     // ─── Candado de plan Pro ──────────────────────────────────────────────

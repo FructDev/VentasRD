@@ -9,6 +9,7 @@ import { useProductosTenant } from '@/lib/db/tenantQuery';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { ReparacionLocal, ReparacionEstado, RepuestoReparacion, MetodoPagoReparacion, ProductoLocal } from '@/types/database';
 import { formatDOP } from '@/lib/utils';
+import { linkWhatsApp } from '@/lib/whatsapp';
 import { v4 as uuidv4 } from 'uuid';
 import { useReactToPrint } from 'react-to-print';
 import { TicketReparacion } from '@/components/TicketReparacion';
@@ -598,18 +599,16 @@ export default function ReparacionesPage() {
     };
 
     const avisarWhatsApp = (r: ReparacionLocal) => {
-        const tel = (r.cliente_telefono || '').replace(/\D/g, '');
-        if (!tel) { showToast('Esta reparación no tiene teléfono del cliente.', 'info'); return; }
+        if (!r.cliente_telefono) { showToast('Esta reparación no tiene teléfono del cliente.', 'info'); return; }
         const saldo = Math.max(0, r.total - r.abono);
         const equipo = [r.equipo_marca, r.equipo_modelo].filter(Boolean).join(' ');
         const msg =
             `Hola ${r.cliente_nombre} 👋, le saluda *${negocioNombre || 'nuestra tienda'}*.\n\n` +
             `Su equipo *${equipo}* (${r.folio}) ya está *listo* para retirar. ✅\n` +
             (saldo > 0 ? `Saldo pendiente: *${formatDOP(saldo)}*.\n` : '') +
-            `\n¡Le esperamos!`;
+            `\n¡Le esperamos!\n\n_Hecho con VentaRD_`;
         // Sin API: abrimos WhatsApp con el mensaje prellenado
-        const telFull = tel.length === 10 ? `1${tel}` : tel; // RD: anteponer 1 si faltó
-        window.open(`https://wa.me/${telFull}?text=${encodeURIComponent(msg)}`, '_blank');
+        window.open(linkWhatsApp(msg, r.cliente_telefono), '_blank');
     };
 
     const repuestosFiltrados = useMemo(() => {

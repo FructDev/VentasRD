@@ -6,6 +6,7 @@ import { useConfigStore, getDispositivoId } from '@/store/useConfigStore';
 import { useCartStore } from '@/store/useCartStore';
 import { ProductoLocal } from '@/types/database';
 import { formatDOP, formatTicket } from '@/lib/utils';
+import { linkWhatsApp } from '@/lib/whatsapp';
 import { miniatura } from '@/lib/imagen';
 import Fuse from 'fuse.js';
 import { useReactToPrint } from 'react-to-print';
@@ -816,10 +817,23 @@ export default function POSPage() {
                 <div className="flex gap-3 mt-4 w-full max-w-sm">
                   <button
                     onClick={() => {
-                      const encabezado = `${negocioNombre || 'VentaRD'}${negocioRnc ? `\nRNC: ${negocioRnc}` : ''}${negocioDireccion ? `\n${negocioDireccion}` : ''}`;
+                      const clienteRecibo = (clienteSeleccionadoId ? clientes.find(c => c.id === clienteSeleccionadoId) : null) ?? clienteActivo;
+                      const encabezado = `*${negocioNombre || 'VentaRD'}*${negocioRnc ? `\nRNC: ${negocioRnc}` : ''}${negocioDireccion ? `\n${negocioDireccion}` : ''}${negocioTelefono ? `\nTel: ${negocioTelefono}` : ''}`;
                       const pie = negocioMensajeTicket || '¡Gracias por su compra!';
-                      const resumen = `Ticket #${formatTicket(ultimoTicketNum, dispositivoId || undefined)}\n${encabezado}\n\n${items.map(i => `${i.cantidad}x ${i.nombre} — ${formatDOP(i.precio_venta * i.cantidad)}`).join('\n')}\n\nTotal: ${formatDOP(total)}\nPago: ${metodoPago}\n\n${pie}`;
-                      window.open(`https://wa.me/?text=${encodeURIComponent(resumen)}`, '_blank');
+                      const lineas = items.map(i => `${i.cantidad}x ${i.nombre} — ${formatDOP(i.precio_venta * i.cantidad)}`).join('\n');
+                      const metodoTxt: Record<string, string> = { efectivo: 'Efectivo', transferencia: 'Transferencia', tarjeta: 'Tarjeta', mixto: 'Mixto', fiado: 'Fiado' };
+                      const resumen =
+                        `${encabezado}\n` +
+                        `Recibo #${formatTicket(ultimoTicketNum, dispositivoId || undefined)}\n` +
+                        `${'—'.repeat(20)}\n` +
+                        `${lineas}\n` +
+                        `${'—'.repeat(20)}\n` +
+                        (descuento > 0 ? `Subtotal: ${formatDOP(subtotal + itbis)}\nDescuento: -${formatDOP(descuento)}\n` : '') +
+                        `*Total: ${formatDOP(total)}*\n` +
+                        `Pago: ${metodoTxt[metodoPago] || metodoPago}\n\n` +
+                        `${pie}\n\n` +
+                        `_Hecho con VentaRD_`;
+                      window.open(linkWhatsApp(resumen, clienteRecibo?.telefono), '_blank');
                     }}
                     className="flex-1 py-3 bg-vr-green/15 text-vr-green font-bold rounded-xl border border-vr-green/20 hover:bg-vr-green/25 transition-all text-sm flex items-center justify-center gap-2"
                   >

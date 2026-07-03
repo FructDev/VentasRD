@@ -8,7 +8,7 @@ import PinScreen from '@/components/ui/PinScreen';
 import SubscriptionGate from '@/components/ui/SubscriptionGate';
 import { puedeAcceder } from '@/lib/acceso';
 
-const RUTAS_PUBLICAS = ['/login', '/registro', '/landing', '/offline', '/pin', '/recuperar-contrasena', '/actualizar-contrasena', '/superadmin', '/auth/confirm', '/onboarding', '/select-branch', '/unirse'];
+const RUTAS_PUBLICAS = ['/login', '/registro', '/landing', '/offline', '/pin', '/recuperar-contrasena', '/actualizar-contrasena', '/superadmin', '/auth/confirm', '/onboarding', '/select-branch', '/unirse', '/catalogo'];
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
     const router = useRouter();
@@ -21,6 +21,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
         const procesarUsuario = async (user: any) => {
             const rutasPublicas = RUTAS_PUBLICAS;
+            // Coincidencia por prefijo: cubre rutas con parámetros como /catalogo/:id
+            const esPublica = (p: string) => rutasPublicas.some(r => p === r || p.startsWith(r + '/'));
             const currentState = useConfigStore.getState();
 
             // SIN INTERNET — usar caché directamente
@@ -38,7 +40,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                     }
                 } else {
                     // Dispositivo nuevo sin datos → no puede hacer nada offline
-                    if (!rutasPublicas.includes(pathname)) router.push('/login');
+                    if (!esPublica(pathname)) router.push('/login');
                 }
                 if (montado) setIsReady(true);
                 return;
@@ -47,7 +49,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             // CON INTERNET — flujo normal con Supabase
             if (!user) {
                 useConfigStore.getState().cerrarSesionUsuario();
-                if (!rutasPublicas.includes(pathname)) {
+                if (!esPublica(pathname)) {
                     const isPWA = window.matchMedia('(display-mode: standalone)').matches || ('standalone' in window.navigator && (window.navigator as any).standalone);
                     router.push(isPWA ? '/login' : '/landing');
                 }
@@ -60,7 +62,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 // 2A. Buscar si es el DUEÑO del negocio
                 let { data: negocio, error } = await supabase
                     .from('negocios')
-                    .select('id, nombre, onboarding_completado, pin_admin, whatsapp_dueno, telefono, rnc, direccion, mensaje_ticket, logo_url, plan_activo, plan_tier, color_marca, fuente_marca, trial_hasta, acceso_hasta')
+                    .select('id, nombre, onboarding_completado, pin_admin, whatsapp_dueno, telefono, rnc, direccion, mensaje_ticket, logo_url, plan_activo, plan_tier, color_marca, fuente_marca, catalogo_publico, trial_hasta, acceso_hasta')
                     .eq('dueño_id', user.id)
                     .maybeSingle();
 
@@ -78,7 +80,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                         // Cargar el negocio del empleado
                         const { data: negEmp } = await supabase
                             .from('negocios')
-                            .select('id, nombre, onboarding_completado, pin_admin, whatsapp_dueno, telefono, rnc, direccion, mensaje_ticket, logo_url, plan_activo, plan_tier, color_marca, fuente_marca, trial_hasta, acceso_hasta')
+                            .select('id, nombre, onboarding_completado, pin_admin, whatsapp_dueno, telefono, rnc, direccion, mensaje_ticket, logo_url, plan_activo, plan_tier, color_marca, fuente_marca, catalogo_publico, trial_hasta, acceso_hasta')
                             .eq('id', empData.negocio_id)
                             .single();
                         negocio = negEmp;
@@ -104,6 +106,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                             plan_tier: currentState.planTier,
                             color_marca: currentState.colorMarca,
                             fuente_marca: currentState.fuenteMarca,
+                            catalogo_publico: currentState.catalogoPublico,
                             trial_hasta: currentState.trialHasta,
                             acceso_hasta: currentState.accesoHasta,
                         };
@@ -121,7 +124,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                     const { data: nuevoNegocio, error: insertError } = await supabase
                         .from('negocios')
                         .insert({ dueño_id: user.id, nombre: nombreInicial, pin_admin: '1234', plan_activo: false, trial_hasta: trialHasta })
-                        .select('id, nombre, onboarding_completado, pin_admin, whatsapp_dueno, telefono, rnc, direccion, mensaje_ticket, logo_url, plan_activo, plan_tier, color_marca, fuente_marca, trial_hasta, acceso_hasta')
+                        .select('id, nombre, onboarding_completado, pin_admin, whatsapp_dueno, telefono, rnc, direccion, mensaje_ticket, logo_url, plan_activo, plan_tier, color_marca, fuente_marca, catalogo_publico, trial_hasta, acceso_hasta')
                         .single();
 
                     if (insertError) throw insertError;
@@ -168,6 +171,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 if (marca) useConfigStore.getState().setColorMarca(marca);
                 const fuente = (negocio as { fuente_marca?: string } | null)?.fuente_marca;
                 if (fuente) useConfigStore.getState().setFuenteMarca(fuente);
+                const catPub = (negocio as { catalogo_publico?: boolean } | null)?.catalogo_publico;
+                useConfigStore.getState().setCatalogoPublico(catPub === true);
                 // Fecha de acceso (trial o pago). Fallback al trial legado si la
                 // columna aún no existe en negocios viejos.
                 useConfigStore.getState().setAcceso(negocio?.acceso_hasta ?? negocio?.trial_hasta ?? null);
@@ -194,7 +199,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 // enlace de recuperación), NO redirigir a ningún lado: debe poder
                 // completar el cambio aunque la sesión ya esté activa.
                 const enRecuperacion = pathname.startsWith('/actualizar-contrasena') || pathname.startsWith('/recuperar-contrasena');
-                if (negocio && !enRecuperacion) {
+                // El catálogo es una vista pública: no aplicar el enrutador estricto
+                // (evita rebotar al dueño a /select-branch cuando abre su propio link).
+                if (negocio && !enRecuperacion && !pathname.startsWith('/catalogo')) {
                     const { sucursalId } = useConfigStore.getState();
 
                     if (!empleado && negocio.onboarding_completado === false && pathname !== '/onboarding') {

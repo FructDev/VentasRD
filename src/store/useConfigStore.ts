@@ -101,6 +101,9 @@ interface ConfigState {
     // Fuente de marca (clave del catálogo). Cambia la tipografía de títulos/logo.
     fuenteMarca: string;
     setFuenteMarca: (clave: string) => void;
+    // Catálogo público activado por el dueño (mini-tienda por link)
+    catalogoPublico: boolean;
+    setCatalogoPublico: (v: boolean) => void;
     // Reparaciones: si los repuestos se cobran aparte en la factura. Por defecto
     // false = la mano de obra ya incluye el repuesto (no se muestra su precio).
     cobrarRepuestosAparte: boolean;
@@ -161,6 +164,7 @@ const configCreator: StateCreator<ConfigState> = (set) => ({
             tema: 'oscuro',
             colorMarca: 'dorado',
             fuenteMarca: 'syne',
+            catalogoPublico: false,
             cobrarRepuestosAparte: false,
 
             setAcceso: (accesoHasta) => set({ accesoHasta }),
@@ -172,6 +176,7 @@ const configCreator: StateCreator<ConfigState> = (set) => ({
             setTema: (tema) => set({ tema }),
             setColorMarca: (colorMarca) => set({ colorMarca }),
             setFuenteMarca: (fuenteMarca) => set({ fuenteMarca }),
+            setCatalogoPublico: (catalogoPublico) => set({ catalogoPublico }),
             setCobrarRepuestosAparte: (v) => set({ cobrarRepuestosAparte: v }),
 
             consumirNcf: () => {
@@ -306,6 +311,7 @@ export const useConfigStore = create<ConfigState>()(
             tema: state.tema,
             colorMarca: state.colorMarca,
             fuenteMarca: state.fuenteMarca,
+            catalogoPublico: state.catalogoPublico,
             cobrarRepuestosAparte: state.cobrarRepuestosAparte,
         }),
         merge: (persisted, current) => {

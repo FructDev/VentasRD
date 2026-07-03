@@ -11,11 +11,29 @@ import { comprimirImagen } from '@/lib/imagen';
 import { PALETAS, FUENTES } from '@/lib/marca';
 
 export default function ConfiguracionPage() {
-    const { negocioId, showToast, negocioNombre, negocioWhatsapp, negocioTelefono, negocioRnc, negocioDireccion, negocioMensajeTicket, negocioLogo, setAuth, user, pinAdmin, isOnline, ncf, setNcfConfig, impresion, setImpresion, colorMarca, setColorMarca, fuenteMarca, setFuenteMarca } = useConfigStore();
+    const { negocioId, showToast, negocioNombre, negocioWhatsapp, negocioTelefono, negocioRnc, negocioDireccion, negocioMensajeTicket, negocioLogo, setAuth, user, pinAdmin, isOnline, ncf, setNcfConfig, impresion, setImpresion, colorMarca, setColorMarca, fuenteMarca, setFuenteMarca, catalogoPublico, setCatalogoPublico } = useConfigStore();
 
     const [loading, setLoading] = useState(false);
     const [logoData, setLogoData] = useState<string | null>(null);
+    const [copiado, setCopiado] = useState(false);
+    const [guardandoCat, setGuardandoCat] = useState(false);
     const logoInputRef = useRef<HTMLInputElement>(null);
+
+    const catalogoUrl = typeof window !== 'undefined' && negocioId ? `${window.location.origin}/catalogo/${negocioId}` : '';
+
+    const toggleCatalogo = async (activar: boolean) => {
+        if (!negocioId || guardandoCat) return;
+        setGuardandoCat(true);
+        const { error } = await supabase.from('negocios').update({ catalogo_publico: activar }).eq('id', negocioId);
+        if (error) { showToast('No se pudo actualizar el catálogo.', 'error'); }
+        else { setCatalogoPublico(activar); showToast(activar ? 'Catálogo público activado.' : 'Catálogo desactivado.', 'success'); }
+        setGuardandoCat(false);
+    };
+
+    const copiarLink = async () => {
+        try { await navigator.clipboard.writeText(catalogoUrl); setCopiado(true); setTimeout(() => setCopiado(false), 2000); }
+        catch { showToast('No se pudo copiar. Copia el link manualmente.', 'info'); }
+    };
     const [formData, setFormData] = useState({
         nombre: '',
         whatsapp_dueno: '',
@@ -299,6 +317,43 @@ export default function ConfiguracionPage() {
                                             />
                                         </div>
                                     </div>
+                                </div>
+
+                                {/* Catálogo público (mini-tienda por link) */}
+                                <div className="pt-4">
+                                    <h3 className="text-lg font-bold text-vr-green mb-1 border-b border-navy-3 pb-2">🛍️ Catálogo Público</h3>
+                                    <p className="text-xs text-vr-gray mb-4">Comparte un link con tus productos y precios. Tus clientes arman su pedido y te llega por WhatsApp. No muestra costos ni existencias.</p>
+
+                                    <div className="flex items-center justify-between bg-navy rounded-xl border border-navy-3 p-4 mb-3">
+                                        <div className="pr-3">
+                                            <p className="text-sm font-bold text-white">Activar catálogo público</p>
+                                            <p className="text-xs text-vr-gray">Cualquiera con el link podrá ver tus productos.</p>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={() => toggleCatalogo(!catalogoPublico)}
+                                            disabled={guardandoCat || !isOnline}
+                                            className={`relative w-12 h-7 rounded-full transition-colors shrink-0 disabled:opacity-50 ${catalogoPublico ? 'bg-vr-green' : 'bg-navy-4'}`}
+                                            aria-pressed={catalogoPublico}
+                                        >
+                                            <span className={`absolute top-1 left-1 w-5 h-5 rounded-full bg-white transition-transform ${catalogoPublico ? 'translate-x-5' : ''}`} />
+                                        </button>
+                                    </div>
+
+                                    {catalogoPublico && (
+                                        <div className="bg-navy rounded-xl border border-navy-3 p-4 space-y-3">
+                                            <div className="flex items-center gap-2">
+                                                <input readOnly value={catalogoUrl} className="flex-1 bg-navy-3 border border-navy-3 rounded-lg px-3 py-2 text-sm text-white font-mono truncate" />
+                                                <button type="button" onClick={copiarLink} className="px-3 py-2 bg-navy-3 border border-navy-3 hover:border-gold/40 text-vr-gray hover:text-gold font-bold rounded-lg text-xs transition-all shrink-0">
+                                                    {copiado ? '✓ Copiado' : 'Copiar'}
+                                                </button>
+                                            </div>
+                                            <div className="flex flex-wrap gap-2">
+                                                <a href={catalogoUrl} target="_blank" rel="noopener noreferrer" className="px-4 py-2 bg-navy-3 text-white font-bold rounded-lg text-xs hover:bg-navy-4 transition-all">👁️ Ver catálogo</a>
+                                                <a href={`https://wa.me/?text=${encodeURIComponent(`¡Mira nuestro catálogo! 🛍️\n${catalogoUrl}`)}`} target="_blank" rel="noopener noreferrer" className="px-4 py-2 bg-vr-green/15 text-vr-green border border-vr-green/20 font-bold rounded-lg text-xs hover:bg-vr-green/25 transition-all">📱 Compartir por WhatsApp</a>
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
 
                                 {/* Comprobantes Fiscales NCF */}
