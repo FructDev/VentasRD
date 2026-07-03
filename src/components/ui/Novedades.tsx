@@ -8,7 +8,7 @@ import { usePathname } from 'next/navigation';
 import { useConfigStore } from '@/store/useConfigStore';
 
 // Subir esta versión cuando haya novedades nuevas que anunciar.
-const NOVEDADES_VERSION = '2026-06.2';
+const NOVEDADES_VERSION = '2026-07.1';
 const STORAGE_KEY = 'vrd_novedades_version';
 
 const RUTAS_SETUP = ['/login', '/registro', '/landing', '/onboarding', '/select-branch', '/pin', '/unirse', '/auth', '/offline'];
@@ -17,6 +17,34 @@ interface Item { titulo: string; probar: string; }
 interface Seccion { emoji: string; titulo: string; items: Item[]; }
 
 const SECCIONES: Seccion[] = [
+    {
+        emoji: '🎨', titulo: 'Haz la app TUYA',
+        items: [
+            { titulo: 'Tu color de marca en toda la app', probar: 'Ajustes → "Color de Marca" → toca un color y mira cómo cambia todo al instante. Guarda para aplicarlo en todos tus dispositivos.' },
+            { titulo: 'Elige la letra de tus títulos', probar: 'Ajustes → "Tipografía" → prueba las 7 letras disponibles.' },
+            { titulo: 'Tu logo arriba en la app', probar: 'Si ya subiste tu logo en Ajustes, ahora aparece en la barra superior en vez de "VentaRD".' },
+        ],
+    },
+    {
+        emoji: '🛍️', titulo: 'Tu catálogo por WhatsApp',
+        items: [
+            { titulo: 'Mini-tienda con un link', probar: 'Ajustes → "🛍️ Catálogo Público" → actívalo y comparte el link. Tus clientes ven tus productos con fotos y precios.' },
+            { titulo: 'Te llegan pedidos por WhatsApp', probar: 'El cliente arma su pedido en el catálogo y te llega directo a tu WhatsApp, listo para despachar.' },
+        ],
+    },
+    {
+        emoji: '🎁', titulo: 'Invita y gana',
+        items: [
+            { titulo: '15 días gratis por cada negocio que invites', probar: 'Ajustes → "🎁 Invita y Gana" → comparte tu link. Cuando el otro negocio se registre, AMBOS ganan 15 días de acceso. Sin límite.' },
+        ],
+    },
+    {
+        emoji: '📱', titulo: 'Recibos por WhatsApp',
+        items: [
+            { titulo: 'Recibo directo al cliente', probar: 'Al terminar una venta toca "📱 WhatsApp": si la venta tiene cliente con teléfono, el recibo le llega a ÉL directamente.' },
+            { titulo: 'Instala la app con un toque', probar: 'Si usas VentaRD en el navegador, ahora te ofrece instalarse sola — un toque y queda como app.' },
+        ],
+    },
     {
         emoji: '🔎', titulo: 'Tu inventario, más fácil de manejar',
         items: [
