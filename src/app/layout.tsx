@@ -81,7 +81,10 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="es" className={`${syne.variable} ${dmSans.variable} ${dmMono.variable} ${poppins.variable} ${montserrat.variable} ${spaceGrotesk.variable} ${sora.variable} ${outfit.variable} ${playfair.variable}`}>
+    // suppressHydrationWarning: el script anti-parpadeo escribe class/style en
+    // <html> antes de hidratar (tema y color de marca); la diferencia con el
+    // HTML del servidor es intencional. Solo aplica a atributos de este tag.
+    <html lang="es" suppressHydrationWarning className={`${syne.variable} ${dmSans.variable} ${dmMono.variable} ${poppins.variable} ${montserrat.variable} ${spaceGrotesk.variable} ${sora.variable} ${outfit.variable} ${playfair.variable}`}>
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
       </head>
