@@ -3,7 +3,7 @@
 // POST — crea la cuenta con contraseña y la vincula al negocio
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { supabaseAdmin, leerJson } from '@/lib/api/guardia';
+import { supabaseAdmin, leerJson, excedeLimite, demasiadasPeticiones } from '@/lib/api/guardia';
 
 const BodySchema = z.object({
     token: z.string().uuid(),
@@ -12,6 +12,8 @@ const BodySchema = z.object({
 
 // GET /api/usuarios/activar?token=XXX
 export async function GET(req: NextRequest) {
+    // Público (llega por link de invitación): frenar fuerza bruta de tokens
+    if (excedeLimite(req, 'activar-get', 20, 5 * 60 * 1000)) return demasiadasPeticiones();
     const token = req.nextUrl.searchParams.get('token');
     if (!token) return NextResponse.json({ error: 'Token requerido' }, { status: 400 });
 
@@ -33,6 +35,7 @@ export async function GET(req: NextRequest) {
 // POST /api/usuarios/activar  { token, password }
 export async function POST(req: NextRequest) {
     try {
+        if (excedeLimite(req, 'activar-post', 10, 15 * 60 * 1000)) return demasiadasPeticiones();
         const r = await leerJson(req, BodySchema);
         if (r.resp) return r.resp;
         const { token, password } = r.data;

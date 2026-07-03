@@ -3,16 +3,13 @@
 // pero SOLO expone campos seguros y únicamente si el dueño activó el catálogo
 // (catalogo_publico = true). Nunca devuelve costo, stock ni datos internos.
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { supabaseAdmin, excedeLimite, demasiadasPeticiones } from '@/lib/api/guardia';
 
-const supabaseAdmin = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    { auth: { autoRefreshToken: false, persistSession: false } }
-);
-
-export async function GET(_req: NextRequest, { params }: { params: Promise<{ negocioId: string }> }) {
+export async function GET(req: NextRequest, { params }: { params: Promise<{ negocioId: string }> }) {
     try {
+        // Público: frenar el scraping/sondeo de UUIDs (60 peticiones por IP / 5 min)
+        if (excedeLimite(req, 'catalogo', 60, 5 * 60 * 1000)) return demasiadasPeticiones();
+
         const { negocioId } = await params;
         // Validar formato UUID antes de consultar (evita ruido y sondeos)
         if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(negocioId || '')) {

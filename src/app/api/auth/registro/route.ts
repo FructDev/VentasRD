@@ -4,7 +4,7 @@
 // activación de empleados), eliminando la dependencia del correo de Supabase.
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { supabaseAdmin, leerJson } from '@/lib/api/guardia';
+import { supabaseAdmin, leerJson, excedeLimite, demasiadasPeticiones } from '@/lib/api/guardia';
 
 const BodySchema = z.object({
     email: z.string().email('Correo inválido.').max(200),
@@ -14,6 +14,9 @@ const BodySchema = z.object({
 
 export async function POST(req: NextRequest) {
     try {
+        // Crear cuentas es la ruta más abusable: 5 registros por IP cada 15 min
+        if (excedeLimite(req, 'registro', 5, 15 * 60 * 1000)) return demasiadasPeticiones();
+
         const r = await leerJson(req, BodySchema);
         if (r.resp) return r.resp;
         const { email, password, nombreNegocio } = r.data;

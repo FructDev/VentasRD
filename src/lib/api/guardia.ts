@@ -70,3 +70,41 @@ export async function rolEnNegocio(userId: string, negocioId: string): Promise<'
 /** Respuestas estándar. */
 export const noAutorizado = () => NextResponse.json({ error: 'No autorizado' }, { status: 401 });
 export const prohibido = () => NextResponse.json({ error: 'Sin permiso para este negocio' }, { status: 403 });
+
+// ── Rate limiting (en memoria) ───────────────────────────────────────────────
+// Ventana deslizante simple por IP+ruta. En serverless cada instancia tiene su
+// propio contador (no es un límite global exacto), pero frena eficazmente los
+// scripts de fuerza bruta y el scraping, que golpean la misma instancia caliente.
+// Si algún día hace falta un límite global estricto: Upstash Redis.
+const ventanas = new Map<string, number[]>();
+let ultimaLimpieza = Date.now();
+
+/**
+ * Devuelve true si la petición excede el límite (y debe rechazarse).
+ * @param limite máximo de peticiones por ventana
+ * @param ventanaMs tamaño de la ventana en ms
+ */
+export function excedeLimite(req: NextRequest | Request, clave: string, limite: number, ventanaMs: number): boolean {
+    const ip = (req.headers.get('x-forwarded-for') || '').split(',')[0].trim()
+        || req.headers.get('x-real-ip')
+        || 'ip-desconocida';
+    const k = `${clave}:${ip}`;
+    const ahora = Date.now();
+
+    // Limpieza perezosa para que el Map no crezca sin límite
+    if (ahora - ultimaLimpieza > 10 * 60 * 1000) {
+        for (const [key, ts] of ventanas) {
+            if (ts.every(t => ahora - t > ventanaMs)) ventanas.delete(key);
+        }
+        ultimaLimpieza = ahora;
+    }
+
+    const marcas = (ventanas.get(k) || []).filter(t => ahora - t < ventanaMs);
+    if (marcas.length >= limite) { ventanas.set(k, marcas); return true; }
+    marcas.push(ahora);
+    ventanas.set(k, marcas);
+    return false;
+}
+
+export const demasiadasPeticiones = () =>
+    NextResponse.json({ error: 'Demasiadas peticiones. Intenta de nuevo en unos minutos.' }, { status: 429 });

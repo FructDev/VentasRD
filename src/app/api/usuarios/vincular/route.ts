@@ -2,7 +2,7 @@
 // Vincula un user_id al registro pendiente de usuarios_negocio
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { supabaseAdmin, leerJson } from '@/lib/api/guardia';
+import { supabaseAdmin, leerJson, excedeLimite, demasiadasPeticiones } from '@/lib/api/guardia';
 
 const BodySchema = z.object({
     token: z.string().uuid(),
@@ -11,6 +11,7 @@ const BodySchema = z.object({
 
 export async function POST(req: NextRequest) {
     try {
+        if (excedeLimite(req, 'vincular', 10, 15 * 60 * 1000)) return demasiadasPeticiones();
         const r = await leerJson(req, BodySchema);
         if (r.resp) return r.resp;
         const { token, userId } = r.data;
