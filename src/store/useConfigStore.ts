@@ -94,6 +94,13 @@ interface ConfigState {
     // Tema de la interfaz (por dispositivo)
     tema: 'oscuro' | 'claro';
     setTema: (tema: 'oscuro' | 'claro') => void;
+    // Color de marca del negocio (clave de paleta). Viene de negocios, se cachea
+    // localmente para aplicarlo sin parpadeo.
+    colorMarca: string;
+    setColorMarca: (clave: string) => void;
+    // Fuente de marca (clave del catálogo). Cambia la tipografía de títulos/logo.
+    fuenteMarca: string;
+    setFuenteMarca: (clave: string) => void;
     // Reparaciones: si los repuestos se cobran aparte en la factura. Por defecto
     // false = la mano de obra ya incluye el repuesto (no se muestra su precio).
     cobrarRepuestosAparte: boolean;
@@ -152,6 +159,8 @@ const configCreator: StateCreator<ConfigState> = (set) => ({
             impresion: IMPRESION_DEFAULT,
             garantiaDiasDefault: 30,
             tema: 'oscuro',
+            colorMarca: 'dorado',
+            fuenteMarca: 'syne',
             cobrarRepuestosAparte: false,
 
             setAcceso: (accesoHasta) => set({ accesoHasta }),
@@ -161,6 +170,8 @@ const configCreator: StateCreator<ConfigState> = (set) => ({
             setImpresion: (config) => set(state => ({ impresion: { ...state.impresion, ...config } })),
             setGarantiaDiasDefault: (dias) => set({ garantiaDiasDefault: Math.max(0, Math.floor(dias) || 0) }),
             setTema: (tema) => set({ tema }),
+            setColorMarca: (colorMarca) => set({ colorMarca }),
+            setFuenteMarca: (fuenteMarca) => set({ fuenteMarca }),
             setCobrarRepuestosAparte: (v) => set({ cobrarRepuestosAparte: v }),
 
             consumirNcf: () => {
@@ -293,6 +304,8 @@ export const useConfigStore = create<ConfigState>()(
             impresion: state.impresion,
             garantiaDiasDefault: state.garantiaDiasDefault,
             tema: state.tema,
+            colorMarca: state.colorMarca,
+            fuenteMarca: state.fuenteMarca,
             cobrarRepuestosAparte: state.cobrarRepuestosAparte,
         }),
         merge: (persisted, current) => {

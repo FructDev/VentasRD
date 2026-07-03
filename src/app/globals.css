@@ -129,9 +129,9 @@ html.light ::-webkit-scrollbar-thumb:hover { background: #D4A017; }
    UTILIDADES CUSTOM
    ============================================= */
 @layer utilities {
-  /* Gradiente gold */
+  /* Gradiente gold (usa variables para respetar el color de marca) */
   .bg-gold-gradient {
-    background: linear-gradient(135deg, #D4A017 0%, #EFC84A 100%);
+    background: linear-gradient(135deg, var(--color-gold) 0%, var(--color-gold-2) 100%);
   }
 
   /* Glass effect para cards */
@@ -147,9 +147,9 @@ html.light ::-webkit-scrollbar-thumb:hover { background: #D4A017; }
     border: 1px solid #1E3352;
   }
 
-  /* Glow dorado sutil */
+  /* Glow sutil con el color de marca */
   .glow-gold {
-    box-shadow: 0 0 20px rgba(212, 160, 23, 0.15);
+    box-shadow: 0 0 20px color-mix(in srgb, var(--color-gold) 15%, transparent);
   }
 
   /* Animaciones suaves */

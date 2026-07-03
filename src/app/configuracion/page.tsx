@@ -8,9 +8,10 @@ import PinGuard from '@/components/ui/PinGuard';
 import { AlertTriangle } from 'lucide-react';
 
 import { comprimirImagen } from '@/lib/imagen';
+import { PALETAS, FUENTES } from '@/lib/marca';
 
 export default function ConfiguracionPage() {
-    const { negocioId, showToast, negocioNombre, negocioWhatsapp, negocioTelefono, negocioRnc, negocioDireccion, negocioMensajeTicket, negocioLogo, setAuth, user, pinAdmin, isOnline, ncf, setNcfConfig, impresion, setImpresion } = useConfigStore();
+    const { negocioId, showToast, negocioNombre, negocioWhatsapp, negocioTelefono, negocioRnc, negocioDireccion, negocioMensajeTicket, negocioLogo, setAuth, user, pinAdmin, isOnline, ncf, setNcfConfig, impresion, setImpresion, colorMarca, setColorMarca, fuenteMarca, setFuenteMarca } = useConfigStore();
 
     const [loading, setLoading] = useState(false);
     const [logoData, setLogoData] = useState<string | null>(null);
@@ -78,7 +79,9 @@ export default function ConfiguracionPage() {
                     rnc: formData.rnc,
                     direccion: formData.direccion,
                     mensaje_ticket: formData.mensaje_ticket,
-                    logo_url: logoFinal
+                    logo_url: logoFinal,
+                    color_marca: colorMarca,
+                    fuente_marca: fuenteMarca,
                 })
                 .eq('id', negocioId);
 
@@ -182,6 +185,70 @@ export default function ConfiguracionPage() {
                                                     🖼️ Subir logo
                                                 </button>
                                             )}
+                                        </div>
+                                    </div>
+
+                                    {/* Vista previa de la marca */}
+                                    <div className="mb-6">
+                                        <label className="block text-sm font-bold text-vr-gray mb-1.5">Vista previa</label>
+                                        <div className="rounded-2xl border border-navy-3 bg-navy p-5 flex items-center gap-3">
+                                            {logoData ? (
+                                                <div className="w-11 h-11 rounded-xl bg-white border border-navy-3 overflow-hidden flex items-center justify-center shrink-0">
+                                                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                                                    <img src={logoData} alt="Logo" className="max-w-full max-h-full object-contain" />
+                                                </div>
+                                            ) : (
+                                                <div className="w-11 h-11 rounded-xl bg-gold-gradient flex items-center justify-center shrink-0 text-navy font-black text-lg glow-gold">
+                                                    {(formData.nombre.trim()[0] || 'V').toUpperCase()}
+                                                </div>
+                                            )}
+                                            <span className="font-display font-extrabold text-2xl text-gold tracking-tight truncate">
+                                                {formData.nombre.trim() || 'Mi Negocio'}
+                                            </span>
+                                        </div>
+                                    </div>
+
+                                    {/* Color de marca */}
+                                    <div className="mb-6">
+                                        <label className="block text-sm font-bold text-vr-gray mb-1.5">Color de Marca</label>
+                                        <p className="text-xs text-vr-gray mb-3">Personaliza el color principal de la app. Se aplica al instante; recuerda guardar para que aplique en todos tus dispositivos.</p>
+                                        <div className="flex flex-wrap gap-2.5">
+                                            {Object.entries(PALETAS).map(([clave, p]) => {
+                                                const activo = colorMarca === clave;
+                                                return (
+                                                    <button
+                                                        key={clave}
+                                                        type="button"
+                                                        onClick={() => setColorMarca(clave)}
+                                                        title={p.label}
+                                                        aria-label={p.label}
+                                                        className={`w-9 h-9 rounded-full shrink-0 transition-all ${activo ? 'ring-2 ring-offset-2 ring-offset-navy-2 ring-white scale-110' : 'hover:scale-105'}`}
+                                                        style={{ background: `linear-gradient(135deg, ${p.gold} 0%, ${p.gold2} 100%)` }}
+                                                    />
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+
+                                    {/* Fuente de marca */}
+                                    <div className="mb-6">
+                                        <label className="block text-sm font-bold text-vr-gray mb-1.5">Tipografía</label>
+                                        <p className="text-xs text-vr-gray mb-3">Cambia la letra de los títulos y el logo. Recuerda guardar para aplicarla en todos tus dispositivos.</p>
+                                        <div className="flex flex-wrap gap-2">
+                                            {Object.entries(FUENTES).map(([clave, f]) => {
+                                                const activo = fuenteMarca === clave;
+                                                return (
+                                                    <button
+                                                        key={clave}
+                                                        type="button"
+                                                        onClick={() => setFuenteMarca(clave)}
+                                                        className={`px-4 py-2.5 rounded-xl border text-base transition-all ${activo ? 'border-gold bg-gold/10 text-gold' : 'border-navy-3 bg-navy-3 text-white hover:border-gold/40'}`}
+                                                        style={{ fontFamily: `var(${f.cssVar})` }}
+                                                    >
+                                                        {f.label}
+                                                    </button>
+                                                );
+                                            })}
                                         </div>
                                     </div>
 

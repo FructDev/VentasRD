@@ -31,7 +31,7 @@ const ROL_LABEL: Record<string, string> = { admin: 'Admin', vendedor: 'Vendedor'
 export default function TopBar() {
     const pathname = usePathname();
     const router = useRouter();
-    const { isOnline, isAdminMode, negocioNombre, rolUsuario, nombreUsuario, planTier, tema, setTema, cerrarSesionUsuario } = useConfigStore();
+    const { isOnline, isAdminMode, negocioNombre, negocioLogo, rolUsuario, nombreUsuario, planTier, tema, setTema, cerrarSesionUsuario } = useConfigStore();
 
     const [menuOpen, setMenuOpen] = useState(false);
     const [confirmLogout, setConfirmLogout] = useState(false);
@@ -59,11 +59,23 @@ export default function TopBar() {
         <header className="bg-navy-2 border-b border-navy-3 px-2 sm:px-4 py-0 flex items-center justify-between h-14 shrink-0 z-40">
             {/* Logo */}
             <Link href="/" className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
-                <span className="font-display font-extrabold text-lg sm:text-xl text-gold tracking-tight">VentaRD</span>
-                {negocioNombre && (
+                {negocioLogo ? (
                     <>
-                        <span className="hidden sm:inline text-navy-3 text-lg">|</span>
-                        <span className="hidden sm:inline text-vr-gray text-sm font-semibold truncate max-w-[140px]">{negocioNombre}</span>
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={negocioLogo} alt={negocioNombre || 'Logo'} className="w-8 h-8 rounded-lg object-cover bg-white border border-navy-3 shrink-0" />
+                        {negocioNombre && (
+                            <span className="font-display font-extrabold text-base sm:text-lg text-white tracking-tight truncate max-w-[120px] sm:max-w-[180px]">{negocioNombre}</span>
+                        )}
+                    </>
+                ) : (
+                    <>
+                        <span className="font-display font-extrabold text-lg sm:text-xl text-gold tracking-tight">VentaRD</span>
+                        {negocioNombre && (
+                            <>
+                                <span className="hidden sm:inline text-navy-3 text-lg">|</span>
+                                <span className="hidden sm:inline text-vr-gray text-sm font-semibold truncate max-w-[140px]">{negocioNombre}</span>
+                            </>
+                        )}
                     </>
                 )}
             </Link>
