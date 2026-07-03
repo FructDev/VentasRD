@@ -4,14 +4,28 @@
 // fallo "new row violates row-level security policy" cuando el negocio quedó con
 // un dueño_id inconsistente o el cliente tenía un negocioId viejo cacheado.
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { v4 as uuidv4 } from 'uuid';
+import { DIAS_REFERIDO, generarCodigoReferido } from '@/lib/referidos';
 
 const supabaseAdmin = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
     { auth: { autoRefreshToken: false, persistSession: false } }
 );
+
+const DIA_MS = 24 * 60 * 60 * 1000;
+
+/** Asegura que el negocio tenga un código de referido único; lo devuelve. */
+async function asegurarCodigo(db: SupabaseClient, negocioId: string, actual: string | null): Promise<string> {
+    if (actual) return actual;
+    for (let intento = 0; intento < 5; intento++) {
+        const codigo = generarCodigoReferido();
+        const { error } = await db.from('negocios').update({ codigo_referido: codigo }).eq('id', negocioId);
+        if (!error) return codigo;
+    }
+    return actual || '';
+}
 
 export async function POST(req: NextRequest) {
     try {
@@ -22,7 +36,7 @@ export async function POST(req: NextRequest) {
         const { data: { user }, error: userErr } = await supabaseAdmin.auth.getUser(token);
         if (userErr || !user) return NextResponse.json({ error: 'Sesión inválida' }, { status: 401 });
 
-        const { tipo_negocio, telefono, direccion, nombre_sucursal } = await req.json();
+        const { tipo_negocio, telefono, direccion, nombre_sucursal, ref } = await req.json();
         const ahora = Date.now();
 
         // 1. Buscar el negocio del usuario (por dueño). Si no existe, crearlo.
@@ -69,7 +83,51 @@ export async function POST(req: NextRequest) {
             .insert({ id: sucursalId, negocio_id: negocioId, nombre: sucursalNombre, direccion, fecha_creacion: ahora });
         if (sucErr) throw sucErr;
 
-        return NextResponse.json({ ok: true, negocioId, sucursalId, sucursalNombre, fecha_creacion: ahora });
+        // 3. Programa de referidos ----------------------------------------------
+        // Estado actual del negocio recién finalizado.
+        const { data: negActual } = await supabaseAdmin
+            .from('negocios')
+            .select('id, codigo_referido, referido_acreditado, acceso_hasta, trial_hasta')
+            .eq('id', negocioId)
+            .maybeSingle();
+
+        // Asegurar que este negocio tenga su propio código para invitar a otros.
+        await asegurarCodigo(supabaseAdmin, negocioId, negActual?.codigo_referido ?? null);
+
+        // Canjear el código de quien lo invitó (una sola vez, y no a sí mismo).
+        const codigoRef = (ref || '').toString().trim().toUpperCase();
+        let referidoAplicado = false;
+        if (codigoRef && negActual && !negActual.referido_acreditado) {
+            const { data: referente } = await supabaseAdmin
+                .from('negocios')
+                .select('id, acceso_hasta, trial_hasta')
+                .eq('codigo_referido', codigoRef)
+                .maybeSingle();
+
+            if (referente && referente.id !== negocioId) {
+                const bonus = DIAS_REFERIDO * DIA_MS;
+                const nuevoAcceso = (base: number | null | undefined) => Math.max(ahora, base || ahora) + bonus;
+
+                // Acreditar al invitado
+                await supabaseAdmin.from('negocios').update({
+                    referido_por: codigoRef,
+                    referido_acreditado: true,
+                    acceso_hasta: nuevoAcceso(negActual.acceso_hasta ?? negActual.trial_hasta),
+                }).eq('id', negocioId);
+
+                // Acreditar a quien invitó + sumar a su contador
+                const { data: refCount } = await supabaseAdmin
+                    .from('negocios').select('referidos_total').eq('id', referente.id).maybeSingle();
+                await supabaseAdmin.from('negocios').update({
+                    acceso_hasta: nuevoAcceso(referente.acceso_hasta ?? referente.trial_hasta),
+                    referidos_total: ((refCount?.referidos_total as number) || 0) + 1,
+                }).eq('id', referente.id);
+
+                referidoAplicado = true;
+            }
+        }
+
+        return NextResponse.json({ ok: true, negocioId, sucursalId, sucursalNombre, fecha_creacion: ahora, referidoAplicado, diasReferido: DIAS_REFERIDO });
     } catch (e: unknown) {
         const err = e as { message?: string; code?: string };
         console.error('[onboarding api]', err?.code, err?.message);

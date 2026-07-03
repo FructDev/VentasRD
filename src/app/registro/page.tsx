@@ -1,10 +1,11 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase/client';
 import Link from 'next/link';
 import { ShoppingCart, Check } from 'lucide-react';
+import { DIAS_REFERIDO } from '@/lib/referidos';
 
 const FEATURES = [
     'Período de prueba gratis — sin tarjeta de crédito',
@@ -20,6 +21,19 @@ export default function RegistroPage() {
     const [nombreNegocio, setNombreNegocio] = useState('');
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [invitado, setInvitado] = useState(false);
+
+    // Capturar el código de referido del link (?ref=REF-XXXXX) para canjearlo
+    // al completar el onboarding.
+    useEffect(() => {
+        const ref = new URLSearchParams(window.location.search).get('ref');
+        if (ref && ref.trim()) {
+            try { localStorage.setItem('ventard_ref', ref.trim().toUpperCase()); } catch { /* noop */ }
+            setInvitado(true);
+        } else {
+            try { if (localStorage.getItem('ventard_ref')) setInvitado(true); } catch { /* noop */ }
+        }
+    }, []);
 
     const handleRegistro = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -116,6 +130,15 @@ export default function RegistroPage() {
                         <h1 className="text-2xl font-display font-black text-white mb-1">Crea tu cuenta</h1>
                         <p className="text-vr-gray text-sm">Período de prueba gratis — sin tarjeta</p>
                     </div>
+
+                    {invitado && (
+                        <div className="mb-6 rounded-xl bg-vr-green/10 border border-vr-green/30 px-4 py-3 flex items-start gap-2.5">
+                            <span className="text-lg leading-none">🎁</span>
+                            <p className="text-sm text-vr-green font-semibold leading-snug">
+                                ¡Te invitaron a VentaRD! Ganarás <span className="font-black">{DIAS_REFERIDO} días extra</span> al completar tu registro.
+                            </p>
+                        </div>
+                    )}
 
                     <form onSubmit={handleRegistro} className="space-y-4">
                         <div>

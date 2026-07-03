@@ -17,6 +17,8 @@ export default function ConfiguracionPage() {
     const [logoData, setLogoData] = useState<string | null>(null);
     const [copiado, setCopiado] = useState(false);
     const [guardandoCat, setGuardandoCat] = useState(false);
+    const [ref, setRef] = useState<{ codigo: string | null; total: number; dias: number } | null>(null);
+    const [copiadoRef, setCopiadoRef] = useState(false);
     const logoInputRef = useRef<HTMLInputElement>(null);
 
     const catalogoUrl = typeof window !== 'undefined' && negocioId ? `${window.location.origin}/catalogo/${negocioId}` : '';
@@ -54,6 +56,30 @@ export default function ConfiguracionPage() {
         });
         setLogoData(negocioLogo);
     }, [negocioNombre, negocioWhatsapp, negocioTelefono, negocioRnc, negocioDireccion, negocioMensajeTicket, negocioLogo]);
+
+    // Cargar el código de referido del negocio (se crea en el servidor si falta).
+    useEffect(() => {
+        if (!negocioId || !isOnline) return;
+        let vivo = true;
+        (async () => {
+            try {
+                const { data: { session } } = await supabase.auth.getSession();
+                const token = session?.access_token;
+                if (!token) return;
+                const res = await fetch('/api/referidos', { headers: { Authorization: `Bearer ${token}` } });
+                if (!res.ok) return;
+                const d = await res.json();
+                if (vivo) setRef({ codigo: d.codigo ?? null, total: d.total ?? 0, dias: d.dias ?? 15 });
+            } catch { /* offline u otro: sección se oculta */ }
+        })();
+        return () => { vivo = false; };
+    }, [negocioId, isOnline]);
+
+    const refLink = ref?.codigo && typeof window !== 'undefined' ? `${window.location.origin}/registro?ref=${ref.codigo}` : '';
+    const copiarRef = async () => {
+        try { await navigator.clipboard.writeText(refLink); setCopiadoRef(true); setTimeout(() => setCopiadoRef(false), 2000); }
+        catch { showToast('No se pudo copiar. Copia el link manualmente.', 'info'); }
+    };
 
     const handleLogoFile = async (file: File) => {
         if (!file.type.startsWith('image/')) {
@@ -355,6 +381,40 @@ export default function ConfiguracionPage() {
                                         </div>
                                     )}
                                 </div>
+
+                                {/* Programa de referidos */}
+                                {ref?.codigo && (
+                                    <div className="pt-4">
+                                        <h3 className="text-lg font-bold text-gold mb-1 border-b border-navy-3 pb-2">🎁 Invita y Gana</h3>
+                                        <p className="text-xs text-vr-gray mb-4">Invita a otro negocio con tu link. Cuando complete su registro, <span className="font-bold text-white">ambos ganan {ref.dias} días</span> de acceso. Sin límite.</p>
+
+                                        <div className="bg-navy rounded-xl border border-navy-3 p-4 space-y-3">
+                                            <div className="flex items-center justify-between gap-3">
+                                                <div>
+                                                    <p className="text-xs text-vr-gray">Tu código</p>
+                                                    <p className="font-mono font-black text-gold text-lg">{ref.codigo}</p>
+                                                </div>
+                                                <div className="text-right">
+                                                    <p className="text-xs text-vr-gray">Referidos</p>
+                                                    <p className="font-mono font-black text-white text-lg">{ref.total}</p>
+                                                </div>
+                                            </div>
+                                            <div className="flex items-center gap-2">
+                                                <input readOnly value={refLink} className="flex-1 bg-navy-3 border border-navy-3 rounded-lg px-3 py-2 text-sm text-white font-mono truncate" />
+                                                <button type="button" onClick={copiarRef} className="px-3 py-2 bg-navy-3 border border-navy-3 hover:border-gold/40 text-vr-gray hover:text-gold font-bold rounded-lg text-xs transition-all shrink-0">
+                                                    {copiadoRef ? '✓ Copiado' : 'Copiar'}
+                                                </button>
+                                            </div>
+                                            <a
+                                                href={`https://wa.me/?text=${encodeURIComponent(`¡Te invito a usar VentaRD para tu negocio! 🚀\nRegístrate con mi link y ambos ganamos ${ref.dias} días gratis:\n${refLink}`)}`}
+                                                target="_blank" rel="noopener noreferrer"
+                                                className="block w-full text-center px-4 py-2.5 bg-vr-green/15 text-vr-green border border-vr-green/20 font-bold rounded-lg text-sm hover:bg-vr-green/25 transition-all"
+                                            >
+                                                📱 Invitar por WhatsApp
+                                            </a>
+                                        </div>
+                                    </div>
+                                )}
 
                                 {/* Comprobantes Fiscales NCF */}
                                 <div className="pt-4">

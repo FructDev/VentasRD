@@ -64,10 +64,16 @@ export default function OnboardingPage() {
                     telefono,
                     direccion,
                     nombre_sucursal: nombreSucursal,
+                    ref: (typeof window !== 'undefined' && localStorage.getItem('ventard_ref')) || undefined,
                 }),
             });
             const data = await res.json();
             if (!res.ok) throw new Error(`${data.error || 'Error al guardar'}${data.code ? ` (código ${data.code})` : ''}`);
+
+            // Referido canjeado: limpiar el código guardado.
+            if (data.referidoAplicado) {
+                try { localStorage.removeItem('ventard_ref'); } catch { /* noop */ }
+            }
 
             // Cache offline de la sucursal creada
             await db.sucursales.put({
