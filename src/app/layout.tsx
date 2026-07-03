@@ -7,6 +7,7 @@ import { AuthProvider } from "@/components/providers/AuthProvider";
 import GlobalToast from "@/components/ui/GlobalToast";
 import TutorialChecklist from "@/components/ui/TutorialChecklist";
 import Novedades from "@/components/ui/Novedades";
+import InstalarApp from "@/components/ui/InstalarApp";
 import { ErrorBoundary } from "@/components/ui/ErrorBoundary";
 import ThemeApplier from "@/components/providers/ThemeApplier";
 
@@ -90,6 +91,7 @@ export default function RootLayout({
               <GlobalToast />
               <TutorialChecklist />
               <Novedades />
+              <InstalarApp />
             </AuthProvider>
           </SyncProvider>
         </ErrorBoundary>
