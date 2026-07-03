@@ -1,13 +1,16 @@
 // src/app/api/usuarios/invitar/route.ts
-// Crea un empleado pendiente con un token propio — sin emails ni links de Supabase
+// Crea un empleado pendiente con un token propio — sin emails ni links de Supabase.
+// Solo el dueño (o un admin) del negocio puede invitar.
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { z } from 'zod';
+import { supabaseAdmin, leerJson, usuarioDesdeToken, rolEnNegocio, noAutorizado, prohibido } from '@/lib/api/guardia';
 
-const supabaseAdmin = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    { auth: { autoRefreshToken: false, persistSession: false } }
-);
+const BodySchema = z.object({
+    email: z.string().email().max(200),
+    nombre: z.string().trim().min(1).max(100),
+    rol: z.enum(['admin', 'vendedor', 'cajero']),
+    negocioId: z.string().uuid(),
+});
 
 // Dominio base para el link de invitación. Robusto: prioriza la env var explícita,
 // si no, usa el dominio real del request (en Vercel coincide con el dominio del
@@ -33,10 +36,15 @@ function getBaseUrl(req: NextRequest): string {
 
 export async function POST(req: NextRequest) {
     try {
-        const { email, nombre, rol, negocioId } = await req.json();
-        if (!email || !nombre || !rol || !negocioId) {
-            return NextResponse.json({ error: 'Datos incompletos' }, { status: 400 });
-        }
+        const r = await leerJson(req, BodySchema);
+        if (r.resp) return r.resp;
+        const { email, nombre, rol, negocioId } = r.data;
+
+        // Solo el dueño o un admin del negocio pueden invitar empleados
+        const user = await usuarioDesdeToken(req);
+        if (!user) return noAutorizado();
+        const rolCaller = await rolEnNegocio(user.id, negocioId);
+        if (rolCaller !== 'dueño' && rolCaller !== 'admin') return prohibido();
 
         // Verificar duplicado
         const { data: existe } = await supabaseAdmin
@@ -61,7 +69,8 @@ export async function POST(req: NextRequest) {
         const inviteLink = `${getBaseUrl(req)}/unirse?token=${nuevo.invite_token}`;
 
         return NextResponse.json({ ok: true, inviteLink });
-    } catch (e: any) {
-        return NextResponse.json({ error: e.message }, { status: 500 });
+    } catch (e) {
+        const msg = e instanceof Error ? e.message : 'Error inesperado';
+        return NextResponse.json({ error: msg }, { status: 500 });
     }
 }

@@ -103,9 +103,10 @@ export default function ConfiguracionPage() {
             // Si el logo es nuevo (data URL local), subirlo a Cloudinary primero
             let logoFinal = logoData;
             if (logoData && logoData.startsWith('data:')) {
+                const { data: { session } } = await supabase.auth.getSession();
                 const res = await fetch('/api/upload/logo', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token || ''}` },
                     body: JSON.stringify({ dataUrl: logoData, negocioId }),
                 });
                 const data = await res.json();

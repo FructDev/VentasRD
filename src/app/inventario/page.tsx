@@ -4,6 +4,7 @@
 import { useMemo, useState, useRef, lazy, Suspense } from 'react';
 import Link from 'next/link';
 import { db } from '@/lib/db/dexie';
+import { supabase } from '@/lib/supabase/client';
 import { registrarMovimientoStock } from '@/lib/db/stock';
 import { comprimirImagen, miniatura } from '@/lib/imagen';
 import ConfirmModal from '@/components/ui/ConfirmModal';
@@ -441,9 +442,10 @@ export default function InventarioPage() {
             if (fotoProducto?.startsWith('data:')) {
                 if (navigator.onLine) {
                     try {
+                        const { data: { session } } = await supabase.auth.getSession();
                         const res = await fetch('/api/upload/producto', {
                             method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
+                            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token || ''}` },
                             body: JSON.stringify({ dataUrl: fotoProducto, productoId: idProducto }),
                         });
                         const data = await res.json();

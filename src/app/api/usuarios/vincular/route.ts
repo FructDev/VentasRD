@@ -1,20 +1,19 @@
 // src/app/api/usuarios/vincular/route.ts
 // Vincula un user_id al registro pendiente de usuarios_negocio
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { z } from 'zod';
+import { supabaseAdmin, leerJson } from '@/lib/api/guardia';
 
-const supabaseAdmin = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    { auth: { autoRefreshToken: false, persistSession: false } }
-);
+const BodySchema = z.object({
+    token: z.string().uuid(),
+    userId: z.string().uuid(),
+});
 
 export async function POST(req: NextRequest) {
     try {
-        const { token, userId } = await req.json();
-        if (!token || !userId) {
-            return NextResponse.json({ error: 'Datos incompletos' }, { status: 400 });
-        }
+        const r = await leerJson(req, BodySchema);
+        if (r.resp) return r.resp;
+        const { token, userId } = r.data;
 
         const { error } = await supabaseAdmin
             .from('usuarios_negocio')
@@ -25,7 +24,8 @@ export async function POST(req: NextRequest) {
         if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
         return NextResponse.json({ ok: true });
-    } catch (e: any) {
-        return NextResponse.json({ error: e.message }, { status: 500 });
+    } catch (e) {
+        const msg = e instanceof Error ? e.message : 'Error inesperado';
+        return NextResponse.json({ error: msg }, { status: 500 });
     }
 }

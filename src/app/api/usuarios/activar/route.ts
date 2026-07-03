@@ -2,13 +2,13 @@
 // GET  — verifica el token y devuelve nombre/email del empleado pendiente
 // POST — crea la cuenta con contraseña y la vincula al negocio
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { z } from 'zod';
+import { supabaseAdmin, leerJson } from '@/lib/api/guardia';
 
-const supabaseAdmin = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    { auth: { autoRefreshToken: false, persistSession: false } }
-);
+const BodySchema = z.object({
+    token: z.string().uuid(),
+    password: z.string().min(6, 'La contraseña debe tener al menos 6 caracteres.').max(200),
+});
 
 // GET /api/usuarios/activar?token=XXX
 export async function GET(req: NextRequest) {
@@ -33,8 +33,9 @@ export async function GET(req: NextRequest) {
 // POST /api/usuarios/activar  { token, password }
 export async function POST(req: NextRequest) {
     try {
-        const { token, password } = await req.json();
-        if (!token || !password) return NextResponse.json({ error: 'Datos incompletos' }, { status: 400 });
+        const r = await leerJson(req, BodySchema);
+        if (r.resp) return r.resp;
+        const { token, password } = r.data;
 
         // 1. Obtener el empleado pendiente
         const { data: pendiente, error: fetchErr } = await supabaseAdmin
@@ -69,7 +70,8 @@ export async function POST(req: NextRequest) {
         if (updateErr) return NextResponse.json({ error: updateErr.message }, { status: 500 });
 
         return NextResponse.json({ ok: true });
-    } catch (e: any) {
-        return NextResponse.json({ error: e.message }, { status: 500 });
+    } catch (e) {
+        const msg = e instanceof Error ? e.message : 'Error inesperado';
+        return NextResponse.json({ error: msg }, { status: 500 });
     }
 }

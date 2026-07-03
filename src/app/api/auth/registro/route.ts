@@ -3,24 +3,20 @@
 // Crea el usuario ya confirmado con el service role (mismo patrón que la
 // activación de empleados), eliminando la dependencia del correo de Supabase.
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { z } from 'zod';
+import { supabaseAdmin, leerJson } from '@/lib/api/guardia';
 
-const supabaseAdmin = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    { auth: { autoRefreshToken: false, persistSession: false } }
-);
+const BodySchema = z.object({
+    email: z.string().email('Correo inválido.').max(200),
+    password: z.string().min(6, 'La contraseña debe tener al menos 6 caracteres.').max(200),
+    nombreNegocio: z.string().trim().min(1, 'Completa todos los campos.').max(100),
+});
 
 export async function POST(req: NextRequest) {
     try {
-        const { email, password, nombreNegocio } = await req.json();
-
-        if (!email || !password || !nombreNegocio) {
-            return NextResponse.json({ error: 'Completa todos los campos.' }, { status: 400 });
-        }
-        if (String(password).length < 6) {
-            return NextResponse.json({ error: 'La contraseña debe tener al menos 6 caracteres.' }, { status: 400 });
-        }
+        const r = await leerJson(req, BodySchema);
+        if (r.resp) return r.resp;
+        const { email, password, nombreNegocio } = r.data;
 
         // Crea el usuario ya confirmado — no se envía ningún correo.
         // El trigger handle_new_user crea el negocio usando nombre_negocio.

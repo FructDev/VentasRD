@@ -3,20 +3,25 @@
 // llega al navegador). Recibe un data URL ya comprimido por el cliente.
 import { NextRequest, NextResponse } from 'next/server';
 import crypto from 'crypto';
+import { z } from 'zod';
+import { leerJson, usuarioDesdeToken, rolEnNegocio, noAutorizado, prohibido } from '@/lib/api/guardia';
+
+const BodySchema = z.object({
+    // El cliente comprime a ~240px; un data URL razonable no pasa de ~500KB
+    dataUrl: z.string().startsWith('data:image/').max(2_000_000),
+    negocioId: z.string().uuid(),
+});
 
 export async function POST(req: NextRequest) {
     try {
-        const { dataUrl, negocioId } = await req.json();
-        if (!dataUrl || !negocioId) {
-            return NextResponse.json({ error: 'Datos incompletos' }, { status: 400 });
-        }
-        if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/')) {
-            return NextResponse.json({ error: 'El archivo debe ser una imagen' }, { status: 400 });
-        }
-        // El cliente comprime a ~240px; un data URL razonable no pasa de ~500KB
-        if (dataUrl.length > 2_000_000) {
-            return NextResponse.json({ error: 'La imagen es demasiado grande' }, { status: 413 });
-        }
+        const r = await leerJson(req, BodySchema);
+        if (r.resp) return r.resp;
+        const { dataUrl, negocioId } = r.data;
+
+        // Solo un miembro del negocio puede cambiar su logo
+        const user = await usuarioDesdeToken(req);
+        if (!user) return noAutorizado();
+        if (!(await rolEnNegocio(user.id, negocioId))) return prohibido();
 
         const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
         const apiKey = process.env.CLOUDINARY_API_KEY;

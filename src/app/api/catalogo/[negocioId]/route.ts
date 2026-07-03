@@ -14,7 +14,10 @@ const supabaseAdmin = createClient(
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ negocioId: string }> }) {
     try {
         const { negocioId } = await params;
-        if (!negocioId) return NextResponse.json({ error: 'Falta el negocio' }, { status: 400 });
+        // Validar formato UUID antes de consultar (evita ruido y sondeos)
+        if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(negocioId || '')) {
+            return NextResponse.json({ error: 'Catálogo no disponible' }, { status: 404 });
+        }
 
         const { data: negocio } = await supabaseAdmin
             .from('negocios')

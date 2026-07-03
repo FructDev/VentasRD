@@ -4,15 +4,19 @@
 // fallo "new row violates row-level security policy" cuando el negocio quedó con
 // un dueño_id inconsistente o el cliente tenía un negocioId viejo cacheado.
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { SupabaseClient } from '@supabase/supabase-js';
 import { v4 as uuidv4 } from 'uuid';
+import { z } from 'zod';
 import { DIAS_REFERIDO, generarCodigoReferido } from '@/lib/referidos';
+import { supabaseAdmin, leerJson } from '@/lib/api/guardia';
 
-const supabaseAdmin = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    { auth: { autoRefreshToken: false, persistSession: false } }
-);
+const BodySchema = z.object({
+    tipo_negocio: z.string().trim().max(60).optional(),
+    telefono: z.string().trim().max(30).optional(),
+    direccion: z.string().trim().max(300).optional(),
+    nombre_sucursal: z.string().trim().max(100).optional(),
+    ref: z.string().trim().max(20).optional(),
+});
 
 const DIA_MS = 24 * 60 * 60 * 1000;
 
@@ -36,7 +40,9 @@ export async function POST(req: NextRequest) {
         const { data: { user }, error: userErr } = await supabaseAdmin.auth.getUser(token);
         if (userErr || !user) return NextResponse.json({ error: 'Sesión inválida' }, { status: 401 });
 
-        const { tipo_negocio, telefono, direccion, nombre_sucursal, ref } = await req.json();
+        const r = await leerJson(req, BodySchema);
+        if (r.resp) return r.resp;
+        const { tipo_negocio, telefono, direccion, nombre_sucursal, ref } = r.data;
         const ahora = Date.now();
 
         // 1. Buscar el negocio del usuario (por dueño). Si no existe, crearlo.
