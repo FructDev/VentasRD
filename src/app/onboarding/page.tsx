@@ -15,9 +15,20 @@ const STEPS = [
 
 const TIPOS = [
     { value: 'colmado',      label: 'Colmado / Minimarket' },
+    { value: 'celulares',    label: 'Celulares / Reparación de equipos' },
     { value: 'tienda_ropa',  label: 'Tienda de Ropa / Boutique' },
     { value: 'ferreteria',   label: 'Ferretería' },
     { value: 'restaurante',  label: 'Restaurante / Cafetería' },
+    { value: 'panaderia',    label: 'Panadería / Repostería' },
+    { value: 'farmacia',     label: 'Farmacia' },
+    { value: 'salon',        label: 'Salón / Barbería / Spa' },
+    { value: 'belleza',      label: 'Belleza / Cosméticos' },
+    { value: 'libreria',     label: 'Librería / Papelería' },
+    { value: 'variedades',   label: 'Tienda de Variedades' },
+    { value: 'agropecuaria', label: 'Agropecuaria / Agrícola' },
+    { value: 'licoreria',    label: 'Licorería / Colmadón' },
+    { value: 'repuestos',    label: 'Repuestos / Auto / Motor' },
+    { value: 'electronica',  label: 'Electrodomésticos / Electrónica' },
     { value: 'servicios',    label: 'Servicios Generales' },
     { value: 'otro',         label: 'Otro' },
 ];
