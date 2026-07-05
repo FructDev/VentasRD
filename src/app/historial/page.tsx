@@ -9,6 +9,7 @@ import { useVentasTenant, useVentaDetallesPorVentas, useDevolucionesTenant, useC
 import { useConfigStore } from '@/store/useConfigStore';
 import { VentaLocal, VentaDetalleLocal, SerialLocal } from '@/types/database';
 import { formatDOP, formatTicket } from '@/lib/utils';
+import { logoParaImprimir } from '@/lib/logoCache';
 import { v4 as uuidv4 } from 'uuid';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { useReactToPrint } from 'react-to-print';
@@ -71,6 +72,14 @@ export default function HistorialPage() {
     const devoluciones = useDevolucionesTenant();
     const clientes = useClientesTenant();
 
+    // Logo cacheado como data URL (imprime bien offline; ver logoCache.ts)
+    const [logoTicket, setLogoTicket] = useState<string | undefined>(undefined);
+    useEffect(() => {
+        let vivo = true;
+        logoParaImprimir(negocioLogo).then(d => { if (vivo) setLogoTicket(d); });
+        return () => { vivo = false; };
+    }, [negocioLogo]);
+
     // Estado para reimprimir ticket
     const ticketReimpresionRef = useRef<HTMLDivElement>(null);
     const [ventaReimprimiendo, setVentaReimprimiendo] = useState<VentaLocal | null>(null);
@@ -128,7 +137,7 @@ export default function HistorialPage() {
                     ncf: venta.ncf,
                     vendedor: venta.vendedor_nombre,
                     mensajePie: negocioMensajeTicket || undefined,
-                    logoUrl: negocioLogo || undefined,
+                    logoUrl: logoTicket,
                 }, impresion);
                 return;
             } catch (e) {
@@ -421,7 +430,7 @@ export default function HistorialPage() {
                             cajaCodigo={ventaReimprimiendo.caja_codigo}
                             mensajePie={negocioMensajeTicket || undefined}
                             ncf={ventaReimprimiendo.ncf}
-                            logoUrl={negocioLogo || undefined}
+                            logoUrl={logoTicket}
                             vendedor={ventaReimprimiendo.vendedor_nombre}
                         />
                     </div>

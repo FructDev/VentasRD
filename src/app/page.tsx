@@ -7,6 +7,7 @@ import { useCartStore } from '@/store/useCartStore';
 import { ProductoLocal } from '@/types/database';
 import { formatDOP, formatTicket } from '@/lib/utils';
 import { linkWhatsApp } from '@/lib/whatsapp';
+import { logoParaImprimir } from '@/lib/logoCache';
 import { miniatura } from '@/lib/imagen';
 import Fuse from 'fuse.js';
 import { useReactToPrint } from 'react-to-print';
@@ -111,6 +112,15 @@ export default function POSPage() {
   const ticketRef = useRef<HTMLDivElement>(null);
   const handlePrint = useReactToPrint({ contentRef: ticketRef });
 
+  // Logo cacheado como data URL: imprime bien aunque no haya internet
+  // (el logo vive en Cloudinary y offline la URL remota no carga).
+  const [logoTicket, setLogoTicket] = useState<string | undefined>(undefined);
+  useEffect(() => {
+    let vivo = true;
+    logoParaImprimir(negocioLogo).then(d => { if (vivo) setLogoTicket(d); });
+    return () => { vivo = false; };
+  }, [negocioLogo]);
+
   // Imprime por la vía configurada: ESC/POS directo o diálogo del navegador.
   // Recibe el número de ticket/ncf como argumento porque al auto-imprimir
   // el estado de React aún no se ha actualizado.
@@ -135,7 +145,7 @@ export default function POSPage() {
           ncf: ncfVenta ?? ultimoNcf,
           vendedor: nombreUsuario || undefined,
           mensajePie: negocioMensajeTicket || undefined,
-          logoUrl: negocioLogo || undefined,
+          logoUrl: logoTicket,
         }, impresion);
         return;
       } catch (e) {
@@ -705,7 +715,7 @@ export default function POSPage() {
             numeroTicket={ultimoTicketNum} mensajePie={negocioMensajeTicket || undefined}
             cajaCodigo={dispositivoId || undefined}
             ncf={ultimoNcf}
-            logoUrl={negocioLogo || undefined}
+            logoUrl={logoTicket}
             vendedor={nombreUsuario || undefined}
           />
         </div>

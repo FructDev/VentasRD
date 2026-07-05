@@ -707,7 +707,8 @@ export default function ConfiguracionPage() {
                                                         onClick={async () => {
                                                             try {
                                                                 const { imprimirPrueba } = await import('@/lib/print/tickets');
-                                                                await imprimirPrueba(impresion, negocioNombre || 'VentaRD', negocioLogo || undefined);
+                                                                const { logoParaImprimir } = await import('@/lib/logoCache');
+                                                                await imprimirPrueba(impresion, negocioNombre || 'VentaRD', await logoParaImprimir(negocioLogo));
                                                                 showToast('Página de prueba enviada.', 'success');
                                                             } catch (e: any) {
                                                                 showToast(e?.message === 'sin_dispositivo' ? 'Primero conecta la impresora.' : (e?.message || 'Error al imprimir.'), 'error');
