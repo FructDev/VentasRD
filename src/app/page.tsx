@@ -94,6 +94,8 @@ export default function POSPage() {
   const [ultimoNcf, setUltimoNcf] = useState<string | undefined>(undefined);
   const [ultimaVentaId, setUltimaVentaId] = useState<string | null>(null);
   const [anulando, setAnulando] = useState(false);
+  const [procesandoVenta, setProcesandoVenta] = useState(false);
+  const procesandoVentaRef = useRef(false);
   const [confirmAnularOpen, setConfirmAnularOpen] = useState(false);
   const [emitirNcf, setEmitirNcf] = useState(false);
   const [isCartOpen, setIsCartOpen] = useState(false); // mobile cart drawer
@@ -282,6 +284,12 @@ export default function POSPage() {
 
   const procesarVentaBD = async () => {
     if (!negocioId) return;
+    // Candado anti doble-cobro: en dispositivos lentos el usuario toca COBRAR
+    // dos veces (o Enter + clic) y la venta/fiado se duplicaba. El ref bloquea
+    // al instante (el estado tarda un render en deshabilitar el botón).
+    if (procesandoVentaRef.current) return;
+    procesandoVentaRef.current = true;
+    setProcesandoVenta(true);
 
     try {
       // ── Validación de stock antes de procesar ────────────────────────────
@@ -426,6 +434,9 @@ export default function POSPage() {
     } catch (error) {
       console.error("Error en la transacción de venta:", error);
       showToast("Hubo un problema al procesar la venta.", "error");
+    } finally {
+      procesandoVentaRef.current = false;
+      setProcesandoVenta(false);
     }
   };
 
@@ -1074,11 +1085,11 @@ export default function POSPage() {
                   )}
 
                   <button
-                    onClick={procesarVentaBD} disabled={!esMontoValido}
+                    onClick={procesarVentaBD} disabled={!esMontoValido || procesandoVenta}
                     className="w-full bg-gold-gradient text-navy text-lg sm:text-xl font-extrabold py-4 sm:py-5 rounded-xl hover:brightness-110 transition-all disabled:opacity-30 disabled:cursor-not-allowed flex justify-center items-center gap-2"
                   >
-                    Confirmar e Imprimir
-                    <span className="hidden sm:inline text-xs font-mono font-normal bg-navy/20 px-2 py-1 rounded ml-2">ENTER</span>
+                    {procesandoVenta ? 'Procesando…' : 'Confirmar e Imprimir'}
+                    {!procesandoVenta && <span className="hidden sm:inline text-xs font-mono font-normal bg-navy/20 px-2 py-1 rounded ml-2">ENTER</span>}
                   </button>
                 </div>
               </>

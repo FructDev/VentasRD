@@ -592,6 +592,9 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                             costo: p.costo,
                             tasa_itbis: p.tasa_itbis,
                             tipo: p.tipo,
+                            // Propagar el soft-delete: sin esto, borrar un producto
+                            // solo lo quitaba del dispositivo que lo borró.
+                            eliminado: p.eliminado ?? false,
                             // NOTA: stock_actual NO se sube aquí — viaja como movimientos
                             // atómicos (sección 2.C.2) para no pisar a otras cajas.
                             stock_minimo: p.stock_minimo,
