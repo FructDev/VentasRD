@@ -3,6 +3,8 @@
 -- auto-sanación insertaba el negocio 2+ veces para el mismo dueño. Síntomas:
 -- "cuentas duplicadas", onboarding roto y logins en bucle (maybeSingle con
 -- >1 fila lanza error).
+-- NOTA: comparaciones con ::text porque negocio_id es text en algunas tablas
+-- legadas y uuid en negocios.id.
 
 -- 1) Borrar duplicados VACÍOS (sin ventas/productos/clientes/reparaciones).
 --    Se conserva el negocio con onboarding completado; a igualdad, el más viejo.
@@ -22,12 +24,12 @@ with duplicados as (
 ), perdedores_vacios as (
     select r.id from ranked r
     where r.rn > 1
-      and not exists (select 1 from ventas v      where v.negocio_id = r.id)
-      and not exists (select 1 from productos p   where p.negocio_id = r.id)
-      and not exists (select 1 from clientes c    where c.negocio_id = r.id)
-      and not exists (select 1 from reparaciones rep where rep.negocio_id = r.id)
+      and not exists (select 1 from ventas v      where v.negocio_id::text = r.id::text)
+      and not exists (select 1 from productos p   where p.negocio_id::text = r.id::text)
+      and not exists (select 1 from clientes c    where c.negocio_id::text = r.id::text)
+      and not exists (select 1 from reparaciones rep where rep.negocio_id::text = r.id::text)
 )
-delete from sucursales s where s.negocio_id in (select id from perdedores_vacios);
+delete from sucursales s where s.negocio_id::text in (select id::text from perdedores_vacios);
 
 with duplicados as (
     select "dueño_id"
@@ -45,11 +47,11 @@ with duplicados as (
 )
 delete from negocios n
 where n.id in (select id from ranked where rn > 1)
-  and not exists (select 1 from ventas v      where v.negocio_id = n.id)
-  and not exists (select 1 from productos p   where p.negocio_id = n.id)
-  and not exists (select 1 from clientes c    where c.negocio_id = n.id)
-  and not exists (select 1 from reparaciones rep where rep.negocio_id = n.id)
-  and not exists (select 1 from usuarios_negocio u where u.negocio_id = n.id);
+  and not exists (select 1 from ventas v      where v.negocio_id::text = n.id::text)
+  and not exists (select 1 from productos p   where p.negocio_id::text = n.id::text)
+  and not exists (select 1 from clientes c    where c.negocio_id::text = n.id::text)
+  and not exists (select 1 from reparaciones rep where rep.negocio_id::text = n.id::text)
+  and not exists (select 1 from usuarios_negocio u where u.negocio_id::text = n.id::text);
 
 -- 2) Índice único: la base de datos ya no permite un segundo negocio por dueño.
 --    Si aún quedan duplicados CON datos (requieren revisión manual), no se
