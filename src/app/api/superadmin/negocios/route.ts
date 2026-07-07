@@ -15,7 +15,7 @@ export async function GET(req: NextRequest) {
 
     const { data: negocios, error: negociosError } = await admin
         .from('negocios')
-        .select('id, nombre, telefono, tipo_negocio, whatsapp_dueno, plan_activo, plan_tier, trial_hasta, acceso_hasta, onboarding_completado, direccion, nota_operador');
+        .select('id, nombre, "dueño_id", telefono, tipo_negocio, whatsapp_dueno, plan_activo, plan_tier, trial_hasta, acceso_hasta, onboarding_completado, direccion, nota_operador');
 
     if (negociosError) {
         return NextResponse.json({ error: negociosError.message }, { status: 500 });
@@ -31,8 +31,9 @@ export async function GET(req: NextRequest) {
     const result = (negocios || [])
         .map(n => ({
             ...n,
-            email: usersMap.get(n.id)?.email || '',
-            created_at: usersMap.get(n.id)?.created_at || '',
+            // El email vive en auth.users, indexado por el id del DUEÑO (no del negocio)
+            email: usersMap.get((n as { 'dueño_id'?: string })['dueño_id'] || '')?.email || '',
+            created_at: usersMap.get((n as { 'dueño_id'?: string })['dueño_id'] || '')?.created_at || '',
         }))
         // Ordenar por vencimiento más próximo primero (a quién cobrar/avisar)
         .sort((a, b) => (a.acceso_hasta ?? a.trial_hasta ?? Infinity) - (b.acceso_hasta ?? b.trial_hasta ?? Infinity));
