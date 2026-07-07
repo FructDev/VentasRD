@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import type { User as SupabaseUser } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase/client';
 import { useConfigStore } from '@/store/useConfigStore';
 import { useRouter, usePathname } from 'next/navigation';
@@ -18,8 +19,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     useEffect(() => {
         let montado = true;
+        // Candado de concurrencia: los eventos de auth (INITIAL_SESSION, SIGNED_IN,
+        // TOKEN_REFRESHED) disparan en ráfaga. Dos ejecuciones simultáneas de
+        // procesarUsuario llegaban a la auto-sanación a la vez y creaban negocios
+        // DUPLICADOS para el mismo dueño (raíz de los logins erráticos).
+        let procesando = false;
 
-        const procesarUsuario = async (user: any) => {
+        const procesarUsuario = async (user: SupabaseUser | null | undefined) => {
+            if (procesando) return;
+            procesando = true;
+            try {
+                await procesarUsuarioInterno(user);
+            } finally {
+                procesando = false;
+            }
+        };
+
+        const procesarUsuarioInterno = async (user: SupabaseUser | null | undefined) => {
             const rutasPublicas = RUTAS_PUBLICAS;
             // Coincidencia por prefijo: cubre rutas con parámetros como /catalogo/:id
             const esPublica = (p: string) => rutasPublicas.some(r => p === r || p.startsWith(r + '/'));
@@ -59,12 +75,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
             try {
 
-                // 2A. Buscar si es el DUEÑO del negocio
-                let { data: negocio, error } = await supabase
+                // 2A. Buscar si es el DUEÑO del negocio.
+                // limit(1) + prioridad al onboarding completado: si el dueño quedó
+                // con negocios duplicados (bug histórico), maybeSingle() a secas
+                // lanzaba error con >1 fila y el login entraba en bucle.
+                const { data: negocioDueno, error } = await supabase
                     .from('negocios')
                     .select('id, nombre, onboarding_completado, pin_admin, whatsapp_dueno, telefono, rnc, direccion, mensaje_ticket, logo_url, plan_activo, plan_tier, color_marca, fuente_marca, catalogo_publico, trial_hasta, acceso_hasta')
                     .eq('dueño_id', user.id)
+                    .order('onboarding_completado', { ascending: false })
+                    .limit(1)
                     .maybeSingle();
+                let negocio = negocioDueno;
 
                 // 2B. Si no es dueño, buscar en usuarios_negocio (empleado)
                 let empleado: { negocio_id: string; nombre: string; rol: string } | null = null;
@@ -74,6 +96,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                         .select('negocio_id, nombre, rol')
                         .eq('user_id', user.id)
                         .eq('activo', true)
+                        .limit(1)
                         .maybeSingle();
                     if (empData) {
                         empleado = empData;
@@ -127,8 +150,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                         .select('id, nombre, onboarding_completado, pin_admin, whatsapp_dueno, telefono, rnc, direccion, mensaje_ticket, logo_url, plan_activo, plan_tier, color_marca, fuente_marca, catalogo_publico, trial_hasta, acceso_hasta')
                         .single();
 
-                    if (insertError) throw insertError;
-                    negocio = nuevoNegocio;
+                    if (insertError) {
+                        // Otra ejecución/pestaña lo creó primero (o el índice único lo
+                        // bloqueó): re-consultar en vez de fallar.
+                        const { data: reintento } = await supabase
+                            .from('negocios')
+                            .select('id, nombre, onboarding_completado, pin_admin, whatsapp_dueno, telefono, rnc, direccion, mensaje_ticket, logo_url, plan_activo, plan_tier, color_marca, fuente_marca, catalogo_publico, trial_hasta, acceso_hasta')
+                            .eq('dueño_id', user.id)
+                            .order('onboarding_completado', { ascending: false })
+                            .limit(1)
+                            .maybeSingle();
+                        if (!reintento) throw insertError;
+                        negocio = reintento;
+                    } else {
+                        negocio = nuevoNegocio;
+                    }
                 }
 
                 // 3.B AUTO-TRIAL

@@ -23,6 +23,8 @@ export async function GET(req: NextRequest) {
             .from('negocios')
             .select('id, codigo_referido, referidos_total')
             .eq('dueño_id', user.id)
+            .order('onboarding_completado', { ascending: false })
+            .limit(1)
             .maybeSingle();
 
         if (!negocio) return NextResponse.json({ error: 'Sin negocio' }, { status: 404 });

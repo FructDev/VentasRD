@@ -32,7 +32,8 @@ export async function POST(req: NextRequest) {
         // Negocio del usuario: dueño o empleado activo
         let negocioId: string | null = null;
         const { data: propio } = await supabaseAdmin
-            .from('negocios').select('id').eq('dueño_id', user.id).maybeSingle();
+            .from('negocios').select('id').eq('dueño_id', user.id)
+            .order('onboarding_completado', { ascending: false }).limit(1).maybeSingle();
         if (propio) negocioId = propio.id;
         else {
             const { data: emp } = await supabaseAdmin

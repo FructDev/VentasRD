@@ -46,11 +46,15 @@ export async function POST(req: NextRequest) {
         const ahora = Date.now();
 
         // 1. Buscar el negocio del usuario (por dueño). Si no existe, crearlo.
+        // limit(1): tolera negocios duplicados del bug histórico (maybeSingle a
+        // secas lanza error con >1 fila y rompía el onboarding).
         let negocioId: string;
         const { data: negExistente } = await supabaseAdmin
             .from('negocios')
             .select('id')
             .eq('dueño_id', user.id)
+            .order('onboarding_completado', { ascending: false })
+            .limit(1)
             .maybeSingle();
 
         if (negExistente?.id) {
