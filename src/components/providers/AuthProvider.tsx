@@ -213,8 +213,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 // columna aún no existe en negocios viejos.
                 useConfigStore.getState().setAcceso(negocio?.acceso_hasta ?? negocio?.trial_hasta ?? null);
                 // Estamos online y acabamos de hablar con el servidor: el reloj es
-                // confiable → avanzar la marca de agua anti-retroceso de reloj.
-                useConfigStore.getState().marcarTiempoVisto();
+                // confiable → avanzar la marca de agua anti-retroceso de reloj y
+                // resetear el contador de aperturas sin servidor.
+                if (!error) {
+                    useConfigStore.getState().marcarTiempoVisto();
+                    useConfigStore.getState().resetAperturasServidor();
+                } else {
+                    useConfigStore.getState().marcarTiempoVisto();
+                }
                 // Establecer rol: empleado usa su rol asignado, dueño siempre es admin
                 useConfigStore.getState().setRol(
                     empleado ? (empleado.rol as any) : 'admin',

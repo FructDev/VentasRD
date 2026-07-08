@@ -2,6 +2,7 @@
 // y debe agotar los bloques reservados en orden.
 import { describe, it, expect, beforeEach } from 'vitest';
 import { useConfigStore, NCF_DEFAULT } from './useConfigStore';
+import { firmarAcceso } from '@/lib/firmaAcceso';
 
 const setNcf = (ncf: Partial<typeof NCF_DEFAULT>) =>
     useConfigStore.setState({ ncf: { ...NCF_DEFAULT, ...ncf } });
@@ -59,5 +60,38 @@ describe('consumirNcf', () => {
             emitidos.add(n!);
         }
         expect(emitidos.size).toBe(50);
+    });
+});
+
+describe('firmarAcceso (integridad anti-edición)', () => {
+    const base = { negocioId: 'n1', accesoHasta: 1000, trialHasta: null, planActivo: true, ultimaFechaVista: 500, aperturasSinServidor: 3 };
+
+    it('es determinista', () => {
+        expect(firmarAcceso(base)).toBe(firmarAcceso({ ...base }));
+    });
+
+    it('cambia si editan accesoHasta (el ataque típico)', () => {
+        expect(firmarAcceso({ ...base, accesoHasta: 9999999999999 })).not.toBe(firmarAcceso(base));
+    });
+
+    it('cambia si editan planActivo, la marca de agua o el contador', () => {
+        expect(firmarAcceso({ ...base, planActivo: false })).not.toBe(firmarAcceso(base));
+        expect(firmarAcceso({ ...base, ultimaFechaVista: 1 })).not.toBe(firmarAcceso(base));
+        expect(firmarAcceso({ ...base, aperturasSinServidor: 0 })).not.toBe(firmarAcceso(base));
+    });
+
+    it('cambia si la usan con otro negocio', () => {
+        expect(firmarAcceso({ ...base, negocioId: 'n2' })).not.toBe(firmarAcceso(base));
+    });
+});
+
+describe('contador de aperturas sin servidor', () => {
+    it('incrementa por apertura y se resetea con contacto al servidor', () => {
+        useConfigStore.setState({ aperturasSinServidor: 0 });
+        useConfigStore.getState().registrarApertura();
+        useConfigStore.getState().registrarApertura();
+        expect(useConfigStore.getState().aperturasSinServidor).toBe(2);
+        useConfigStore.getState().resetAperturasServidor();
+        expect(useConfigStore.getState().aperturasSinServidor).toBe(0);
     });
 });

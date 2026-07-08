@@ -17,6 +17,7 @@ interface Negocio {
     onboarding_completado: boolean;
     nota_operador: string | null;
     created_at: string;
+    cuentas_mismo_dispositivo?: number;
 }
 
 const PRECIO_KEY = 'vrd_sa_precio'; // precio mensual (lo fija el operador, por dispositivo)
@@ -473,6 +474,11 @@ function Panel({ secret, onLogout }: { secret: string; onLogout: () => void }) {
                                                         <p className="text-xs text-vr-gray mt-0.5">
                                                             {n.tipo_negocio ? TIPOS[n.tipo_negocio] || n.tipo_negocio : 'Sin tipo'}
                                                             {!n.onboarding_completado && <span className="ml-2 text-gold/70">· onboarding pendiente</span>}
+                                                            {(n.cuentas_mismo_dispositivo ?? 1) > 1 && (
+                                                                <span className="ml-2 text-vr-red font-bold" title="Este dispositivo registró varias cuentas (posible ciclado de trials)">
+                                                                    ⚠️ {n.cuentas_mismo_dispositivo} ctas. mismo equipo
+                                                                </span>
+                                                            )}
                                                         </p>
                                                         <p className="md:hidden text-xs text-vr-gray font-mono mt-0.5 truncate max-w-[180px]">{n.email}</p>
                                                     </button>

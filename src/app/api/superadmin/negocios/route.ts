@@ -28,13 +28,26 @@ export async function GET(req: NextRequest) {
 
     const usersMap = new Map(users.map(u => [u.id, u]));
 
+    // Cuentas registradas desde el mismo dispositivo (detección de trials ciclados)
+    const porDispositivo = new Map<string, number>();
+    for (const u of users) {
+        const d = (u.user_metadata as { device_id?: string } | null)?.device_id;
+        if (d) porDispositivo.set(d, (porDispositivo.get(d) || 0) + 1);
+    }
+
     const result = (negocios || [])
-        .map(n => ({
-            ...n,
-            // El email vive en auth.users, indexado por el id del DUEÑO (no del negocio)
-            email: usersMap.get((n as { 'dueño_id'?: string })['dueño_id'] || '')?.email || '',
-            created_at: usersMap.get((n as { 'dueño_id'?: string })['dueño_id'] || '')?.created_at || '',
-        }))
+        .map(n => {
+            const dueno = usersMap.get((n as { 'dueño_id'?: string })['dueño_id'] || '');
+            const deviceId = (dueno?.user_metadata as { device_id?: string } | null)?.device_id;
+            return {
+                ...n,
+                // El email vive en auth.users, indexado por el id del DUEÑO (no del negocio)
+                email: dueno?.email || '',
+                created_at: dueno?.created_at || '',
+                // >1 = este dispositivo registró más de una cuenta (posible ciclado de trials)
+                cuentas_mismo_dispositivo: deviceId ? (porDispositivo.get(deviceId) || 1) : 1,
+            };
+        })
         // Ordenar por vencimiento más próximo primero (a quién cobrar/avisar)
         .sort((a, b) => (a.acceso_hasta ?? a.trial_hasta ?? Infinity) - (b.acceso_hasta ?? b.trial_hasta ?? Infinity));
 

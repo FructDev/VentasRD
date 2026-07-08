@@ -1,6 +1,7 @@
 import { create, StateCreator } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { User } from '@supabase/supabase-js';
+import { firmarAcceso } from '@/lib/firmaAcceso';
 
 /** Bloque de números NCF reservado para este dispositivo (emisión offline segura) */
 export interface NcfBloque {
@@ -84,6 +85,11 @@ interface ConfigState {
     trialHasta: number | null; // timestamp ms (legado)
     accesoHasta: number | null; // hasta cuándo es válido el acceso (trial o pago). Vence solo.
     ultimaFechaVista: number;   // marca de agua anti-retroceso de reloj (máx tiempo real visto)
+    // Aperturas de la app sin contacto exitoso con el servidor. No depende del
+    // reloj: cierra el truco de congelar la fecha del dispositivo para no vencer.
+    aperturasSinServidor: number;
+    registrarApertura: () => void;
+    resetAperturasServidor: () => void;
     // NCF / Comprobantes Fiscales
     ncf: NcfConfig;
     // Ajustes de impresión (por dispositivo)
@@ -158,6 +164,7 @@ const configCreator: StateCreator<ConfigState> = (set) => ({
             trialHasta: null,
             accesoHasta: null,
             ultimaFechaVista: 0,
+            aperturasSinServidor: 0,
             ncf: NCF_DEFAULT,
             impresion: IMPRESION_DEFAULT,
             garantiaDiasDefault: 30,
@@ -169,6 +176,8 @@ const configCreator: StateCreator<ConfigState> = (set) => ({
 
             setAcceso: (accesoHasta) => set({ accesoHasta }),
             marcarTiempoVisto: () => set(s => ({ ultimaFechaVista: Math.max(s.ultimaFechaVista, Date.now()) })),
+            registrarApertura: () => set(s => ({ aperturasSinServidor: s.aperturasSinServidor + 1 })),
+            resetAperturasServidor: () => set({ aperturasSinServidor: 0 }),
 
             setNcfConfig: (config) => set(state => ({ ncf: { ...state.ncf, ...config } })),
             setImpresion: (config) => set(state => ({ impresion: { ...state.impresion, ...config } })),
@@ -305,6 +314,16 @@ export const useConfigStore = create<ConfigState>()(
             trialHasta: state.trialHasta,
             accesoHasta: state.accesoHasta,
             ultimaFechaVista: state.ultimaFechaVista,
+            aperturasSinServidor: state.aperturasSinServidor,
+            // Firma de integridad de los campos de acceso (anti-edición manual)
+            firmaAcc: firmarAcceso({
+                negocioId: state.negocioId,
+                accesoHasta: state.accesoHasta,
+                trialHasta: state.trialHasta,
+                planActivo: state.planActivo,
+                ultimaFechaVista: state.ultimaFechaVista,
+                aperturasSinServidor: state.aperturasSinServidor,
+            }),
             ncf: state.ncf,
             impresion: state.impresion,
             garantiaDiasDefault: state.garantiaDiasDefault,
@@ -315,10 +334,32 @@ export const useConfigStore = create<ConfigState>()(
             cobrarRepuestosAparte: state.cobrarRepuestosAparte,
         }),
         merge: (persisted, current) => {
-            const p = persisted as Partial<ConfigState>;
+            const p = persisted as Partial<ConfigState> & { firmaAcc?: string };
+
+            // Verificación de integridad: si los campos de acceso fueron editados a
+            // mano (F12 → localStorage), la firma no cuadra → se anula el acceso
+            // local y el dispositivo debe reconectarse para que el servidor (única
+            // fuente de verdad) lo restaure. Si la firma no existe (config de una
+            // versión anterior), se acepta una vez y se firma en el próximo guardado.
+            let acceso: Partial<ConfigState> = {};
+            if (p.firmaAcc !== undefined) {
+                const esperada = firmarAcceso({
+                    negocioId: p.negocioId ?? null,
+                    accesoHasta: p.accesoHasta ?? null,
+                    trialHasta: p.trialHasta ?? null,
+                    planActivo: p.planActivo ?? false,
+                    ultimaFechaVista: p.ultimaFechaVista ?? 0,
+                    aperturasSinServidor: p.aperturasSinServidor ?? 0,
+                });
+                if (p.firmaAcc !== esperada) {
+                    acceso = { planActivo: false, accesoHasta: null, trialHasta: null };
+                }
+            }
+
             return {
                 ...current,
                 ...p,
+                ...acceso,
                 // Mezclar con defaults por si se agregan campos nuevos (migración suave)
                 impresion: { ...IMPRESION_DEFAULT, ...(p.impresion ?? {}) },
                 ncf: { ...NCF_DEFAULT, ...(p.ncf ?? {}) },

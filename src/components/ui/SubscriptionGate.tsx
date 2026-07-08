@@ -10,11 +10,19 @@ const WHATSAPP_MSG = encodeURIComponent('Hola, quiero activar/renovar mi cuenta 
 const DIA = 24 * 60 * 60 * 1000;
 const GRACIA_DIAS = 5; // días de tolerancia tras el vencimiento antes de bloquear
 
+// Aperturas de la app sin contacto con el servidor. La marca de agua de tiempo
+// no sirve si congelan el reloj del dispositivo; este contador no depende del
+// reloj: a X aperturas sin internet, se pide conexión. Un negocio normal abre
+// la app 2-5 veces al día → 300 aperturas ≈ meses de uso 100% offline.
+const APERTURAS_AVISO = 200;
+const APERTURAS_LIMITE = 300;
+
 export default function SubscriptionGate({ children }: { children: React.ReactNode }) {
-    const { accesoHasta, ultimaFechaVista, planActivo, trialHasta, negocioNombre, marcarTiempoVisto } = useConfigStore();
+    const { accesoHasta, ultimaFechaVista, planActivo, trialHasta, negocioNombre, marcarTiempoVisto, aperturasSinServidor, registrarApertura } = useConfigStore();
 
     // Avanzar la marca de agua de tiempo al montar (anti-retroceso de reloj offline)
-    useEffect(() => { marcarTiempoVisto(); }, [marcarTiempoVisto]);
+    // y contar la apertura (anti-reloj-congelado)
+    useEffect(() => { marcarTiempoVisto(); registrarApertura(); }, [marcarTiempoVisto, registrarApertura]);
 
     // Tiempo efectivo: nunca menor que el máximo real ya visto (si atrasan el reloj, no sirve)
     const ahora = Math.max(Date.now(), ultimaFechaVista);
@@ -42,9 +50,41 @@ export default function SubscriptionGate({ children }: { children: React.ReactNo
 
     const linkWhatsApp = `https://wa.me/${WHATSAPP_NUMBER}?text=${WHATSAPP_MSG}`;
 
+    // Demasiado tiempo sin validar con el servidor: pedir conexión.
+    // (El contador se resetea solo al abrir la app con internet.)
+    if (aperturasSinServidor > APERTURAS_LIMITE) {
+        return (
+            <div className="min-h-screen bg-navy flex items-center justify-center p-6">
+                <div className="max-w-lg w-full text-center">
+                    <div className="w-16 h-16 bg-gold/10 border border-gold/30 rounded-2xl flex items-center justify-center mx-auto mb-6">
+                        <ShoppingCart className="w-8 h-8 text-gold" />
+                    </div>
+                    <h1 className="text-3xl font-display font-black text-white mb-3">{negocioNombre || 'VentaRD'}</h1>
+                    <p className="text-vr-gray text-base mb-2">Este dispositivo lleva mucho tiempo sin conectarse.</p>
+                    <p className="text-vr-gray text-sm mb-8">
+                        Conéctalo a internet un momento (datos o Wi-Fi) y recarga la página para validar tu cuenta.
+                        Tus datos están a salvo y se sincronizarán automáticamente.
+                    </p>
+                    <button onClick={() => window.location.reload()}
+                        className="inline-flex items-center gap-2 bg-gold-gradient text-navy px-8 py-4 rounded-2xl font-extrabold text-lg hover:brightness-110 transition-all">
+                        Ya tengo internet — Recargar
+                    </button>
+                </div>
+            </div>
+        );
+    }
+
     if (estado === 'ok') {
         return (
             <>
+                {/* Aviso: muchas aperturas sin validar con el servidor */}
+                {aperturasSinServidor > APERTURAS_AVISO && (
+                    <div className="bg-blue-400/10 border-b border-blue-400/20 px-4 py-2 text-center">
+                        <span className="text-blue-300 text-sm font-bold">
+                            📶 Conecta este dispositivo a internet pronto para validar tu cuenta.
+                        </span>
+                    </div>
+                )}
                 {/* Aviso suave cuando faltan pocos días para vencer */}
                 {diasParaVencer > 0 && diasParaVencer <= 7 && (
                     <div className="bg-gold/10 border-b border-gold/20 px-4 py-2 flex items-center justify-center gap-3 text-center flex-wrap">

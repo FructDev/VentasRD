@@ -41,11 +41,22 @@ export default function RegistroPage() {
         setError(null);
 
         try {
+            // Huella del dispositivo: detecta el mismo aparato creando varios
+            // trials (visible en el panel de operador, no bloquea nada).
+            let deviceId = '';
+            try {
+                deviceId = localStorage.getItem('vrd_device_id') || '';
+                if (!deviceId) {
+                    deviceId = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+                    localStorage.setItem('vrd_device_id', deviceId);
+                }
+            } catch { /* almacenamiento bloqueado: sin huella */ }
+
             // Crea la cuenta del lado del servidor (ya confirmada, sin email)
             const res = await fetch('/api/auth/registro', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ email, password, nombreNegocio }),
+                body: JSON.stringify({ email, password, nombreNegocio, deviceId: deviceId || undefined }),
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || 'No se pudo crear la cuenta.');

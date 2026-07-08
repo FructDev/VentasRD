@@ -10,6 +10,7 @@ const BodySchema = z.object({
     email: z.string().email('Correo inválido.').max(200),
     password: z.string().min(6, 'La contraseña debe tener al menos 6 caracteres.').max(200),
     nombreNegocio: z.string().trim().min(1, 'Completa todos los campos.').max(100),
+    deviceId: z.string().max(64).optional(),
 });
 
 export async function POST(req: NextRequest) {
@@ -19,15 +20,16 @@ export async function POST(req: NextRequest) {
 
         const r = await leerJson(req, BodySchema);
         if (r.resp) return r.resp;
-        const { email, password, nombreNegocio } = r.data;
+        const { email, password, nombreNegocio, deviceId } = r.data;
 
         // Crea el usuario ya confirmado — no se envía ningún correo.
         // El trigger handle_new_user crea el negocio usando nombre_negocio.
+        // device_id: huella del dispositivo que registró (detección de trials ciclados)
         const { error: createErr } = await supabaseAdmin.auth.admin.createUser({
             email,
             password,
             email_confirm: true,
-            user_metadata: { nombre_negocio: nombreNegocio },
+            user_metadata: { nombre_negocio: nombreNegocio, ...(deviceId && { device_id: deviceId }) },
         });
 
         if (createErr) {
