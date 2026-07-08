@@ -1,7 +1,7 @@
 // Tests del dinero del carrito: subtotal, ITBIS, descuentos y precios por tier.
 // En un POS un centavo mal calculado es pérdida de confianza directa.
 import { describe, it, expect } from 'vitest';
-import { calculateTotals, getPrecioEfectivo, CartItem } from './useCartStore';
+import { calculateTotals, getPrecioEfectivo, useCartStore, CartItem } from './useCartStore';
 import { ProductoLocal } from '@/types/database';
 
 const producto = (over: Partial<ProductoLocal> = {}): ProductoLocal => ({
@@ -66,6 +66,96 @@ describe('calculateTotals', () => {
     it('el descuento se redondea a 2 decimales', () => {
         const r = calculateTotals([item({ precio_venta: 33.33, tasa_itbis: 0 })], 'porcentaje', 7);
         expect(r.descuento).toBe(Math.round(33.33 * 0.07 * 100) / 100);
+    });
+});
+
+describe('ventas en espera', () => {
+    const reset = () => useCartStore.setState({
+        items: [], subtotal: 0, itbis: 0, descuento: 0, total: 0,
+        tipoDescuento: 'porcentaje', valorDescuento: 0,
+        clienteActivoId: null, tipoPrecios: 1, enEspera: [],
+        ventaEnCursoNumero: null, ventaEnCursoEtiqueta: null,
+    });
+
+    it('pausar guarda el carrito y lo deja limpio', () => {
+        reset();
+        useCartStore.getState().addItem(producto());
+        expect(useCartStore.getState().pausarVenta('Juan')).toBe(true);
+        const s = useCartStore.getState();
+        expect(s.items).toHaveLength(0);
+        expect(s.total).toBe(0);
+        expect(s.enEspera).toHaveLength(1);
+        expect(s.enEspera[0].etiqueta).toBe('Juan');
+        expect(s.enEspera[0].numero).toBe(1);
+    });
+
+    it('no pausa un carrito vacío', () => {
+        reset();
+        expect(useCartStore.getState().pausarVenta()).toBe(false);
+    });
+
+    it('retomar restaura ítems, cliente y totales', () => {
+        reset();
+        useCartStore.getState().setCliente('c1', 2);
+        useCartStore.getState().addItem(producto({ precio_venta: 100, precio_2: 90 }));
+        useCartStore.getState().pausarVenta(null);
+        const id = useCartStore.getState().enEspera[0].id;
+        useCartStore.getState().retomarVenta(id);
+        const s = useCartStore.getState();
+        expect(s.items).toHaveLength(1);
+        expect(s.clienteActivoId).toBe('c1');
+        expect(s.tipoPrecios).toBe(2);
+        expect(s.total).toBeGreaterThan(0);
+        expect(s.enEspera).toHaveLength(0);
+    });
+
+    it('retomar con carrito ocupado pausa el actual primero (no se pierde nada)', () => {
+        reset();
+        useCartStore.getState().addItem(producto({ id: 'a' }));
+        useCartStore.getState().pausarVenta('Primera');
+        const id = useCartStore.getState().enEspera[0].id;
+        useCartStore.getState().addItem(producto({ id: 'b' }));
+        useCartStore.getState().retomarVenta(id, 'Segunda');
+        const s = useCartStore.getState();
+        expect(s.items[0].id).toBe('a');
+        expect(s.enEspera).toHaveLength(1);
+        expect(s.enEspera[0].etiqueta).toBe('Segunda');
+        expect(s.enEspera[0].items[0].id).toBe('b');
+    });
+
+    it('re-pausar una venta retomada conserva su número y etiqueta', () => {
+        reset();
+        useCartStore.getState().addItem(producto());
+        useCartStore.getState().pausarVenta('Juan');       // Venta #1
+        useCartStore.getState().addItem(producto({ id: 'x' }));
+        useCartStore.getState().pausarVenta();             // Venta #2
+        const id1 = useCartStore.getState().enEspera.find(v => v.numero === 1)!.id;
+        useCartStore.getState().retomarVenta(id1);         // retoma la #1
+        useCartStore.getState().pausarVenta();             // re-pausa: sigue siendo #1
+        const numeros = useCartStore.getState().enEspera.map(v => v.numero).sort();
+        expect(numeros).toEqual([1, 2]);
+        expect(useCartStore.getState().enEspera.find(v => v.numero === 1)!.etiqueta).toBe('Juan');
+    });
+
+    it('cobrar (clearCart) limpia la identidad de la venta retomada', () => {
+        reset();
+        useCartStore.getState().addItem(producto());
+        useCartStore.getState().pausarVenta();
+        const id = useCartStore.getState().enEspera[0].id;
+        useCartStore.getState().retomarVenta(id);
+        useCartStore.getState().clearCart();               // venta cobrada
+        useCartStore.getState().addItem(producto());
+        useCartStore.getState().pausarVenta();             // venta nueva: #1 otra vez (lista vacía)
+        expect(useCartStore.getState().enEspera[0].numero).toBe(1);
+    });
+
+    it('descartar elimina la venta pausada', () => {
+        reset();
+        useCartStore.getState().addItem(producto());
+        useCartStore.getState().pausarVenta();
+        const id = useCartStore.getState().enEspera[0].id;
+        useCartStore.getState().descartarEnEspera(id);
+        expect(useCartStore.getState().enEspera).toHaveLength(0);
     });
 });
 

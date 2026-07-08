@@ -2,12 +2,28 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { ProductoLocal, ClienteLocal } from '@/types/database';
+import { v4 as uuidv4 } from 'uuid';
 
 export interface CartItem extends ProductoLocal {
     cantidad: number;
     serial_id?: string;      // Solo si el producto es serializable
     serial_numero?: string;  // Número de serie seleccionado (para mostrar en ticket)
 }
+
+/** Venta pausada ("en espera"): el carrito completo congelado para retomarlo. */
+export interface VentaEnEspera {
+    id: string;
+    numero: number;               // consecutivo local: "Venta #3"
+    etiqueta: string | null;      // nombre del cliente si lo había; null = sin nombre
+    items: CartItem[];
+    clienteActivoId: string | null;
+    tipoPrecios: 1 | 2 | 3;
+    tipoDescuento: 'porcentaje' | 'monto';
+    valorDescuento: number;
+    creado: number;
+}
+
+export const MAX_EN_ESPERA = 10;
 
 /** Devuelve el precio efectivo según el tier activo del cliente */
 export function getPrecioEfectivo(producto: ProductoLocal, tier: 1 | 2 | 3): number {
@@ -30,6 +46,12 @@ interface CartState {
     clienteActivoId: string | null;
     tipoPrecios: 1 | 2 | 3;
 
+    // Ventas en espera (facturas pausadas)
+    enEspera: VentaEnEspera[];
+    // Identidad de la venta retomada: al re-pausarla conserva su número/etiqueta
+    ventaEnCursoNumero: number | null;
+    ventaEnCursoEtiqueta: string | null;
+
     addItem: (producto: ProductoLocal) => void;
     addItemConSerial: (producto: ProductoLocal, serialId: string, serialNumero: string) => void;
     removeItem: (id: string) => void;
@@ -37,6 +59,11 @@ interface CartState {
     setDescuento: (tipo: 'porcentaje' | 'monto', valor: number) => void;
     setCliente: (clienteId: string | null, tier: 1 | 2 | 3) => void;
     clearCart: () => void;
+    /** Pausa el carrito actual. Devuelve false si está vacío o se llegó al límite. */
+    pausarVenta: (etiqueta?: string | null) => boolean;
+    /** Retoma una venta pausada. Si el carrito actual tiene ítems, se pausa solo antes. */
+    retomarVenta: (id: string, etiquetaCarritoActual?: string | null) => void;
+    descartarEnEspera: (id: string) => void;
 }
 
 export const calculateTotals = (
@@ -77,6 +104,9 @@ export const useCartStore = create<CartState>()(
     valorDescuento: 0,
     clienteActivoId: null,
     tipoPrecios: 1,
+    enEspera: [],
+    ventaEnCursoNumero: null,
+    ventaEnCursoEtiqueta: null,
 
     addItem: (producto) => set((state) => {
         const tier = state.tipoPrecios;
@@ -136,7 +166,63 @@ export const useCartStore = create<CartState>()(
         items: [], subtotal: 0, itbis: 0, descuento: 0, total: 0,
         tipoDescuento: 'porcentaje', valorDescuento: 0,
         clienteActivoId: null, tipoPrecios: 1,
+        ventaEnCursoNumero: null, ventaEnCursoEtiqueta: null,
     }),
+
+    pausarVenta: (etiqueta) => {
+        const s = get();
+        if (s.items.length === 0 || s.enEspera.length >= MAX_EN_ESPERA) return false;
+        // Si el carrito viene de una venta retomada, conserva su número original
+        const numero = s.ventaEnCursoNumero
+            ?? s.enEspera.reduce((m, v) => Math.max(m, v.numero), 0) + 1;
+        set({
+            enEspera: [...s.enEspera, {
+                id: uuidv4(), numero,
+                etiqueta: etiqueta?.trim() || s.ventaEnCursoEtiqueta || null,
+                items: s.items, clienteActivoId: s.clienteActivoId, tipoPrecios: s.tipoPrecios,
+                tipoDescuento: s.tipoDescuento, valorDescuento: s.valorDescuento,
+                creado: Date.now(),
+            }],
+            items: [], subtotal: 0, itbis: 0, descuento: 0, total: 0,
+            tipoDescuento: 'porcentaje', valorDescuento: 0,
+            clienteActivoId: null, tipoPrecios: 1,
+            ventaEnCursoNumero: null, ventaEnCursoEtiqueta: null,
+        });
+        return true;
+    },
+
+    retomarVenta: (id, etiquetaCarritoActual) => {
+        const s = get();
+        const venta = s.enEspera.find(v => v.id === id);
+        if (!venta) return;
+        let enEspera = s.enEspera.filter(v => v.id !== id);
+        // El carrito actual no se pierde: se pausa solo antes de retomar
+        // (conservando su propio número si también venía de una pausa)
+        if (s.items.length > 0) {
+            const numero = s.ventaEnCursoNumero
+                ?? s.enEspera.reduce((m, v) => Math.max(m, v.numero), 0) + 1;
+            enEspera = [...enEspera, {
+                id: uuidv4(), numero,
+                etiqueta: etiquetaCarritoActual?.trim() || s.ventaEnCursoEtiqueta || null,
+                items: s.items, clienteActivoId: s.clienteActivoId, tipoPrecios: s.tipoPrecios,
+                tipoDescuento: s.tipoDescuento, valorDescuento: s.valorDescuento,
+                creado: Date.now(),
+            }];
+        }
+        set({
+            enEspera,
+            items: venta.items,
+            clienteActivoId: venta.clienteActivoId,
+            tipoPrecios: venta.tipoPrecios,
+            tipoDescuento: venta.tipoDescuento,
+            valorDescuento: venta.valorDescuento,
+            ventaEnCursoNumero: venta.numero,
+            ventaEnCursoEtiqueta: venta.etiqueta,
+            ...calculateTotals(venta.items, venta.tipoDescuento, venta.valorDescuento),
+        });
+    },
+
+    descartarEnEspera: (id) => set(state => ({ enEspera: state.enEspera.filter(v => v.id !== id) })),
   }),
   {
     name: 'ventard-cart',
@@ -144,9 +230,12 @@ export const useCartStore = create<CartState>()(
         items: state.items,
         clienteActivoId: state.clienteActivoId,
         tipoPrecios: state.tipoPrecios,
+        enEspera: state.enEspera,
+        ventaEnCursoNumero: state.ventaEnCursoNumero,
+        ventaEnCursoEtiqueta: state.ventaEnCursoEtiqueta,
     }),
     merge: (persisted, current) => {
-        const p = persisted as { items: CartItem[]; clienteActivoId?: string | null; tipoPrecios?: 1 | 2 | 3 };
+        const p = persisted as { items: CartItem[]; clienteActivoId?: string | null; tipoPrecios?: 1 | 2 | 3; enEspera?: VentaEnEspera[]; ventaEnCursoNumero?: number | null; ventaEnCursoEtiqueta?: string | null };
         const items = p.items ?? [];
         const tier = p.tipoPrecios ?? 1;
         return {
@@ -154,6 +243,9 @@ export const useCartStore = create<CartState>()(
             items,
             clienteActivoId: p.clienteActivoId ?? null,
             tipoPrecios: tier,
+            enEspera: p.enEspera ?? [],
+            ventaEnCursoNumero: p.ventaEnCursoNumero ?? null,
+            ventaEnCursoEtiqueta: p.ventaEnCursoEtiqueta ?? null,
             ...calculateTotals(items),
         };
     },

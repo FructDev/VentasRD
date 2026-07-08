@@ -77,7 +77,7 @@ const ProductCard = memo(function ProductCard({
 
 export default function POSPage() {
   const { negocioId, negocioNombre, sucursalId, showToast, negocioRnc, negocioTelefono, negocioDireccion, negocioMensajeTicket, negocioLogo, nombreUsuario, rolUsuario, consumirNcf, ncf: ncfConfig, impresion, dispositivoId, planTier, garantiaDiasDefault } = useConfigStore();
-  const { items, subtotal, itbis, descuento, total, tipoDescuento, valorDescuento, addItem, addItemConSerial, clearCart, updateQuantity, setDescuento, setCliente, clienteActivoId, tipoPrecios } = useCartStore();
+  const { items, subtotal, itbis, descuento, total, tipoDescuento, valorDescuento, addItem, addItemConSerial, clearCart, updateQuantity, setDescuento, setCliente, clienteActivoId, tipoPrecios, enEspera, pausarVenta, retomarVenta, descartarEnEspera } = useCartStore();
 
   const [searchTerm, setSearchTerm] = useState('');
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -97,6 +97,7 @@ export default function POSPage() {
   const [anulando, setAnulando] = useState(false);
   const [procesandoVenta, setProcesandoVenta] = useState(false);
   const procesandoVentaRef = useRef(false);
+  const [descartandoEspera, setDescartandoEspera] = useState<string | null>(null);
   const [confirmAnularOpen, setConfirmAnularOpen] = useState(false);
   const [emitirNcf, setEmitirNcf] = useState(false);
   const [isCartOpen, setIsCartOpen] = useState(false); // mobile cart drawer
@@ -574,14 +575,59 @@ export default function POSPage() {
   // Cart panel content - shared between desktop sidebar and mobile drawer
   const cartContent = (
     <>
-      <div className="p-3 sm:p-4 border-b border-navy-3 flex justify-between items-center">
-        <h2 className="text-base sm:text-lg font-display font-bold text-white">Ticket</h2>
-        <div className="flex items-center gap-2">
-          <button onClick={() => setIsCajaOpen(true)} className="text-xs text-gold hover:bg-gold/10 px-2 sm:px-3 py-1 rounded-lg transition-colors font-bold border border-gold/20">💰 Caja</button>
-          <button onClick={clearCart} className="text-xs text-vr-red hover:bg-vr-red/10 px-2 sm:px-3 py-1 rounded-lg transition-colors font-bold">Limpiar</button>
+      <div className="p-3 sm:p-4 border-b border-navy-3 flex justify-between items-center gap-2 min-w-0">
+        <h2 className="text-base sm:text-lg font-display font-bold text-white shrink-0">Ticket</h2>
+        <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
+          <button onClick={() => setIsCajaOpen(true)} className="text-xs text-gold hover:bg-gold/10 px-2 sm:px-3 py-1 rounded-lg transition-colors font-bold border border-gold/20 whitespace-nowrap">💰<span className="hidden sm:inline"> Caja</span></button>
+          {items.length > 0 && (
+            <button
+              onClick={() => {
+                const ok = pausarVenta(clienteActivo?.nombre ?? null);
+                showToast(ok ? 'Venta en espera. Puedes atender al próximo cliente.' : 'Límite de ventas en espera alcanzado.', ok ? 'success' : 'error');
+              }}
+              className="text-xs text-blue-300 hover:bg-blue-400/10 px-2 sm:px-3 py-1 rounded-lg transition-colors font-bold border border-blue-400/20 whitespace-nowrap"
+              title="Pausar esta venta"
+            >
+              ⏸<span className="hidden sm:inline"> En espera</span>
+            </button>
+          )}
+          <button onClick={clearCart} className="text-xs text-vr-red hover:bg-vr-red/10 px-2 sm:px-3 py-1 rounded-lg transition-colors font-bold whitespace-nowrap">Limpiar</button>
           <button onClick={() => setIsCartOpen(false)} className="lg:hidden text-vr-gray hover:text-white font-bold text-xl px-1 transition-colors">✕</button>
         </div>
       </div>
+
+      {/* Ventas en espera (facturas pausadas) */}
+      {enEspera.length > 0 && (
+        <div className="px-3 sm:px-4 pt-2.5 pb-2 border-b border-navy-3/50">
+          <p className="text-[10px] font-black text-vr-gray uppercase tracking-wider mb-1.5">⏸ En espera ({enEspera.length})</p>
+          <div className="space-y-1.5 max-h-36 overflow-y-auto">
+            {enEspera.map(v => {
+              const totalV = v.items.reduce((s, i) => s + i.precio_venta * i.cantidad, 0);
+              return (
+                <div key={v.id} className="flex items-center gap-2 bg-blue-400/10 border border-blue-400/25 rounded-xl pl-3 pr-1 py-1.5">
+                  <button
+                    onClick={() => { retomarVenta(v.id, clienteActivo?.nombre ?? null); showToast('Venta retomada.', 'info'); }}
+                    className="flex-1 min-w-0 flex items-center justify-between gap-2 text-left"
+                    title="Retomar esta venta"
+                  >
+                    <span className="text-xs font-bold text-white truncate">
+                      {v.etiqueta || `Venta #${v.numero}`}
+                    </span>
+                    <span className="text-[10px] text-vr-gray font-mono shrink-0">
+                      {v.items.length} ít. · {formatDOP(totalV)} · {new Date(v.creado).toLocaleTimeString('es-DO', { hour: 'numeric', minute: '2-digit' })}
+                    </span>
+                  </button>
+                  <button
+                    onClick={() => setDescartandoEspera(v.id)}
+                    className="text-vr-gray hover:text-vr-red font-bold px-1.5 text-sm transition-colors shrink-0"
+                    aria-label="Descartar venta en espera"
+                  >✕</button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Selector de cliente para pricing */}
       <div className="px-3 sm:px-4 pt-2.5 pb-1 border-b border-navy-3/50 relative">
@@ -1211,6 +1257,16 @@ export default function POSPage() {
         procesando={anulando}
         onConfirm={anularUltimaVenta}
         onClose={() => setConfirmAnularOpen(false)}
+      />
+
+      {/* CONFIRMACIÓN DE DESCARTE DE VENTA EN ESPERA */}
+      <ConfirmModal
+        isOpen={descartandoEspera !== null}
+        title="Descartar venta en espera"
+        mensaje="Los productos de esta venta pausada se descartarán. El stock no se afecta (solo se descuenta al cobrar)."
+        confirmLabel="Descartar"
+        onConfirm={() => { if (descartandoEspera) descartarEnEspera(descartandoEspera); setDescartandoEspera(null); }}
+        onClose={() => setDescartandoEspera(null)}
       />
     </div>
   );
