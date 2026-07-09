@@ -28,6 +28,16 @@ export async function GET(req: NextRequest) {
 
     const usersMap = new Map(users.map(u => [u.id, u]));
 
+    // Salud de actividad (última venta y ventas 7d) — best-effort: si la RPC
+    // aún no existe, el listado sale sin salud.
+    const salud = new Map<string, { ultima_venta: number | null; ventas_7d: number }>();
+    try {
+        const { data: saludData } = await admin.rpc('salud_negocios');
+        for (const s of (saludData as { negocio_id: string; ultima_venta: number | null; ventas_7d: number }[] | null) ?? []) {
+            salud.set(s.negocio_id, { ultima_venta: s.ultima_venta, ventas_7d: s.ventas_7d });
+        }
+    } catch { /* RPC no creada aún */ }
+
     // Cuentas registradas desde el mismo dispositivo (detección de trials ciclados)
     const porDispositivo = new Map<string, number>();
     for (const u of users) {
@@ -46,6 +56,9 @@ export async function GET(req: NextRequest) {
                 created_at: dueno?.created_at || '',
                 // >1 = este dispositivo registró más de una cuenta (posible ciclado de trials)
                 cuentas_mismo_dispositivo: deviceId ? (porDispositivo.get(deviceId) || 1) : 1,
+                // Salud de actividad (null = sin ventas registradas jamás)
+                ultima_venta: salud.get(n.id)?.ultima_venta ?? null,
+                ventas_7d: salud.get(n.id)?.ventas_7d ?? 0,
             };
         })
         // Ordenar por vencimiento más próximo primero (a quién cobrar/avisar)

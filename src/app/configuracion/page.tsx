@@ -5,6 +5,7 @@ import { supabase } from '@/lib/supabase/client';
 import { useConfigStore } from '@/store/useConfigStore';
 import TopBar from '@/components/shared/TopBar';
 import PinGuard from '@/components/ui/PinGuard';
+import EstadoSistema from '@/components/shared/EstadoSistema';
 import { AlertTriangle } from 'lucide-react';
 
 import { comprimirImagen } from '@/lib/imagen';
@@ -764,6 +765,9 @@ export default function ConfiguracionPage() {
                                         )}
                                     </div>
                                 </div>
+
+                                {/* Estado del sistema (diagnóstico para soporte) */}
+                                <EstadoSistema />
 
                                 {/* Reportes y Alertas */}
                                 <div className="pt-4">

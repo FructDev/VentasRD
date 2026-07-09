@@ -18,6 +18,18 @@ interface Negocio {
     nota_operador: string | null;
     created_at: string;
     cuentas_mismo_dispositivo?: number;
+    ultima_venta?: number | null;
+    ventas_7d?: number;
+}
+
+/** Salud de actividad: cuándo sincronizó su última venta. */
+function saludDe(n: Negocio): { emoji: string; texto: string; color: string } | null {
+    if (n.ultima_venta === undefined) return null; // RPC no disponible
+    if (n.ultima_venta === null) return { emoji: '⚫', texto: 'sin ventas', color: 'text-vr-gray' };
+    const dias = Math.floor((Date.now() - n.ultima_venta) / DIA);
+    if (dias <= 1) return { emoji: '🟢', texto: `activo · ${n.ventas_7d ?? 0} ventas 7d`, color: 'text-vr-green' };
+    if (dias <= 5) return { emoji: '🟡', texto: `${dias}d sin vender`, color: 'text-gold' };
+    return { emoji: '🔴', texto: `${dias}d sin vender`, color: 'text-vr-red' };
 }
 
 const PRECIO_KEY = 'vrd_sa_precio'; // precio mensual (lo fija el operador, por dispositivo)
@@ -473,6 +485,7 @@ function Panel({ secret, onLogout }: { secret: string; onLogout: () => void }) {
                                                         <p className="font-bold text-white group-hover/n:text-gold transition-colors">{n.nombre || '—'} <span className="text-vr-gray font-normal text-xs">· ver</span></p>
                                                         <p className="text-xs text-vr-gray mt-0.5">
                                                             {n.tipo_negocio ? TIPOS[n.tipo_negocio] || n.tipo_negocio : 'Sin tipo'}
+                                                            {(() => { const s = saludDe(n); return s ? <span className={`ml-2 font-bold ${s.color}`} title="Última venta sincronizada">{s.emoji} {s.texto}</span> : null; })()}
                                                             {!n.onboarding_completado && <span className="ml-2 text-gold/70">· onboarding pendiente</span>}
                                                             {(n.cuentas_mismo_dispositivo ?? 1) > 1 && (
                                                                 <span className="ml-2 text-vr-red font-bold" title="Este dispositivo registró varias cuentas (posible ciclado de trials)">
