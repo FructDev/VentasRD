@@ -191,6 +191,12 @@ export default function RegistroPage() {
                         >
                             {loading ? 'Creando negocio...' : 'Crear cuenta gratis'}
                         </button>
+
+                        <p className="text-[11px] text-vr-gray text-center leading-relaxed">
+                            Al crear tu cuenta aceptas los{' '}
+                            <Link href="/terminos" className="text-gold hover:underline">Términos de Servicio</Link>{' '}
+                            y la <Link href="/privacidad" className="text-gold hover:underline">Política de Privacidad</Link>.
+                        </p>
                     </form>
 
                     <p className="mt-6 text-sm text-vr-gray">

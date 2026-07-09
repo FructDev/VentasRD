@@ -6,6 +6,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { db } from '@/lib/db/dexie';
 import { useConfigStore } from '@/store/useConfigStore';
 
@@ -73,7 +74,10 @@ export default function EstadoSistema() {
     return (
         <div className="pt-4">
             <h3 className="text-lg font-bold text-vr-gray mb-1 border-b border-navy-3 pb-2">🩺 Estado del Sistema</h3>
-            <p className="text-xs text-vr-gray mb-4">Si algo anda lento o no sincroniza, envía este diagnóstico a soporte.</p>
+            <p className="text-xs text-vr-gray mb-4">
+                Si algo anda lento o no sincroniza, envía este diagnóstico a soporte. ¿Dudas de uso? Visita el{' '}
+                <Link href="/ayuda" className="text-gold hover:underline">Centro de Ayuda</Link>.
+            </p>
             {!d ? (
                 <p className="text-vr-gray text-sm">Cargando…</p>
             ) : (

@@ -9,7 +9,7 @@ import PinScreen from '@/components/ui/PinScreen';
 import SubscriptionGate from '@/components/ui/SubscriptionGate';
 import { puedeAcceder } from '@/lib/acceso';
 
-const RUTAS_PUBLICAS = ['/login', '/registro', '/landing', '/offline', '/pin', '/recuperar-contrasena', '/actualizar-contrasena', '/superadmin', '/auth/confirm', '/onboarding', '/select-branch', '/unirse', '/catalogo'];
+const RUTAS_PUBLICAS = ['/login', '/registro', '/landing', '/offline', '/pin', '/recuperar-contrasena', '/actualizar-contrasena', '/superadmin', '/auth/confirm', '/onboarding', '/select-branch', '/unirse', '/catalogo', '/terminos', '/privacidad', '/ayuda'];
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
     const router = useRouter();

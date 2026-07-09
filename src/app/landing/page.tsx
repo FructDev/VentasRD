@@ -532,6 +532,9 @@ export default function LandingPage() {
                             <p className="text-xs font-semibold text-vr-gray uppercase tracking-widest mb-1">Acceso</p>
                             <Link href="/login" className="text-sm text-vr-gray hover:text-white transition-colors">Iniciar sesión</Link>
                             <Link href="/registro" className="text-sm text-vr-gray hover:text-white transition-colors">Crear cuenta</Link>
+                            <Link href="/ayuda" className="text-sm text-vr-gray hover:text-white transition-colors">Centro de ayuda</Link>
+                            <Link href="/terminos" className="text-sm text-vr-gray hover:text-white transition-colors">Términos de servicio</Link>
+                            <Link href="/privacidad" className="text-sm text-vr-gray hover:text-white transition-colors">Privacidad</Link>
                         </div>
 
                         {/* Col 3: tagline */}
