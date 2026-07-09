@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Post 1 — Offline (1080x1080)</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=DM+Sans:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { width:1080px; height:1080px; background:#0D1B2E; font-family:'DM Sans',sans-serif; color:#fff; overflow:hidden; position:relative; }
+  .glow { position:absolute; width:800px; height:800px; border-radius:50%; background:radial-gradient(circle,rgba(212,160,23,.14),transparent 70%); top:-200px; right:-200px; }
+  .wrap { position:relative; height:100%; display:flex; flex-direction:column; justify-content:center; padding:0 80px; }
+  .badge { display:inline-flex; align-items:center; gap:12px; background:rgba(212,160,23,.12); border:2px solid rgba(212,160,23,.35); color:#EFC84A; font-weight:700; font-size:28px; padding:14px 30px; border-radius:999px; width:fit-content; margin-bottom:50px; }
+  .dot { width:14px; height:14px; border-radius:50%; background:#EFC84A; }
+  h1 { font-family:'Syne',sans-serif; font-weight:800; font-size:74px; line-height:1.06; letter-spacing:-2px; margin-bottom:40px; }
+  h1 .gold { color:#EFC84A; text-shadow:0 0 50px rgba(212,160,23,.5); }
+  p.sub { font-size:36px; line-height:1.5; color:#8899AA; margin-bottom:60px; max-width:760px; }
+  p.sub b { color:#fff; }
+  .cta { background:linear-gradient(135deg,#D4A017,#EFC84A); color:#0D1B2E; font-weight:800; font-size:38px; padding:30px 56px; border-radius:24px; width:fit-content; box-shadow:0 10px 50px rgba(212,160,23,.35); }
+  .brand { position:absolute; bottom:60px; left:80px; display:flex; align-items:center; gap:16px; }
+  .logo { width:52px; height:52px; background:linear-gradient(135deg,#D4A017,#EFC84A); border-radius:14px; display:flex; align-items:center; justify-content:center; font-size:28px; }
+  .brand span { font-family:'Syne',sans-serif; font-weight:800; font-size:36px; }
+  .rd { position:absolute; bottom:66px; right:80px; font-size:28px; color:#8899AA; }
+</style>
+</head>
+<body>
+  <div class="glow"></div>
+  <div class="wrap">
+    <div class="badge"><span class="dot"></span> EL POS QUE NO SE CAE</div>
+    <h1>¿Se fue la luz?<br><span class="gold">Tu caja sigue<br>funcionando.</span></h1>
+    <p class="sub">Vende, fía y cuadra caja <b>sin internet</b>. Todo se guarda en tu equipo y se sincroniza solo cuando vuelve la señal.</p>
+    <div class="cta">Prueba GRATIS → ventard.vercel.app</div>
+  </div>
+  <div class="brand"><div class="logo">🛒</div><span>VentaRD</span></div>
+  <div class="rd">Hecho en RD</div>
+</body>
+</html>

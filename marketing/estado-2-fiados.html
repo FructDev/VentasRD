@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Estado 2 — Fiados</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=DM+Sans:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { width:1080px; height:1920px; background:#0D1B2E; font-family:'DM Sans',sans-serif; color:#fff; overflow:hidden; position:relative; }
+  .glow { position:absolute; width:900px; height:900px; border-radius:50%; background:radial-gradient(circle,rgba(34,197,94,.10),transparent 70%); bottom:-200px; left:-250px; }
+  .wrap { position:relative; height:100%; display:flex; flex-direction:column; justify-content:center; padding:0 90px; }
+  .badge { display:inline-flex; align-items:center; gap:14px; background:rgba(34,197,94,.12); border:2px solid rgba(34,197,94,.35); color:#22C55E; font-weight:700; font-size:34px; padding:18px 36px; border-radius:999px; width:fit-content; margin-bottom:70px; }
+  h1 { font-family:'Syne',sans-serif; font-weight:800; font-size:92px; line-height:1.06; letter-spacing:-2px; margin-bottom:50px; }
+  h1 .gold { color:#EFC84A; }
+  .tacha { color:#8899AA; text-decoration:line-through; text-decoration-color:rgba(239,68,68,.7); text-decoration-thickness:6px; }
+  p.sub { font-size:44px; line-height:1.5; color:#8899AA; margin-bottom:70px; max-width:840px; }
+  p.sub b { color:#fff; }
+  .card { background:#152438; border:2px solid #1E3352; border-radius:28px; padding:40px 46px; margin-bottom:26px; max-width:800px; }
+  .card .n { font-weight:700; font-size:40px; }
+  .card .d { font-family:monospace; font-size:36px; color:#EFC84A; margin-top:8px; }
+  .card .w { font-size:32px; color:#22C55E; margin-top:14px; font-weight:700; }
+  .cta { background:linear-gradient(135deg,#D4A017,#EFC84A); color:#0D1B2E; font-weight:800; font-size:46px; padding:38px 70px; border-radius:28px; width:fit-content; box-shadow:0 10px 60px rgba(212,160,23,.35); margin-top:60px; }
+  .brand { position:absolute; bottom:80px; left:90px; display:flex; align-items:center; gap:20px; }
+  .logo { width:64px; height:64px; background:linear-gradient(135deg,#D4A017,#EFC84A); border-radius:16px; display:flex; align-items:center; justify-content:center; font-size:36px; }
+  .brand span { font-family:'Syne',sans-serif; font-weight:800; font-size:44px; }
+  .rd { position:absolute; bottom:88px; right:90px; font-size:34px; color:#8899AA; }
+</style>
+</head>
+<body>
+  <div class="glow"></div>
+  <div class="wrap">
+    <div class="badge">💰 FIADOS BAJO CONTROL</div>
+    <h1><span class="tacha">La libreta</span><br>se acabó. <span class="gold">Cobra<br>lo que te deben.</span></h1>
+    <p class="sub">Registra el fiado <b>al momento de la venta</b>. VentaRD lleva el saldo de cada cliente y le manda su estado de cuenta <b>por WhatsApp</b>.</p>
+    <div class="card">
+      <div class="n">👤 Juan Pérez</div>
+      <div class="d">Debe: RD$3,450</div>
+      <div class="w">📱 Enviar recordatorio por WhatsApp</div>
+    </div>
+    <div class="cta">Pruébalo GRATIS en ventard.vercel.app →</div>
+  </div>
+  <div class="brand"><div class="logo">🛒</div><span>VentaRD</span></div>
+  <div class="rd">Hecho en RD</div>
+</body>
+</html>

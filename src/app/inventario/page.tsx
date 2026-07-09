@@ -105,6 +105,8 @@ export default function InventarioPage() {
     }, [productos, composiciones]);
 
     const [isModalOpen, setIsModalOpen] = useState(false);
+    const [guardandoProducto, setGuardandoProducto] = useState(false);
+    const guardandoProductoRef = useRef(false);
     const [productoEditando, setProductoEditando] = useState<ProductoLocal | null>(null);
     // Foto del producto: data URL (nueva, pendiente de subir) o URL http (existente)
     const [fotoProducto, setFotoProducto] = useState<string | null>(null);
@@ -434,6 +436,11 @@ export default function InventarioPage() {
     const guardarProducto = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!negocioId) return;
+        // Candado anti doble-guardado: en equipos lentos el usuario toca dos
+        // veces y el producto se creaba DUPLICADO (dos UUIDs distintos).
+        if (guardandoProductoRef.current) return;
+        guardandoProductoRef.current = true;
+        setGuardandoProducto(true);
         const idProducto = productoEditando ? productoEditando.id : uuidv4();
 
         try {
@@ -515,6 +522,9 @@ export default function InventarioPage() {
             setIsModalOpen(false);
         } catch (error) {
             console.error("Error:", error);
+        } finally {
+            guardandoProductoRef.current = false;
+            setGuardandoProducto(false);
         }
     };
 
@@ -1388,7 +1398,7 @@ export default function InventarioPage() {
 
                                 <div className="pt-4 border-t border-navy-3 flex gap-3">
                                     <button type="button" onClick={() => setIsModalOpen(false)} className="flex-1 py-3 font-bold text-vr-gray hover:text-white border border-navy-3 rounded-xl transition-colors">Cancelar</button>
-                                    <button type="submit" className="flex-1 py-3 bg-gold-gradient text-navy font-extrabold rounded-xl hover:brightness-110 transition-all">Guardar</button>
+                                    <button type="submit" disabled={guardandoProducto} className="flex-1 py-3 bg-gold-gradient text-navy font-extrabold rounded-xl hover:brightness-110 transition-all disabled:opacity-50 disabled:cursor-not-allowed">{guardandoProducto ? 'Guardando…' : 'Guardar'}</button>
                                 </div>
                             </form>
                         </div>
