@@ -10,6 +10,7 @@ import { ClienteLocal } from '@/types/database';
 import { formatDOP } from '@/lib/utils';
 import { v4 as uuidv4 } from 'uuid';
 import TopBar from '@/components/shared/TopBar';
+import { useCandado } from '@/lib/useCandado';
 import OfflineBanner from '@/components/shared/OfflineBanner';
 import Pagination from '@/components/ui/Pagination';
 import { SkeletonTable } from '@/components/ui/Skeleton';
@@ -23,6 +24,7 @@ type OrdenCliente = 'nombre' | 'deuda' | 'atraso';
 
 export default function ClientesPage() {
     const { negocioId, showToast, negocioNombre, planTier } = useConfigStore();
+    const { ocupado, conCandado } = useCandado();
     const clientes = useClientesTenant();
     const transacciones = useTransaccionesFiadoTenant();
     const esPro = planTier === 'pro';
@@ -486,7 +488,7 @@ export default function ClientesPage() {
                                     <h2 className="text-xl font-display font-bold text-white">{clienteEditando ? 'Editar Cliente' : 'Nuevo Cliente'}</h2>
                                     <button onClick={() => setIsModalClienteOpen(false)} className="text-vr-gray hover:text-white font-bold text-xl transition-colors">✕</button>
                                 </div>
-                                <form onSubmit={guardarCliente} className="p-4 sm:p-6 space-y-4">
+                                <form onSubmit={conCandado(guardarCliente)} className="p-4 sm:p-6 space-y-4">
                                     <div>
                                         <label className="block text-sm font-bold text-vr-gray mb-1.5">Nombre Completo *</label>
                                         <input required type="text" className="w-full bg-navy-3 border border-navy-3 rounded-xl p-3 text-white focus:border-gold outline-none transition-all" value={formDataCliente.nombre} onChange={e => setFormDataCliente({ ...formDataCliente, nombre: e.target.value })} />
@@ -536,7 +538,7 @@ export default function ClientesPage() {
 
                                     <div className="flex gap-3 pt-2">
                                         <button type="button" onClick={() => setIsModalClienteOpen(false)} className="flex-1 py-3 font-bold text-vr-gray hover:text-white border border-navy-3 rounded-xl transition-colors">Cancelar</button>
-                                        <button type="submit" className="flex-1 py-3 bg-gold-gradient text-navy font-extrabold rounded-xl hover:brightness-110 transition-all">Guardar</button>
+                                        <button type="submit" disabled={ocupado} className="flex-1 py-3 bg-gold-gradient text-navy font-extrabold rounded-xl hover:brightness-110 transition-all disabled:opacity-50">{ocupado ? 'Guardando…' : 'Guardar'}</button>
                                     </div>
 
                                     {/* Eliminar — solo al editar un cliente existente */}
@@ -569,7 +571,7 @@ export default function ClientesPage() {
                                     <h2 className="text-xl font-display font-bold text-vr-green">Registrar Abono</h2>
                                     <button onClick={() => setIsModalAbonoOpen(false)} className="text-vr-gray hover:text-white font-bold text-xl transition-colors">✕</button>
                                 </div>
-                                <form onSubmit={registrarAbono} className="p-4 sm:p-6 space-y-4">
+                                <form onSubmit={conCandado(registrarAbono)} className="p-4 sm:p-6 space-y-4">
                                     <div className="text-center mb-2">
                                         <p className="text-vr-gray text-sm">Deuda de {clienteParaAbono.nombre}</p>
                                         <p className="text-3xl font-black font-mono text-vr-red">{formatDOP(clienteParaAbono.saldo_pendiente)}</p>
@@ -583,7 +585,7 @@ export default function ClientesPage() {
                                         <input type="text" className="w-full bg-navy-3 border border-navy-3 rounded-xl p-3 text-white focus:border-gold outline-none transition-all" value={abonoConcepto} onChange={e => setAbonoConcepto(e.target.value)} />
                                     </div>
                                     <div className="flex flex-col gap-2 pt-2">
-                                        <button type="submit" className="w-full py-4 bg-vr-green text-white font-extrabold rounded-xl hover:bg-vr-green/90 text-lg transition-all">Confirmar Pago</button>
+                                        <button type="submit" disabled={ocupado} className="w-full py-4 bg-vr-green text-white font-extrabold rounded-xl hover:bg-vr-green/90 text-lg transition-all disabled:opacity-50">{ocupado ? 'Procesando…' : 'Confirmar Pago'}</button>
                                         <button type="button" onClick={() => setIsModalAbonoOpen(false)} className="w-full py-3 font-bold text-vr-gray hover:text-white hover:bg-navy-3 rounded-xl transition-all">Cancelar</button>
                                     </div>
                                 </form>

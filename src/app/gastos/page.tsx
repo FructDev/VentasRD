@@ -9,6 +9,7 @@ import { GastoCategoria, GastoLocal } from '@/types/database';
 import { formatDOP } from '@/lib/utils';
 import { v4 as uuidv4 } from 'uuid';
 import PinGuard from '@/components/ui/PinGuard';
+import { useCandado } from '@/lib/useCandado';
 import TopBar from '@/components/shared/TopBar';
 import OfflineBanner from '@/components/shared/OfflineBanner';
 import ConfirmModal from '@/components/ui/ConfirmModal';
@@ -36,6 +37,7 @@ function getRango(periodo: Periodo): { desde: number; hasta: number } {
 
 export default function GastosPage() {
     const { negocioId, sucursalId, showToast, nombreUsuario } = useConfigStore();
+    const { conCandado } = useCandado();
     const [periodo, setPeriodo] = useState<Periodo>('mes');
     const { desde, hasta } = useMemo(() => getRango(periodo), [periodo]);
     const gastos = useGastosRangoTenant(desde, hasta);
@@ -230,7 +232,7 @@ export default function GastosPage() {
                                 <h2 className="text-xl font-display font-bold text-white">Nuevo Gasto</h2>
                                 <button onClick={() => setIsModalOpen(false)} className="text-vr-gray hover:text-white font-bold text-xl transition-colors">✕</button>
                             </div>
-                            <form onSubmit={guardarGasto} className="p-4 sm:p-6 space-y-4">
+                            <form onSubmit={conCandado(guardarGasto)} className="p-4 sm:p-6 space-y-4">
                                 {/* Monto grande, protagonista */}
                                 <div>
                                     <label className="block text-sm font-bold text-vr-gray mb-1.5">¿Cuánto gastaste? (RD$) *</label>

@@ -14,6 +14,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { useReactToPrint } from 'react-to-print';
 import { TicketApartado } from '@/components/TicketApartado';
 import PinGuard from '@/components/ui/PinGuard';
+import { useCandado } from '@/lib/useCandado';
 import TopBar from '@/components/shared/TopBar';
 import OfflineBanner from '@/components/shared/OfflineBanner';
 import ConfirmModal from '@/components/ui/ConfirmModal';
@@ -37,6 +38,7 @@ const FORM_VACIO = {
 
 export default function ApartadosPage() {
     const { negocioId, sucursalId, planTier, garantiaDiasDefault, showToast, negocioNombre, negocioRnc, negocioDireccion, negocioTelefono } = useConfigStore();
+    const { ocupado, conCandado } = useCandado();
     const productos = useProductosTenant();
 
     const apartadosRaw = useLiveQuery(
@@ -419,7 +421,7 @@ export default function ApartadosPage() {
                                 <h2 className="text-xl font-display font-bold text-white">Nuevo apartado</h2>
                                 <button onClick={() => setIsModalOpen(false)} className="text-vr-gray hover:text-white font-bold text-xl transition-colors">✕</button>
                             </div>
-                            <form onSubmit={guardar} className="p-4 sm:p-6 space-y-4 overflow-y-auto">
+                            <form onSubmit={conCandado(guardar)} className="p-4 sm:p-6 space-y-4 overflow-y-auto">
                                 <ClientePicker
                                     value={{ clienteId: formData.cliente_id, nombre: formData.cliente_nombre, telefono: formData.cliente_telefono, guardarNuevo: formData.guardar_cliente }}
                                     onChange={v => setFormData({ ...formData, cliente_id: v.clienteId, cliente_nombre: v.nombre, cliente_telefono: v.telefono, guardar_cliente: v.guardarNuevo })}
@@ -525,7 +527,7 @@ export default function ApartadosPage() {
                                 </div>
                                 <div className="flex gap-3">
                                     <button type="button" onClick={() => setAbonando(null)} className="flex-1 py-3 font-bold text-vr-gray hover:text-white border border-navy-3 rounded-xl transition-colors">Cancelar</button>
-                                    <button type="button" onClick={guardarAbono} className="flex-1 py-3 bg-gold-gradient text-navy font-extrabold rounded-xl hover:brightness-110 transition-all">Guardar abono</button>
+                                    <button type="button" onClick={conCandado(guardarAbono)} disabled={ocupado} className="flex-1 py-3 bg-gold-gradient text-navy font-extrabold rounded-xl hover:brightness-110 transition-all disabled:opacity-50">{ocupado ? 'Guardando…' : 'Guardar abono'}</button>
                                 </div>
                             </div>
                         </div>

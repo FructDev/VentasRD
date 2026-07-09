@@ -3,6 +3,7 @@
 
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useConfigStore } from '@/store/useConfigStore';
+import { useCandado } from '@/lib/useCandado';
 import { db, getCajaAbierta } from '@/lib/db/dexie';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { CajaLocal } from '@/types/database';
@@ -32,6 +33,7 @@ const DENOMINACIONES = [
 
 export default function CajaModal({ isOpen, onClose }: Props) {
     const { negocioId, sucursalId, showToast, negocioNombre, negocioWhatsapp, negocioRnc, negocioDireccion, negocioTelefono } = useConfigStore();
+    const { conCandado } = useCandado();
     const [denominaciones, setDenominaciones] = useState<Record<string, number>>({});
     const [notas, setNotas] = useState('');
     const [loading, setLoading] = useState(false);
@@ -563,7 +565,7 @@ export default function CajaModal({ isOpen, onClose }: Props) {
                     )}
 
                     <button
-                        onClick={esCierre ? cerrarCaja : abrirCaja}
+                        onClick={conCandado(esCierre ? cerrarCaja : abrirCaja)}
                         disabled={loading}
                         className="w-full py-4 bg-gold-gradient text-navy font-extrabold rounded-xl hover:brightness-110 transition-all disabled:opacity-30 text-lg"
                     >
