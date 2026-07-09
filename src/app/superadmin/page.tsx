@@ -74,7 +74,7 @@ interface DetalleNegocio {
     empleados: number;
     ultimaVenta: number | null;
     totalFacturado: number | null;
-    pagos: { dias: number | null; nuevo_acceso_hasta: number | null; nota: string | null; creado_en: string }[];
+    pagos: { dias: number | null; nuevo_acceso_hasta: number | null; nota: string | null; creado_en: string; monto?: number | null; metodo?: string | null; plan?: string | null }[];
 }
 
 const SESSION_KEY = 'vrd_sa_secret';
@@ -206,6 +206,19 @@ function Panel({ secret, onLogout }: { secret: string; onLogout: () => void }) {
     const [precio, setPrecio] = useState(0);
     const [pagosMes, setPagosMes] = useState(0);
     const [pinNuevo, setPinNuevo] = useState('');
+    // Registro de pago estructurado (monto + método + plan)
+    const [pagando, setPagando] = useState<Negocio | null>(null);
+    const [pagoPeriodo, setPagoPeriodo] = useState<'mensual' | 'anual'>('mensual');
+    const [pagoMetodo, setPagoMetodo] = useState<'transferencia' | 'efectivo' | 'otro'>('transferencia');
+    const [pagoMonto, setPagoMonto] = useState('');
+    const [facturacion, setFacturacion] = useState<{ mesActual: number; pagosActual: number; mesPasado: number } | null>(null);
+
+    useEffect(() => {
+        fetch('/api/superadmin/facturacion', { headers: { 'x-superadmin-secret': secret } })
+            .then(r => r.ok ? r.json() : null)
+            .then(d => { if (d) setFacturacion(d); })
+            .catch(() => { });
+    }, [secret, negocios]);
 
     useEffect(() => { setPrecio(Number(localStorage.getItem(PRECIO_KEY)) || 0); }, []);
     const guardarPrecio = (v: number) => { setPrecio(v); localStorage.setItem(PRECIO_KEY, String(v)); };
@@ -250,7 +263,36 @@ function Panel({ secret, onLogout }: { secret: string; onLogout: () => void }) {
         const base = vence && vence > Date.now() ? vence : Date.now();
         accion(n.id, { acceso_hasta: base + dias * DIA, dias, nota });
     };
-    const registrarPago = (n: Negocio) => extender(n, 30, 'Pago +30d');
+    // Precios oficiales (RD$). El monto es editable en el modal por si hay acuerdos especiales.
+    const PRECIOS = { basico: { mensual: 900, anual: 9000 }, pro: { mensual: 1200, anual: 12000 } } as const;
+
+    // Abre el modal de pago con el monto sugerido según plan y período
+    const abrirPago = (n: Negocio, periodo: 'mensual' | 'anual' = 'mensual') => {
+        const plan = n.plan_tier === 'pro' ? 'pro' : 'basico';
+        setPagando(n);
+        setPagoPeriodo(periodo);
+        setPagoMetodo('transferencia');
+        setPagoMonto(String(PRECIOS[plan][periodo]));
+    };
+
+    const confirmarPago = () => {
+        if (!pagando) return;
+        const n = pagando;
+        const plan = n.plan_tier === 'pro' ? 'pro' : 'basico';
+        const dias = pagoPeriodo === 'anual' ? 365 : 30;
+        const monto = parseFloat(pagoMonto) || 0;
+        const vence = venceDe(n);
+        const base = vence && vence > Date.now() ? vence : Date.now();
+        accion(n.id, {
+            acceso_hasta: base + dias * DIA,
+            dias,
+            monto,
+            metodo: pagoMetodo,
+            plan,
+            nota: `Pago ${plan} ${pagoPeriodo} · RD$${monto.toLocaleString()} · ${pagoMetodo}`,
+        });
+        setPagando(null);
+    };
 
     const cortarAcceso = (n: Negocio) => accion(n.id, { acceso_hasta: Date.now(), nota: 'Corte de acceso' });
 
@@ -403,9 +445,15 @@ function Panel({ secret, onLogout }: { secret: string; onLogout: () => void }) {
                             <p className="text-[10px] text-vr-gray">{stats.vigentes} vigentes × precio</p>
                         </div>
                         <div>
-                            <p className="text-[10px] text-vr-gray uppercase tracking-wider">Cobrado este mes</p>
-                            <p className="text-xl font-black font-mono text-gold">{fmtDOP(pagosMes * precio)}</p>
-                            <p className="text-[10px] text-vr-gray">{pagosMes} pago{pagosMes !== 1 ? 's' : ''} registrado{pagosMes !== 1 ? 's' : ''}</p>
+                            <p className="text-[10px] text-vr-gray uppercase tracking-wider">Facturado este mes</p>
+                            <p className="text-xl font-black font-mono text-gold">
+                                {facturacion ? fmtDOP(facturacion.mesActual) : fmtDOP(pagosMes * precio)}
+                            </p>
+                            <p className="text-[10px] text-vr-gray">
+                                {facturacion
+                                    ? `${facturacion.pagosActual} pago${facturacion.pagosActual !== 1 ? 's' : ''} · mes pasado ${fmtDOP(facturacion.mesPasado)}`
+                                    : `${pagosMes} pago${pagosMes !== 1 ? 's' : ''} registrado${pagosMes !== 1 ? 's' : ''}`}
+                            </p>
                         </div>
                     </div>
                 </div>
@@ -522,16 +570,16 @@ function Panel({ secret, onLogout }: { secret: string; onLogout: () => void }) {
                                                 {/* Acciones */}
                                                 <td className="px-4 py-3">
                                                     <div className="flex items-center justify-center gap-1.5 flex-wrap">
-                                                        {/* Registrar pago = +30 días (acción principal) */}
+                                                        {/* Registrar pago (monto + método + plan) — acción principal */}
                                                         <button
-                                                            onClick={() => { setConfirmandoCorte(null); registrarPago(n); }}
+                                                            onClick={() => { setConfirmandoCorte(null); abrirPago(n); }}
                                                             disabled={cargando}
-                                                            title="Registrar pago: extiende el acceso 30 días"
+                                                            title="Registrar pago: monto, método y extensión del acceso"
                                                             className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold bg-vr-green/10 text-vr-green border border-vr-green/20 hover:bg-vr-green/20 transition-all disabled:opacity-40"
                                                         >
                                                             <Check className="w-3 h-3" />
-                                                            <span className="hidden sm:inline">Pago +30d</span>
-                                                            <span className="sm:hidden">+30</span>
+                                                            <span className="hidden sm:inline">💵 Pago</span>
+                                                            <span className="sm:hidden">💵</span>
                                                         </button>
 
                                                         {/* Extensión corta (gracia / cortesía) */}
@@ -671,9 +719,9 @@ function Panel({ secret, onLogout }: { secret: string; onLogout: () => void }) {
                                 <div>
                                     <p className="text-[10px] font-bold text-vr-gray uppercase tracking-wider mb-2">Cobro</p>
                                     <div className="flex gap-2 flex-wrap">
-                                        <button onClick={() => registrarPago(n)} disabled={accionando === n.id}
+                                        <button onClick={() => abrirPago(n)} disabled={accionando === n.id}
                                             className="flex-1 py-2.5 bg-vr-green/15 text-vr-green border border-vr-green/20 rounded-xl text-sm font-bold hover:bg-vr-green/25 transition-all disabled:opacity-40">
-                                            💵 Registrar pago (+30d)
+                                            💵 Registrar pago
                                         </button>
                                         <button onClick={() => extender(n, 7, '+7d cortesía')} disabled={accionando === n.id}
                                             className="px-4 py-2.5 bg-gold/10 text-gold border border-gold/20 rounded-xl text-sm font-bold hover:bg-gold/20 transition-all disabled:opacity-40">
@@ -733,9 +781,12 @@ function Panel({ secret, onLogout }: { secret: string; onLogout: () => void }) {
                                     ) : (
                                         <div className="space-y-1.5">
                                             {d.pagos.map((p, i) => (
-                                                <div key={i} className="flex items-center justify-between text-xs border-b border-navy-3/40 pb-1.5">
-                                                    <span className="text-white">{p.nota || 'Cambio de acceso'}</span>
-                                                    <span className="text-vr-gray">{new Date(p.creado_en).toLocaleDateString('es-DO', { day: '2-digit', month: 'short' })}</span>
+                                                <div key={i} className="flex items-center justify-between gap-2 text-xs border-b border-navy-3/40 pb-1.5">
+                                                    <span className="text-white truncate">{p.nota || 'Cambio de acceso'}</span>
+                                                    <span className="flex items-center gap-2 shrink-0">
+                                                        {p.monto != null && p.monto > 0 && <span className="font-mono font-bold text-vr-green">{fmtDOP(p.monto)}</span>}
+                                                        <span className="text-vr-gray">{new Date(p.creado_en).toLocaleDateString('es-DO', { day: '2-digit', month: 'short' })}</span>
+                                                    </span>
                                                 </div>
                                             ))}
                                         </div>
@@ -746,6 +797,66 @@ function Panel({ secret, onLogout }: { secret: string; onLogout: () => void }) {
                     </div>
                 );
             })()}
+
+            {/* MODAL: registrar pago (monto + método + período) */}
+            {pagando && (
+                <div className="fixed inset-0 bg-black/70 backdrop-blur-md z-[60] flex items-end sm:items-center justify-center sm:p-4" onClick={() => setPagando(null)}>
+                    <div className="bg-navy-2 w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl border border-navy-3 p-5 sm:p-6 animate-scale-in" onClick={e => e.stopPropagation()}>
+                        <h3 className="font-display font-black text-lg text-white mb-1">💵 Registrar pago</h3>
+                        <p className="text-sm text-vr-gray mb-4">
+                            {pagando.nombre} · plan <span className="font-bold text-gold">{pagando.plan_tier === 'pro' ? 'Pro' : 'Básico'}</span>
+                        </p>
+
+                        <div className="space-y-4">
+                            <div>
+                                <p className="text-xs font-bold text-vr-gray uppercase tracking-wider mb-1.5">Período</p>
+                                <div className="grid grid-cols-2 gap-2">
+                                    {(['mensual', 'anual'] as const).map(per => {
+                                        const plan = pagando.plan_tier === 'pro' ? 'pro' : 'basico';
+                                        return (
+                                            <button key={per}
+                                                onClick={() => { setPagoPeriodo(per); setPagoMonto(String(PRECIOS[plan][per])); }}
+                                                className={`py-2.5 rounded-xl text-sm font-bold border transition-all ${pagoPeriodo === per ? 'bg-gold/15 text-gold border-gold/40' : 'bg-navy border-navy-3 text-vr-gray hover:text-white'}`}>
+                                                {per === 'mensual' ? `Mensual (+30d) · RD$${PRECIOS[plan].mensual.toLocaleString()}` : `Anual (+365d) · RD$${PRECIOS[plan].anual.toLocaleString()}`}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+
+                            <div>
+                                <p className="text-xs font-bold text-vr-gray uppercase tracking-wider mb-1.5">Monto cobrado (RD$)</p>
+                                <input
+                                    type="number" min="0" value={pagoMonto}
+                                    onChange={e => setPagoMonto(e.target.value)}
+                                    className="w-full bg-navy border border-navy-3 rounded-xl px-3 py-2.5 text-white font-mono outline-none focus:border-gold"
+                                />
+                                <p className="text-[10px] text-vr-gray mt-1">Editable por si hay acuerdo especial (promo, descuento).</p>
+                            </div>
+
+                            <div>
+                                <p className="text-xs font-bold text-vr-gray uppercase tracking-wider mb-1.5">Método</p>
+                                <div className="grid grid-cols-3 gap-2">
+                                    {(['transferencia', 'efectivo', 'otro'] as const).map(m => (
+                                        <button key={m} onClick={() => setPagoMetodo(m)}
+                                            className={`py-2 rounded-xl text-xs font-bold border capitalize transition-all ${pagoMetodo === m ? 'bg-vr-green/15 text-vr-green border-vr-green/40' : 'bg-navy border-navy-3 text-vr-gray hover:text-white'}`}>
+                                            {m}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="flex gap-3 mt-6">
+                            <button onClick={() => setPagando(null)} className="flex-1 py-3 font-bold text-vr-gray hover:text-white border border-navy-3 rounded-xl transition-colors">Cancelar</button>
+                            <button onClick={confirmarPago} disabled={!parseFloat(pagoMonto)}
+                                className="flex-1 py-3 bg-vr-green text-white font-extrabold rounded-xl hover:brightness-110 transition-all disabled:opacity-40">
+                                Confirmar pago
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

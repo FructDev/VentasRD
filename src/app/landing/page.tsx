@@ -93,7 +93,7 @@ const FAQS = [
     },
     {
         q: '¿Cuánto cuesta después del período de prueba?',
-        a: 'Nos escribes por WhatsApp cuando termines la prueba y acordamos un precio justo para tu negocio. Sin sorpresas, sin cobros automáticos.',
+        a: 'Plan Básico: RD$900/mes (o RD$9,000/año — 2 meses gratis). Plan Pro para tiendas de celulares: RD$1,200/mes (o RD$12,000/año). Activas y renuevas por WhatsApp — sin cobros automáticos ni cargos ocultos.',
     },
 ];
 
@@ -417,6 +417,65 @@ export default function LandingPage() {
                             </div>
                         </div>
                     </div>
+                </div>
+            </section>
+
+            {/* ─── PLANES Y PRECIOS ─── */}
+            <section className="bg-navy-2 border-t border-white/5">
+                <div className="max-w-5xl mx-auto px-6 py-20 md:py-28">
+                    <div className="text-center mb-12">
+                        <h2 className="font-display font-extrabold text-2xl md:text-3xl lg:text-4xl text-white leading-[1.12] tracking-[-0.015em] mb-3">
+                            Precios claros, sin sorpresas.
+                        </h2>
+                        <p className="text-vr-gray text-base md:text-lg">
+                            Empieza con la prueba gratis. Cuando estés listo, activa tu plan.
+                        </p>
+                    </div>
+
+                    <div className="grid md:grid-cols-2 gap-6 max-w-3xl mx-auto">
+                        {/* Plan Básico */}
+                        <div className="bg-navy border border-white/8 rounded-2xl p-7 flex flex-col">
+                            <p className="text-xs font-black text-gold uppercase tracking-widest mb-2">Plan Básico</p>
+                            <div className="mb-1">
+                                <span className="font-display font-extrabold text-4xl text-white">RD$900</span>
+                                <span className="text-vr-gray text-sm"> /mes</span>
+                            </div>
+                            <p className="text-xs text-vr-gray mb-5">o RD$9,000/año — paga 10 meses, te regalamos 2</p>
+                            <ul className="space-y-2.5 text-sm text-vr-gray flex-1 mb-6">
+                                {['Ventas, caja e inventario completos', 'Fiados con estado de cuenta por WhatsApp', 'Funciona sin internet', 'Catálogo público por link', 'Cajeros y vendedores con permisos', 'Soporte por WhatsApp'].map(f => (
+                                    <li key={f} className="flex items-start gap-2"><Check className="w-4 h-4 text-vr-green shrink-0 mt-0.5" /><span>{f}</span></li>
+                                ))}
+                            </ul>
+                            <Link href="/registro" className="block text-center py-3 rounded-xl border border-white/10 hover:border-gold/40 text-white font-bold text-sm transition-colors">
+                                Empezar con la prueba gratis
+                            </Link>
+                        </div>
+
+                        {/* Plan Pro */}
+                        <div className="bg-navy border-2 border-gold/40 rounded-2xl p-7 flex flex-col relative">
+                            <span className="absolute -top-3 left-1/2 -translate-x-1/2 bg-gold text-navy text-[11px] font-black px-3 py-1 rounded-full uppercase tracking-wider">Tiendas de celulares</span>
+                            <p className="text-xs font-black text-gold uppercase tracking-widest mb-2">Plan Pro</p>
+                            <div className="mb-1">
+                                <span className="font-display font-extrabold text-4xl text-white">RD$1,200</span>
+                                <span className="text-vr-gray text-sm"> /mes</span>
+                            </div>
+                            <p className="text-xs text-vr-gray mb-5">o RD$12,000/año — paga 10 meses, te regalamos 2</p>
+                            <ul className="space-y-2.5 text-sm text-vr-gray flex-1 mb-6">
+                                {['Todo lo del plan Básico, más:', 'Reparaciones con orden, firma y estados', 'Aviso al cliente por WhatsApp', 'Garantías por IMEI — historia por equipo', 'Apartados (plan separe) con abonos', 'Prioridad en soporte'].map((f, i) => (
+                                    <li key={f} className={`flex items-start gap-2 ${i === 0 ? 'text-white font-semibold' : ''}`}>
+                                        {i > 0 && <Check className="w-4 h-4 text-vr-green shrink-0 mt-0.5" />}<span>{f}</span>
+                                    </li>
+                                ))}
+                            </ul>
+                            <Link href="/registro" className="block text-center py-3 rounded-xl bg-gold-gradient text-navy font-extrabold text-sm hover:brightness-105 transition-all">
+                                Empezar con la prueba gratis
+                            </Link>
+                        </div>
+                    </div>
+
+                    <p className="text-center text-xs text-vr-gray mt-8">
+                        Sin tarjeta de crédito · Sin contratos · Sin cobros automáticos — activas y renuevas por WhatsApp.
+                    </p>
                 </div>
             </section>
 

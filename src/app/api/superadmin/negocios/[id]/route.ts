@@ -39,7 +39,8 @@ export async function PATCH(
     const { error } = await admin.from('negocios').update(updateData).eq('id', id);
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-    // Bitácora de pagos (best-effort: no rompe la acción si la tabla no existe)
+    // Bitácora de pagos (best-effort: no rompe la acción si la tabla no existe).
+    // monto/metodo/plan convierten la bitácora en libro de facturación.
     if ('acceso_hasta' in body) {
         try {
             await admin.from('pagos_log').insert({
@@ -47,6 +48,9 @@ export async function PATCH(
                 dias: typeof body.dias === 'number' ? body.dias : null,
                 nuevo_acceso_hasta: body.acceso_hasta ?? null,
                 nota: typeof body.nota === 'string' ? body.nota : null,
+                monto: typeof body.monto === 'number' && body.monto > 0 ? body.monto : null,
+                metodo: typeof body.metodo === 'string' ? body.metodo : null,
+                plan: typeof body.plan === 'string' ? body.plan : null,
             });
         } catch { /* tabla pagos_log no creada aún */ }
     }

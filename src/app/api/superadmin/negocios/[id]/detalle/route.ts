@@ -48,7 +48,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     let pagos: { dias: number | null; nuevo_acceso_hasta: number | null; nota: string | null; creado_en: string }[] = [];
     try {
         const { data } = await admin.from('pagos_log')
-            .select('dias, nuevo_acceso_hasta, nota, creado_en')
+            .select('dias, nuevo_acceso_hasta, nota, creado_en, monto, metodo, plan')
             .eq('negocio_id', id).order('creado_en', { ascending: false }).limit(12);
         pagos = data ?? [];
     } catch { /* tabla no creada */ }

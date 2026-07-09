@@ -48,6 +48,7 @@ const SECCIONES: Seccion[] = [
         titulo: 'Cuenta y pagos', emoji: '🔑',
         faqs: [
             { q: 'Olvidé mi contraseña', a: <>En la pantalla de inicio de sesión toca <b>¿Olvidaste tu contraseña?</b> y sigue el enlace que llega a tu correo. Si no llega, escríbenos por WhatsApp.</> },
+            { q: '¿Cuánto cuesta VentaRD?', a: <>Plan <b>Básico: RD$900/mes</b> o RD$9,000/año (2 meses gratis). Plan <b>Pro</b> (reparaciones, garantías por IMEI y apartados): <b>RD$1,200/mes</b> o RD$12,000/año. La prueba inicial es gratis y sin tarjeta.</> },
             { q: '¿Cómo renuevo mi acceso?', a: <>Escríbenos por WhatsApp al <b>1 (829) 451-5303</b> — la reactivación toma menos de 5 minutos. Tus datos nunca se borran por vencimiento.</> },
             { q: '¿Cómo gano días gratis?', a: <>Ajustes → <b>🎁 Invita y Gana</b>: comparte tu link con otro negocio. Cuando complete su registro, ambos ganan <b>15 días</b>. Sin límite.</> },
         ],
