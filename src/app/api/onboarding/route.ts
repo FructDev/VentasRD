@@ -57,6 +57,21 @@ export async function POST(req: NextRequest) {
             .limit(1)
             .maybeSingle();
 
+        // Guardia: un EMPLEADO no tiene negocio propio por dueño_id — sin este
+        // chequeo, el paso de creación le fabricaría un negocio nuevo (huérfano).
+        if (!negExistente?.id) {
+            const { data: esEmpleado } = await supabaseAdmin
+                .from('usuarios_negocio')
+                .select('id')
+                .eq('user_id', user.id)
+                .eq('activo', true)
+                .limit(1)
+                .maybeSingle();
+            if (esEmpleado) {
+                return NextResponse.json({ error: 'Esta cuenta es de un empleado: el negocio lo configura el dueño.' }, { status: 403 });
+            }
+        }
+
         if (negExistente?.id) {
             negocioId = negExistente.id;
             const { error: updErr } = await supabaseAdmin
