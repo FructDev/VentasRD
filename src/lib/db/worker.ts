@@ -676,9 +676,13 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
             }
 
             // ── 2.F  Transacciones fiado ──────────────────────────────────────
+            // FILA POR FILA (no en lote): con upsert en lote, UNA fila rechazada
+            // por la nube (FK rota, cliente borrado, venta sin subir) hacía fallar
+            // el lote COMPLETO y ningún cargo posterior volvía a sincronizar —
+            // las deudas nuevas quedaban invisibles para el resto de dispositivos.
             const transPendientes = await db.transacciones_fiado.where('estado_sincronizacion').equals(0).toArray();
-            if (transPendientes.length > 0) {
-                const transPayload = transPendientes.map(t => ({
+            for (const t of transPendientes) {
+                const payload = {
                     id: t.id,
                     negocio_id: t.negocio_id,
                     sucursal_id: t.sucursal_id || sucursalId || null,
@@ -689,14 +693,14 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                     concepto: t.concepto,
                     fecha_creacion: new Date(t.fecha_creacion).toISOString(),
                     fecha_actualizacion: t.fecha_actualizacion || Date.now(),
-                }));
+                };
                 const { error: transError } = await withTimeout(() =>
-                    supabase.from('transacciones_fiado').upsert(transPayload)
+                    supabase.from('transacciones_fiado').upsert(payload)
                 );
                 if (transError) {
-                    console.error('[sync] transacciones_fiado error:', transError.code, transError.message, transError.details, transError.hint, '\npayload[0]:', transPayload[0]);
+                    console.error('[sync] transaccion_fiado error:', transError.code, transError.message, transError.details, transError.hint, '\npayload:', payload);
                 } else {
-                    await db.transacciones_fiado.bulkPut(transPendientes.map(t => ({ ...t, estado_sincronizacion: 1 })));
+                    await db.transacciones_fiado.update(t.id, { estado_sincronizacion: 1 });
                 }
             }
 
