@@ -3,7 +3,6 @@
 
 import { useState } from 'react';
 import { supabase } from '@/lib/supabase/client';
-import { useConfigStore } from '@/store/useConfigStore';
 import { ShoppingCart, Check } from 'lucide-react';
 import { db } from '@/lib/db/dexie';
 
@@ -41,11 +40,12 @@ export default function OnboardingPage() {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
-    const negocioId = useConfigStore((state) => state.negocioId);
-
+    // NOTA: la API resuelve el negocio por el token del usuario (y lo crea si
+    // falta) — NO dependemos del negocioId del store. Antes el botón se
+    // deshabilitaba esperándolo y, si el AuthProvider tardaba o fallaba, el
+    // usuario quedaba frente a un botón muerto sin explicación.
     const handleCompletarOnboarding = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!negocioId) return;
         setLoading(true);
         setError(null);
 
@@ -216,9 +216,9 @@ export default function OnboardingPage() {
                         </div>
 
                         <div>
-                            <label className="block text-sm font-bold text-vr-gray mb-1.5">Dirección</label>
+                            <label className="block text-sm font-bold text-vr-gray mb-1.5">Dirección <span className="font-normal text-vr-gray/60">(opcional)</span></label>
                             <input
-                                type="text" required placeholder="Sector, Ciudad"
+                                type="text" placeholder="Sector, Ciudad"
                                 className="w-full px-4 py-3 bg-navy-2 border border-navy-3 rounded-xl text-white placeholder-vr-gray/50 focus:border-gold focus:ring-1 focus:ring-gold/30 outline-none transition-all"
                                 value={direccion} onChange={(e) => setDireccion(e.target.value)}
                             />
@@ -243,7 +243,7 @@ export default function OnboardingPage() {
                         )}
 
                         <button
-                            type="submit" disabled={loading || !negocioId}
+                            type="submit" disabled={loading}
                             className="w-full bg-gold-gradient text-navy py-4 rounded-xl font-extrabold text-base hover:brightness-110 transition-all disabled:opacity-40 mt-2"
                         >
                             {loading ? 'Configurando sistema...' : 'Comenzar a vender →'}

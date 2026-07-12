@@ -23,13 +23,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // TOKEN_REFRESHED) disparan en ráfaga. Dos ejecuciones simultáneas de
         // procesarUsuario llegaban a la auto-sanación a la vez y creaban negocios
         // DUPLICADOS para el mismo dueño (raíz de los logins erráticos).
+        // IMPORTANTE: el evento que llega durante una ejecución NO se descarta —
+        // se guarda y se procesa al terminar (descartar el SIGNED_IN del registro
+        // dejaba al usuario sin negocioId y el onboarding con el botón muerto).
         let procesando = false;
+        let pendiente: { user: SupabaseUser | null | undefined } | null = null;
 
         const procesarUsuario = async (user: SupabaseUser | null | undefined) => {
-            if (procesando) return;
+            if (procesando) { pendiente = { user }; return; }
             procesando = true;
             try {
                 await procesarUsuarioInterno(user);
+                // Procesar el último evento que llegó mientras trabajábamos
+                while (pendiente && montado) {
+                    const siguiente = pendiente;
+                    pendiente = null;
+                    await procesarUsuarioInterno(siguiente.user);
+                }
             } finally {
                 procesando = false;
             }

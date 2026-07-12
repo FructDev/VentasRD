@@ -51,6 +51,17 @@ export default function SelectBranchPage() {
         fetchSucursales();
     }, [negocioId, isOnline]);
 
+    // Una sola sucursal = no hay nada que elegir: entrar directo.
+    // (Elimina una pantalla completa del flujo de estreno para el 90% de
+    // los negocios, que tienen un solo local.)
+    useEffect(() => {
+        if (!isLoading && sucursales.length === 1) {
+            setSucursal(sucursales[0].id);
+            router.push('/');
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [isLoading, sucursales]);
+
     const handleSelect = (sucursalId: string) => {
         setSucursal(sucursalId);
         router.push('/');

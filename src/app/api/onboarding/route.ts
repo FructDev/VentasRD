@@ -85,13 +85,30 @@ export async function POST(req: NextRequest) {
             negocioId = nuevo.id;
         }
 
-        // 2. Crear la primera sucursal (service role → sin bloqueo de RLS)
+        // 2. Primera sucursal (service role → sin bloqueo de RLS).
+        // IDEMPOTENTE: si el negocio ya tiene una (reintento tras un timeout,
+        // o re-entrada al onboarding), se reutiliza — antes cada reintento
+        // creaba un "Local Principal" duplicado.
         const sucursalNombre = (nombre_sucursal || '').trim() || 'Local Principal';
-        const sucursalId = uuidv4();
-        const { error: sucErr } = await supabaseAdmin
+        let sucursalId: string;
+        let sucursalFecha = ahora;
+        const { data: sucExistente } = await supabaseAdmin
             .from('sucursales')
-            .insert({ id: sucursalId, negocio_id: negocioId, nombre: sucursalNombre, direccion, fecha_creacion: ahora });
-        if (sucErr) throw sucErr;
+            .select('id, nombre, fecha_creacion')
+            .eq('negocio_id', negocioId)
+            .limit(1)
+            .maybeSingle();
+
+        if (sucExistente) {
+            sucursalId = sucExistente.id;
+            sucursalFecha = sucExistente.fecha_creacion ?? ahora;
+        } else {
+            sucursalId = uuidv4();
+            const { error: sucErr } = await supabaseAdmin
+                .from('sucursales')
+                .insert({ id: sucursalId, negocio_id: negocioId, nombre: sucursalNombre, direccion, fecha_creacion: ahora });
+            if (sucErr) throw sucErr;
+        }
 
         // 3. Programa de referidos ----------------------------------------------
         // Estado actual del negocio recién finalizado.
@@ -137,7 +154,7 @@ export async function POST(req: NextRequest) {
             }
         }
 
-        return NextResponse.json({ ok: true, negocioId, sucursalId, sucursalNombre, fecha_creacion: ahora, referidoAplicado, diasReferido: DIAS_REFERIDO });
+        return NextResponse.json({ ok: true, negocioId, sucursalId, sucursalNombre: sucExistente?.nombre || sucursalNombre, fecha_creacion: sucursalFecha, referidoAplicado, diasReferido: DIAS_REFERIDO });
     } catch (e: unknown) {
         const err = e as { message?: string; code?: string };
         console.error('[onboarding api]', err?.code, err?.message);
