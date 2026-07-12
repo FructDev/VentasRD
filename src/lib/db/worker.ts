@@ -574,38 +574,38 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                 }
             }
 
-            // Upsert productos nuevos/editados
-            if (prodAUpsert.length > 0) {
+            // Upsert productos nuevos/editados — FILA POR FILA: en lote, un solo
+            // producto rechazado (constraint, dato corrupto) bloqueaba TODOS los
+            // cambios de catálogo de este dispositivo para siempre.
+            for (const p of prodAUpsert) {
                 const { error: prodError } = await withTimeout(() =>
-                    supabase.from('productos').upsert(
-                        prodAUpsert.map(p => ({
-                            id: p.id,
-                            negocio_id: p.negocio_id,
-                            nombre: p.nombre,
-                            codigo_barras: p.codigo_barras,
-                            precio_venta: p.precio_venta,
-                            ...(p.precio_2    != null && { precio_2: p.precio_2 }),
-                            ...(p.precio_3    != null && { precio_3: p.precio_3 }),
-                            ...(p.ubicacion          && { ubicacion: p.ubicacion }),
-                            imagen_url: p.imagen_url ?? null, // null explícito: permite quitar la foto
-                            ...(p.serializable       && { serializable: p.serializable }),
-                            costo: p.costo,
-                            tasa_itbis: p.tasa_itbis,
-                            tipo: p.tipo,
-                            // Propagar el soft-delete: sin esto, borrar un producto
-                            // solo lo quitaba del dispositivo que lo borró.
-                            eliminado: p.eliminado ?? false,
-                            // NOTA: stock_actual NO se sube aquí — viaja como movimientos
-                            // atómicos (sección 2.C.2) para no pisar a otras cajas.
-                            stock_minimo: p.stock_minimo,
-                            fecha_actualizacion: p.fecha_actualizacion || Date.now(),
-                        }))
-                    )
+                    supabase.from('productos').upsert({
+                        id: p.id,
+                        negocio_id: p.negocio_id,
+                        nombre: p.nombre,
+                        codigo_barras: p.codigo_barras,
+                        precio_venta: p.precio_venta,
+                        ...(p.precio_2    != null && { precio_2: p.precio_2 }),
+                        ...(p.precio_3    != null && { precio_3: p.precio_3 }),
+                        ...(p.ubicacion          && { ubicacion: p.ubicacion }),
+                        imagen_url: p.imagen_url ?? null, // null explícito: permite quitar la foto
+                        ...(p.serializable       && { serializable: p.serializable }),
+                        costo: p.costo,
+                        tasa_itbis: p.tasa_itbis,
+                        tipo: p.tipo,
+                        // Propagar el soft-delete: sin esto, borrar un producto
+                        // solo lo quitaba del dispositivo que lo borró.
+                        eliminado: p.eliminado ?? false,
+                        // NOTA: stock_actual NO se sube aquí — viaja como movimientos
+                        // atómicos (sección 2.C.2) para no pisar a otras cajas.
+                        stock_minimo: p.stock_minimo,
+                        fecha_actualizacion: p.fecha_actualizacion || Date.now(),
+                    })
                 );
                 if (prodError) {
-                    console.error('[sync] productos error:', prodError.code, prodError.message, prodError.details);
+                    console.error('[sync] producto error:', prodError.code, prodError.message, prodError.details, 'id:', p.id, p.nombre);
                 } else {
-                    await db.productos.bulkPut(prodAUpsert.map(p => ({ ...p, estado_sincronizacion: 1 })));
+                    await db.productos.update(p.id, { estado_sincronizacion: 1 });
                 }
             }
 
@@ -630,49 +630,66 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                     })
                 );
                 if (movErr) {
+                    // Errores PERMANENTES (FK rota, dato inválido): reintentar jamás
+                    // funcionará y el break bloquearía TODOS los movimientos futuros
+                    // → descartar esta fila (queda en el log) y seguir con el resto.
+                    const PERMANENTES = ['23503', '23502', '23514', '22P02'];
+                    if (PERMANENTES.includes(movErr.code ?? '')) {
+                        console.error('[sync] movimiento DESCARTADO (error permanente):', movErr.code, movErr.message, 'producto:', mov.producto_id, 'delta:', mov.delta);
+                        await db.movimientos_stock.update(mov.id, { estado_sincronizacion: 1 });
+                        continue;
+                    }
+                    // Error transitorio (red, timeout): mantener el orden y reintentar luego
                     console.error('[sync] movimiento_stock error:', movErr.code, movErr.message, movErr.details);
-                    break; // mantener el orden: no aplicar movimientos posteriores si uno falla
+                    break;
                 }
                 await db.movimientos_stock.update(mov.id, { estado_sincronizacion: 1 });
             }
 
             // ── 2.D  Composiciones ────────────────────────────────────────────
             const compPendientes = await db.composiciones.where('estado_sincronizacion').equals(0).toArray();
-            if (compPendientes.length > 0) {
+            // FILA POR FILA: un combo con referencia rota no bloquea a los demás.
+            for (const c of compPendientes) {
                 const { error: compError } = await withTimeout(() =>
-                    supabase.from('composiciones').upsert(
-                        compPendientes.map(c => ({
-                            id: c.id,
-                            producto_padre_id: c.producto_padre_id,
-                            insumo_id: c.insumo_id,
-                            cantidad_necesaria: c.cantidad_necesaria,
-                            fecha_actualizacion: c.fecha_actualizacion || Date.now(),
-                        }))
-                    )
+                    supabase.from('composiciones').upsert({
+                        id: c.id,
+                        producto_padre_id: c.producto_padre_id,
+                        insumo_id: c.insumo_id,
+                        cantidad_necesaria: c.cantidad_necesaria,
+                        fecha_actualizacion: c.fecha_actualizacion || Date.now(),
+                    })
                 );
-                if (!compError) await db.composiciones.bulkPut(compPendientes.map(c => ({ ...c, estado_sincronizacion: 1 })));
+                if (compError) {
+                    console.error('[sync] composicion error:', compError.code, compError.message, 'id:', c.id);
+                } else {
+                    await db.composiciones.update(c.id, { estado_sincronizacion: 1 });
+                }
             }
 
             // ── 2.E  Clientes ─────────────────────────────────────────────────
+            // FILA POR FILA: un cliente rechazado bloqueaba a TODOS los clientes
+            // del dispositivo — y de rebote sus cargos de fiado (FK a clientes).
             const clientesPendientes = await db.clientes.where('estado_sincronizacion').equals(0).toArray();
-            if (clientesPendientes.length > 0) {
+            for (const c of clientesPendientes) {
                 const { error: cliError } = await withTimeout(() =>
-                    supabase.from('clientes').upsert(
-                        clientesPendientes.map(c => ({
-                            id: c.id,
-                            negocio_id: c.negocio_id,
-                            sucursal_id: sucursalId || null,
-                            nombre: c.nombre,
-                            telefono: c.telefono,
-                            limite_credito: c.limite_credito,
-                            tipo_precio: c.tipo_precio ?? 1,
-                            al_por_mayor: c.al_por_mayor ?? false,
-                            eliminado: c.eliminado ?? false,
-                            fecha_actualizacion: c.fecha_actualizacion || Date.now(),
-                        }))
-                    )
+                    supabase.from('clientes').upsert({
+                        id: c.id,
+                        negocio_id: c.negocio_id,
+                        sucursal_id: sucursalId || null,
+                        nombre: c.nombre,
+                        telefono: c.telefono,
+                        limite_credito: c.limite_credito,
+                        tipo_precio: c.tipo_precio ?? 1,
+                        al_por_mayor: c.al_por_mayor ?? false,
+                        eliminado: c.eliminado ?? false,
+                        fecha_actualizacion: c.fecha_actualizacion || Date.now(),
+                    })
                 );
-                if (!cliError) await db.clientes.bulkPut(clientesPendientes.map(c => ({ ...c, estado_sincronizacion: 1 })));
+                if (cliError) {
+                    console.error('[sync] cliente error:', cliError.code, cliError.message, 'id:', c.id, c.nombre);
+                } else {
+                    await db.clientes.update(c.id, { estado_sincronizacion: 1 });
+                }
             }
 
             // ── 2.F  Transacciones fiado ──────────────────────────────────────
@@ -748,27 +765,31 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
             }
 
             // ── 2.I  Seriales ─────────────────────────────────────────────────
+            // FILA POR FILA: un serial rechazado (duplicado, FK) no bloquea las
+            // garantías de los demás equipos.
             const serialesPendientes = await db.seriales.where('estado_sincronizacion').equals(0).toArray();
-            if (serialesPendientes.length > 0) {
+            for (const s of serialesPendientes) {
                 const { error: serErr } = await withTimeout(() =>
-                    supabase.from('seriales').upsert(
-                        serialesPendientes.map(s => ({
-                            id: s.id,
-                            negocio_id: s.negocio_id,
-                            producto_id: s.producto_id,
-                            numero_serial: s.numero_serial,
-                            estado: s.estado,
-                            venta_id: s.venta_id ?? null,
-                            fecha_venta: s.fecha_venta ?? null,
-                            garantia_dias: s.garantia_dias ?? null,
-                            garantia_hasta: s.garantia_hasta ?? null,
-                            cliente_nombre: s.cliente_nombre ?? null,
-                            precio_venta: s.precio_venta ?? null,
-                            fecha_actualizacion: s.fecha_actualizacion,
-                        }))
-                    )
+                    supabase.from('seriales').upsert({
+                        id: s.id,
+                        negocio_id: s.negocio_id,
+                        producto_id: s.producto_id,
+                        numero_serial: s.numero_serial,
+                        estado: s.estado,
+                        venta_id: s.venta_id ?? null,
+                        fecha_venta: s.fecha_venta ?? null,
+                        garantia_dias: s.garantia_dias ?? null,
+                        garantia_hasta: s.garantia_hasta ?? null,
+                        cliente_nombre: s.cliente_nombre ?? null,
+                        precio_venta: s.precio_venta ?? null,
+                        fecha_actualizacion: s.fecha_actualizacion,
+                    })
                 );
-                if (!serErr) await db.seriales.bulkPut(serialesPendientes.map(s => ({ ...s, estado_sincronizacion: 1 })));
+                if (serErr) {
+                    console.error('[sync] serial error:', serErr.code, serErr.message, 'id:', s.id, s.numero_serial);
+                } else {
+                    await db.seriales.update(s.id, { estado_sincronizacion: 1 });
+                }
             }
 
             // ── 2.I.2  Gastos ─────────────────────────────────────────────────
