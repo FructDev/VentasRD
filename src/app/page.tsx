@@ -130,7 +130,7 @@ export default function POSPage() {
       try {
         const { imprimirVentaDirecta } = await import('@/lib/print/tickets');
         await imprimirVentaDirecta({
-          items: items.map(i => ({ cantidad: i.cantidad, nombre: i.nombre, precio: i.precio_venta })),
+          items: items.map(i => ({ cantidad: i.cantidad, nombre: i.nombre, precio: i.precio_venta, ubicacion: i.ubicacion })),
           subtotal, itbis, descuento, total,
           metodoPago,
           montoRecibido: metodoPago === 'efectivo' ? parseFloat(montoRecibido || '0') : total,
@@ -145,6 +145,7 @@ export default function POSPage() {
           cajaCodigo: dispositivoId || undefined,
           ncf: ncfVenta ?? ultimoNcf,
           vendedor: nombreUsuario || undefined,
+          clienteNombre: ((clienteSeleccionadoId ? clientes.find(c => c.id === clienteSeleccionadoId) : null) ?? clienteActivo)?.nombre,
           mensajePie: negocioMensajeTicket || undefined,
           logoUrl: logoTicket,
         }, impresion);
@@ -763,6 +764,7 @@ export default function POSPage() {
             ncf={ultimoNcf}
             logoUrl={logoTicket}
             vendedor={nombreUsuario || undefined}
+            clienteNombre={((clienteSeleccionadoId ? clientes.find(c => c.id === clienteSeleccionadoId) : null) ?? clienteActivo)?.nombre}
           />
         </div>
 

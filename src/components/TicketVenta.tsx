@@ -23,12 +23,13 @@ interface TicketProps {
     logoUrl?: string;  // Data URL del logo del negocio
     vendedor?: string; // Nombre de quien atendió la venta
     cajaCodigo?: string; // Prefijo de la caja emisora (ej: "C7K")
+    clienteNombre?: string; // Cliente de la venta (clave para pedidos por delivery)
 }
 
 export const TicketVenta = forwardRef<HTMLDivElement, TicketProps>(({
     items, subtotal, itbis, descuento = 0, total, metodoPago, montoRecibido, devuelta,
     nombreNegocio = 'Mi Negocio', rnc, direccion = 'Ciudad, RD', telefono = '809-000-0000',
-    numeroTicket, mensajePie, ncf, logoUrl, vendedor, cajaCodigo
+    numeroTicket, mensajePie, ncf, logoUrl, vendedor, cajaCodigo, clienteNombre
 }, ref) => {
     const { impresion } = useConfigStore();
 
@@ -61,6 +62,7 @@ export const TicketVenta = forwardRef<HTMLDivElement, TicketProps>(({
                 <p className="text-xs mt-2">Fecha: {fechaActual}</p>
                 <p className="text-xs font-bold mt-1">Ticket #: {ticketNum}</p>
                 {vendedor && <p className="text-xs">Le atendió: {vendedor}</p>}
+                {clienteNombre && <p className="text-sm font-bold mt-1">Cliente: {clienteNombre}</p>}
             </div>
 
             {/* NCF */}
@@ -95,6 +97,7 @@ export const TicketVenta = forwardRef<HTMLDivElement, TicketProps>(({
                             <td className="py-1 pr-2 align-top break-words">
                                 {item.nombre}
                                 {item.serial_numero && <div className="text-[10px] text-gray-600">S/N: {item.serial_numero}</div>}
+                                {item.ubicacion && <div className="text-[10px] font-bold">Ubic: {item.ubicacion}</div>}
                                 {item.cantidad > 1 && <div className="text-[10px] text-gray-500">@ {item.precio_venta.toFixed(2)}</div>}
                             </td>
                             <td className="py-1 text-right align-top">{(item.precio_venta * item.cantidad).toFixed(2)}</td>

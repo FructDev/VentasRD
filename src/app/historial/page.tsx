@@ -86,6 +86,8 @@ export default function HistorialPage() {
     const [itemsReimpresion, setItemsReimpresion] = useState<CartItem[]>([]);
     const handleReimprimir = useReactToPrint({ contentRef: ticketReimpresionRef });
 
+    const clienteDeVenta = (v: VentaLocal | null) => v?.cliente_id ? clientes.find(c => c.id === v.cliente_id)?.nombre : undefined;
+
     const abrirReimpresion = async (venta: VentaLocal) => {
         const detallesVenta = detallesPorVenta.get(venta.id) || [];
         const prods = await db.productos.bulkGet(detallesVenta.map(d => d.producto_id));
@@ -108,6 +110,7 @@ export default function HistorialPage() {
             stock_minimo: prods[i]?.stock_minimo || 0,
             tasa_itbis: prods[i]?.tasa_itbis || 0,
             tipo: prods[i]?.tipo || 'simple',
+            ...(prods[i]?.ubicacion && { ubicacion: prods[i]!.ubicacion }),
             ...(serialesPorProducto.has(d.producto_id) && { serial_numero: serialesPorProducto.get(d.producto_id)!.join(', ') }),
         }));
         setItemsReimpresion(cartItems);
@@ -118,7 +121,7 @@ export default function HistorialPage() {
             try {
                 const { imprimirVentaDirecta } = await import('@/lib/print/tickets');
                 await imprimirVentaDirecta({
-                    items: cartItems.map(i => ({ cantidad: i.cantidad, nombre: i.nombre, precio: i.precio_venta })),
+                    items: cartItems.map(i => ({ cantidad: i.cantidad, nombre: i.nombre, precio: i.precio_venta, ubicacion: i.ubicacion })),
                     subtotal: cartItems.reduce((s, i) => s + i.precio_venta * i.cantidad, 0),
                     itbis: cartItems.reduce((s, i) => s + i.precio_venta * i.cantidad * (i.tasa_itbis || 0), 0),
                     descuento: 0,
@@ -137,6 +140,7 @@ export default function HistorialPage() {
                     ncf: venta.ncf,
                     vendedor: venta.vendedor_nombre,
                     mensajePie: negocioMensajeTicket || undefined,
+                    clienteNombre: clienteDeVenta(venta),
                     logoUrl: logoTicket,
                 }, impresion);
                 return;
@@ -431,6 +435,7 @@ export default function HistorialPage() {
                             mensajePie={negocioMensajeTicket || undefined}
                             ncf={ventaReimprimiendo.ncf}
                             logoUrl={logoTicket}
+                            clienteNombre={clienteDeVenta(ventaReimprimiendo)}
                             vendedor={ventaReimprimiendo.vendedor_nombre}
                         />
                     </div>

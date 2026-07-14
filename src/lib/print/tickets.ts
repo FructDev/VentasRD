@@ -5,7 +5,7 @@ import { enviarAImpresora } from './transport';
 import type { ImpresionConfig } from '@/store/useConfigStore';
 
 export interface DatosVentaTicket {
-    items: { cantidad: number; nombre: string; precio: number }[];
+    items: { cantidad: number; nombre: string; precio: number; ubicacion?: string }[];
     subtotal: number;
     itbis: number;
     descuento: number;
@@ -18,6 +18,7 @@ export interface DatosVentaTicket {
     cajaCodigo?: string;
     ncf?: string;
     vendedor?: string;
+    clienteNombre?: string; // Cliente de la venta (clave para delivery)
     mensajePie?: string;
     logoUrl?: string;
 }
@@ -55,6 +56,7 @@ function cabecera(b: EscPosBuilder, datos: DatosVentaTicket, logo: LogoBitmap | 
     const numStr = datos.numeroTicket != null ? String(datos.numeroTicket).padStart(5, '0') : '-----';
     b.bold(true).line(`Ticket #: ${datos.cajaCodigo ? `${datos.cajaCodigo}-${numStr}` : numStr}`).bold(false);
     if (datos.vendedor) b.line(`Le atendio: ${datos.vendedor}`);
+    if (datos.clienteNombre) b.bold(true).line(`Cliente: ${datos.clienteNombre}`).bold(false);
 
     if (datos.ncf) {
         b.divider(cols);
@@ -73,6 +75,7 @@ function cuerpoVenta(b: EscPosBuilder, datos: DatosVentaTicket, cols: number) {
     for (const item of datos.items) {
         const importe = fmt(item.precio * item.cantidad);
         b.lineLR(`${item.cantidad} ${item.nombre}`, importe, cols);
+        if (item.ubicacion) b.line(`   Ubic: ${item.ubicacion}`);
         if (item.cantidad > 1) b.line(`   @ ${fmt(item.precio)}`);
     }
 
