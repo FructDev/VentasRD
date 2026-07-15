@@ -61,6 +61,67 @@ function clampTs(ts: number): number {
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const isValidUUID = (s: string | null | undefined): boolean => !!s && UUID_RE.test(s);
 
+// ─── Realtime: stock entre cajas al instante ─────────────────────────────────
+// El sync por intervalo se pausa con la pestaña en segundo plano (perf), pero
+// la PC del taller vive minimizada: un repuesto vendido en la caja tardaba
+// minutos u horas en reflejarse allá — riesgo de usar una pieza YA VENDIDA.
+// El websocket de Supabase Realtime entrega el evento AL INSTANTE, incluso con
+// la pestaña oculta: al llegar un movimiento de otra caja, se refresca ese
+// producto puntualmente (2 lecturas de 1 fila, costo mínimo).
+let realtimeNegocio: string | null = null;
+
+function suscribirRealtimeStock(negocioId: string) {
+    if (realtimeNegocio === negocioId) return;
+    realtimeNegocio = negocioId;
+
+    supabase
+        .channel(`stock-${negocioId}`)
+        .on('postgres_changes', {
+            event: 'INSERT',
+            schema: 'public',
+            table: 'movimientos_stock',
+            filter: `negocio_id=eq.${negocioId}`,
+        }, async (payload) => {
+            try {
+                const m = payload.new as { id: string; producto_id: string };
+                if (!m?.producto_id) return;
+                // ¿Es un movimiento nuestro? Ya está aplicado localmente.
+                if (await db.movimientos_stock.get(m.id)) return;
+                // Con cambios locales pendientes de ese producto, manda el recon.
+                const pendientes = await productosConMovimientosPendientes();
+                if (pendientes.has(m.producto_id)) return;
+                const local = await db.productos.get(m.producto_id);
+                if (!local || local.estado_sincronizacion === 0) return;
+
+                // Refresco puntual del producto desde la nube
+                const { data: prod } = await supabase
+                    .from('productos')
+                    .select('stock_actual, fecha_actualizacion')
+                    .eq('id', m.producto_id)
+                    .maybeSingle();
+                if (!prod) return;
+                let stock = prod.stock_actual as number;
+                const { sucursalId } = useConfigStore.getState();
+                if (sucursalId) {
+                    const { data: inv } = await supabase
+                        .from('inventario_sucursales')
+                        .select('stock_actual')
+                        .eq('sucursal_id', sucursalId)
+                        .eq('producto_id', m.producto_id)
+                        .maybeSingle();
+                    if (inv) stock = inv.stock_actual;
+                }
+                await db.productos.update(m.producto_id, {
+                    stock_actual: stock,
+                    fecha_actualizacion: (prod.fecha_actualizacion as number) ?? Date.now(),
+                });
+            } catch (e) {
+                console.warn('[realtime-stock]', e);
+            }
+        })
+        .subscribe();
+}
+
 // ─── Worker principal ─────────────────────────────────────────────────────────
 export const startSyncWorker = (): ReturnType<typeof setInterval> => {
     // Si ya hay un intervalo activo, devolver el mismo (singleton)
@@ -69,7 +130,7 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
     let isSyncing = false;
     let consecutiveErrors = 0; // backoff simple: si hay 3 errores seguidos, esperar
 
-    activeInterval = setInterval(async () => {
+    const tick = async () => {
         if (!navigator.onLine || isSyncing) return;
         // No sincronizar cuando la app está en segundo plano (pestaña oculta/minimizada):
         // evita gastar CPU, red y batería, y que la app se trabe al volver a abrirla.
@@ -86,6 +147,9 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
         try {
             const { sucursalId, negocioId } = useConfigStore.getState();
             if (!negocioId) return;
+
+            // Stock en vivo entre cajas (se suscribe una vez por negocio)
+            suscribirRealtimeStock(negocioId);
 
             // Productos con movimientos de stock aún no subidos: el pull no debe
             // pisar su stock local (la nube todavía no refleja esos movimientos)
@@ -996,7 +1060,25 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
         } finally {
             isSyncing = false;
         }
-    }, 15000);
+    };
+
+    activeInterval = setInterval(tick, 15000);
+
+    // Al volver la pestaña al frente: sincronizar YA (sin esperar el próximo
+    // tick) y forzar el reconteo de stock (el gate de 120s se resetea) — la PC
+    // del taller que estuvo minimizada se pone al día en segundos.
+    if (typeof document !== 'undefined') {
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden) {
+                localStorage.removeItem('vrd_stock_recon_ts');
+                tick();
+            }
+        });
+    }
+    // Al recuperar internet: sincronizar de inmediato
+    if (typeof window !== 'undefined') {
+        window.addEventListener('online', () => tick());
+    }
 
     return activeInterval;
 };
