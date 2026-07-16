@@ -8,6 +8,7 @@ import { ProductoLocal } from '@/types/database';
 import { formatDOP, formatTicket } from '@/lib/utils';
 import { linkWhatsApp } from '@/lib/whatsapp';
 import { logoParaImprimir } from '@/lib/logoCache';
+import QrTransferencia from '@/components/shared/QrTransferencia';
 import { miniatura } from '@/lib/imagen';
 import Fuse from 'fuse.js';
 import { useReactToPrint } from 'react-to-print';
@@ -979,6 +980,13 @@ export default function POSPage() {
                       </button>
                     ))}
                   </div>
+
+                  {/* QR de transferencia (si el negocio configuró sus datos de pago) */}
+                  {metodoPago === 'transferencia' && (
+                    <div className="mb-4 sm:mb-6">
+                      <QrTransferencia monto={total} />
+                    </div>
+                  )}
 
                   {/* DESCUENTO */}
                   <div className="bg-navy p-3 sm:p-4 rounded-xl border border-navy-3 mb-4 sm:mb-6">

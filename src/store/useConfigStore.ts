@@ -107,6 +107,9 @@ interface ConfigState {
     // Fuente de marca (clave del catálogo). Cambia la tipografía de títulos/logo.
     fuenteMarca: string;
     setFuenteMarca: (clave: string) => void;
+    // Datos de pago para el QR de transferencia (banco/cuenta/titular)
+    datosPago: { banco: string; cuenta: string; titular: string } | null;
+    setDatosPago: (d: { banco: string; cuenta: string; titular: string } | null) => void;
     // Catálogo público activado por el dueño (mini-tienda por link)
     catalogoPublico: boolean;
     setCatalogoPublico: (v: boolean) => void;
@@ -172,6 +175,7 @@ const configCreator: StateCreator<ConfigState> = (set) => ({
             colorMarca: 'dorado',
             fuenteMarca: 'syne',
             catalogoPublico: false,
+            datosPago: null,
             cobrarRepuestosAparte: false,
 
             setAcceso: (accesoHasta) => set({ accesoHasta }),
@@ -186,6 +190,7 @@ const configCreator: StateCreator<ConfigState> = (set) => ({
             setColorMarca: (colorMarca) => set({ colorMarca }),
             setFuenteMarca: (fuenteMarca) => set({ fuenteMarca }),
             setCatalogoPublico: (catalogoPublico) => set({ catalogoPublico }),
+            setDatosPago: (datosPago) => set({ datosPago }),
             setCobrarRepuestosAparte: (v) => set({ cobrarRepuestosAparte: v }),
 
             consumirNcf: () => {
@@ -331,6 +336,7 @@ export const useConfigStore = create<ConfigState>()(
             colorMarca: state.colorMarca,
             fuenteMarca: state.fuenteMarca,
             catalogoPublico: state.catalogoPublico,
+            datosPago: state.datosPago,
             cobrarRepuestosAparte: state.cobrarRepuestosAparte,
         }),
         merge: (persisted, current) => {

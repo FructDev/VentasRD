@@ -91,7 +91,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 // lanzaba error con >1 fila y el login entraba en bucle.
                 const { data: negocioDueno, error } = await supabase
                     .from('negocios')
-                    .select('id, nombre, onboarding_completado, pin_admin, whatsapp_dueno, telefono, rnc, direccion, mensaje_ticket, logo_url, plan_activo, plan_tier, color_marca, fuente_marca, catalogo_publico, trial_hasta, acceso_hasta')
+                    .select('id, nombre, onboarding_completado, pin_admin, whatsapp_dueno, telefono, rnc, direccion, mensaje_ticket, logo_url, plan_activo, plan_tier, color_marca, fuente_marca, catalogo_publico, banco_nombre, banco_cuenta, banco_titular, trial_hasta, acceso_hasta')
                     .eq('dueño_id', user.id)
                     .order('onboarding_completado', { ascending: false })
                     .limit(1)
@@ -113,7 +113,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                         // Cargar el negocio del empleado
                         const { data: negEmp } = await supabase
                             .from('negocios')
-                            .select('id, nombre, onboarding_completado, pin_admin, whatsapp_dueno, telefono, rnc, direccion, mensaje_ticket, logo_url, plan_activo, plan_tier, color_marca, fuente_marca, catalogo_publico, trial_hasta, acceso_hasta')
+                            .select('id, nombre, onboarding_completado, pin_admin, whatsapp_dueno, telefono, rnc, direccion, mensaje_ticket, logo_url, plan_activo, plan_tier, color_marca, fuente_marca, catalogo_publico, banco_nombre, banco_cuenta, banco_titular, trial_hasta, acceso_hasta')
                             .eq('id', empData.negocio_id)
                             .single();
                         negocio = negEmp;
@@ -140,6 +140,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                             color_marca: currentState.colorMarca,
                             fuente_marca: currentState.fuenteMarca,
                             catalogo_publico: currentState.catalogoPublico,
+                            banco_nombre: currentState.datosPago?.banco ?? null,
+                            banco_cuenta: currentState.datosPago?.cuenta ?? null,
+                            banco_titular: currentState.datosPago?.titular ?? null,
                             trial_hasta: currentState.trialHasta,
                             acceso_hasta: currentState.accesoHasta,
                         };
@@ -157,7 +160,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                     const { data: nuevoNegocio, error: insertError } = await supabase
                         .from('negocios')
                         .insert({ dueño_id: user.id, nombre: nombreInicial, pin_admin: '1234', plan_activo: false, trial_hasta: trialHasta })
-                        .select('id, nombre, onboarding_completado, pin_admin, whatsapp_dueno, telefono, rnc, direccion, mensaje_ticket, logo_url, plan_activo, plan_tier, color_marca, fuente_marca, catalogo_publico, trial_hasta, acceso_hasta')
+                        .select('id, nombre, onboarding_completado, pin_admin, whatsapp_dueno, telefono, rnc, direccion, mensaje_ticket, logo_url, plan_activo, plan_tier, color_marca, fuente_marca, catalogo_publico, banco_nombre, banco_cuenta, banco_titular, trial_hasta, acceso_hasta')
                         .single();
 
                     if (insertError) {
@@ -165,7 +168,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                         // bloqueó): re-consultar en vez de fallar.
                         const { data: reintento } = await supabase
                             .from('negocios')
-                            .select('id, nombre, onboarding_completado, pin_admin, whatsapp_dueno, telefono, rnc, direccion, mensaje_ticket, logo_url, plan_activo, plan_tier, color_marca, fuente_marca, catalogo_publico, trial_hasta, acceso_hasta')
+                            .select('id, nombre, onboarding_completado, pin_admin, whatsapp_dueno, telefono, rnc, direccion, mensaje_ticket, logo_url, plan_activo, plan_tier, color_marca, fuente_marca, catalogo_publico, banco_nombre, banco_cuenta, banco_titular, trial_hasta, acceso_hasta')
                             .eq('dueño_id', user.id)
                             .order('onboarding_completado', { ascending: false })
                             .limit(1)
@@ -219,6 +222,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 if (fuente) useConfigStore.getState().setFuenteMarca(fuente);
                 const catPub = (negocio as { catalogo_publico?: boolean } | null)?.catalogo_publico;
                 useConfigStore.getState().setCatalogoPublico(catPub === true);
+                // Datos de pago para el QR de transferencia
+                const nb = negocio as { banco_nombre?: string | null; banco_cuenta?: string | null; banco_titular?: string | null } | null;
+                useConfigStore.getState().setDatosPago(
+                    nb?.banco_cuenta ? { banco: nb.banco_nombre || '', cuenta: nb.banco_cuenta, titular: nb.banco_titular || '' } : null
+                );
                 // Fecha de acceso (trial o pago). Fallback al trial legado si la
                 // columna aún no existe en negocios viejos.
                 useConfigStore.getState().setAcceso(negocio?.acceso_hasta ?? negocio?.trial_hasta ?? null);

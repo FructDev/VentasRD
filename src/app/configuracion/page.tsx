@@ -12,11 +12,12 @@ import { comprimirImagen } from '@/lib/imagen';
 import { PALETAS, FUENTES } from '@/lib/marca';
 
 export default function ConfiguracionPage() {
-    const { negocioId, showToast, negocioNombre, negocioWhatsapp, negocioTelefono, negocioRnc, negocioDireccion, negocioMensajeTicket, negocioLogo, setAuth, user, pinAdmin, isOnline, ncf, setNcfConfig, impresion, setImpresion, colorMarca, setColorMarca, fuenteMarca, setFuenteMarca, catalogoPublico, setCatalogoPublico } = useConfigStore();
+    const { negocioId, showToast, negocioNombre, negocioWhatsapp, negocioTelefono, negocioRnc, negocioDireccion, negocioMensajeTicket, negocioLogo, setAuth, user, pinAdmin, isOnline, ncf, setNcfConfig, impresion, setImpresion, colorMarca, setColorMarca, fuenteMarca, setFuenteMarca, catalogoPublico, setCatalogoPublico, datosPago, setDatosPago } = useConfigStore();
 
     const [loading, setLoading] = useState(false);
     const [logoData, setLogoData] = useState<string | null>(null);
     const [copiado, setCopiado] = useState(false);
+    const [pago, setPago] = useState({ banco: '', cuenta: '', titular: '' });
     const [guardandoCat, setGuardandoCat] = useState(false);
     const [ref, setRef] = useState<{ codigo: string | null; total: number; dias: number } | null>(null);
     const [copiadoRef, setCopiadoRef] = useState(false);
@@ -56,7 +57,8 @@ export default function ConfiguracionPage() {
             mensaje_ticket: negocioMensajeTicket || ''
         });
         setLogoData(negocioLogo);
-    }, [negocioNombre, negocioWhatsapp, negocioTelefono, negocioRnc, negocioDireccion, negocioMensajeTicket, negocioLogo]);
+        setPago({ banco: datosPago?.banco || '', cuenta: datosPago?.cuenta || '', titular: datosPago?.titular || '' });
+    }, [negocioNombre, negocioWhatsapp, negocioTelefono, negocioRnc, negocioDireccion, negocioMensajeTicket, negocioLogo, datosPago]);
 
     // Cargar el código de referido del negocio (se crea en el servidor si falta).
     useEffect(() => {
@@ -128,6 +130,9 @@ export default function ConfiguracionPage() {
                     logo_url: logoFinal,
                     color_marca: colorMarca,
                     fuente_marca: fuenteMarca,
+                    banco_nombre: pago.banco.trim() || null,
+                    banco_cuenta: pago.cuenta.trim() || null,
+                    banco_titular: pago.titular.trim() || null,
                 })
                 .eq('id', negocioId);
 
@@ -160,6 +165,7 @@ export default function ConfiguracionPage() {
                 logoFinal
             );
 
+            setDatosPago(pago.cuenta.trim() ? { banco: pago.banco.trim(), cuenta: pago.cuenta.trim(), titular: pago.titular.trim() } : null);
             showToast('Configuraciones guardadas correctamente', 'success');
         } catch (err) {
             console.error(err);
@@ -382,6 +388,32 @@ export default function ConfiguracionPage() {
                                             </div>
                                         </div>
                                     )}
+                                </div>
+
+                                {/* Datos de pago para el QR de transferencia */}
+                                <div className="pt-4">
+                                    <h3 className="text-lg font-bold text-gold-2 mb-1 border-b border-navy-3 pb-2">💳 Datos para Transferencias</h3>
+                                    <p className="text-xs text-vr-gray mb-4">Al cobrar con &quot;Transferencia&quot;, el cliente verá un QR con estos datos y el monto exacto — se acabó dictar la cuenta.</p>
+                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                        <div>
+                                            <label className="block text-sm font-bold text-vr-gray mb-1.5">Banco</label>
+                                            <input type="text" placeholder="Ej: Banreservas"
+                                                className="w-full bg-navy-3 border border-navy-3 rounded-xl p-3 text-white focus:border-gold outline-none transition-all"
+                                                value={pago.banco} onChange={e => setPago(v => ({ ...v, banco: e.target.value }))} />
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-bold text-vr-gray mb-1.5">Número de cuenta</label>
+                                            <input type="text" placeholder="000-000000-0"
+                                                className="w-full bg-navy-3 border border-navy-3 rounded-xl p-3 text-white font-mono focus:border-gold outline-none transition-all"
+                                                value={pago.cuenta} onChange={e => setPago(v => ({ ...v, cuenta: e.target.value }))} />
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-bold text-vr-gray mb-1.5">Titular</label>
+                                            <input type="text" placeholder="Nombre del titular"
+                                                className="w-full bg-navy-3 border border-navy-3 rounded-xl p-3 text-white focus:border-gold outline-none transition-all"
+                                                value={pago.titular} onChange={e => setPago(v => ({ ...v, titular: e.target.value }))} />
+                                        </div>
+                                    </div>
                                 </div>
 
                                 {/* Programa de referidos */}
