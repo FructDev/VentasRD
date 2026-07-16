@@ -13,6 +13,7 @@ import OfflineBanner from '@/components/shared/OfflineBanner';
 import Link from 'next/link';
 import { SkeletonKPIGrid } from '@/components/ui/Skeleton';
 import ResumenDiario from '@/components/shared/ResumenDiario';
+import AsistenteNegocio from '@/components/shared/AsistenteNegocio';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '@/lib/db/dexie';
 import { useConfigStore } from '@/store/useConfigStore';
@@ -241,6 +242,9 @@ export default function DashboardPage() {
                             </Link>
                         </div>
                     </header>
+
+                    {/* Asistente del negocio — insights del día (solo dueño/admin) */}
+                    {!esVendedor && <AsistenteNegocio />}
 
                     {/* Resumen de ayer — solo para el dueño/admin (tiene ganancia y fiados) */}
                     {!esVendedor && <ResumenDiario />}
