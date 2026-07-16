@@ -8,7 +8,7 @@ import { usePathname } from 'next/navigation';
 import { useConfigStore } from '@/store/useConfigStore';
 
 // Subir esta versión cuando haya novedades nuevas que anunciar.
-const NOVEDADES_VERSION = '2026-07.1';
+const NOVEDADES_VERSION = '2026-07.2';
 const STORAGE_KEY = 'vrd_novedades_version';
 
 const RUTAS_SETUP = ['/login', '/registro', '/landing', '/onboarding', '/select-branch', '/pin', '/unirse', '/auth', '/offline'];
@@ -17,6 +17,40 @@ interface Item { titulo: string; probar: string; }
 interface Seccion { emoji: string; titulo: string; items: Item[]; }
 
 const SECCIONES: Seccion[] = [
+    {
+        emoji: '🧠', titulo: 'Tu negocio ahora te habla',
+        items: [
+            { titulo: 'Asistente "Tu día"', probar: 'Entra a Resumen: arriba verás avisos como "el aceite se acaba el jueves", "Juan lleva 45 días sin abonar" o "mañana es quincena, prepárate". Todo sale de TUS datos.' },
+            { titulo: 'Lista de compras sugerida', probar: 'El asistente calcula qué reponer para los próximos 15 días y cuánta inversión necesitas.' },
+            { titulo: 'Compártelo por WhatsApp', probar: 'Botón "📱 Enviar a WhatsApp" en la tarjeta — mándate el resumen o compártelo con tu socio.' },
+        ],
+    },
+    {
+        emoji: '📷', titulo: 'Tu celular es una pistola de escaneo',
+        items: [
+            { titulo: 'Escanea para vender', probar: 'En la caja toca "📷 Escanear", apunta la cámara al código de barras y el producto cae al carrito.' },
+        ],
+    },
+    {
+        emoji: '⏸️', titulo: 'Ventas en espera',
+        items: [
+            { titulo: 'Pausa al cliente indeciso', probar: 'Con productos en el carrito toca "⏸ En espera" — atiende al siguiente y retoma la venta pausada cuando el cliente vuelva.' },
+        ],
+    },
+    {
+        emoji: '🚚', titulo: 'Facturas listas para delivery',
+        items: [
+            { titulo: 'Nombre del cliente y ubicación en el ticket', probar: 'Asigna el cliente en el carrito e imprime: el ticket sale con "Cliente:" y la ubicación de cada producto (llénala en Inventario).' },
+        ],
+    },
+    {
+        emoji: '⚡', titulo: 'Varias cajas, un solo inventario',
+        items: [
+            { titulo: 'Stock en vivo entre equipos', probar: 'Vende algo en una caja y mira la otra: el stock se actualiza en segundos, aunque esté minimizada.' },
+            { titulo: '🩺 Estado del Sistema', probar: 'Ajustes → Estado del Sistema: si algo anda lento, toca "Copiar diagnóstico" y envíanoslo por WhatsApp.' },
+            { titulo: 'Centro de Ayuda', probar: 'Las preguntas más comunes con sus respuestas: ventard.vercel.app/ayuda (también desde Ajustes).' },
+        ],
+    },
     {
         emoji: '🎨', titulo: 'Haz la app TUYA',
         items: [
@@ -43,64 +77,6 @@ const SECCIONES: Seccion[] = [
         items: [
             { titulo: 'Recibo directo al cliente', probar: 'Al terminar una venta toca "📱 WhatsApp": si la venta tiene cliente con teléfono, el recibo le llega a ÉL directamente.' },
             { titulo: 'Instala la app con un toque', probar: 'Si usas VentaRD en el navegador, ahora te ofrece instalarse sola — un toque y queda como app.' },
-        ],
-    },
-    {
-        emoji: '🔎', titulo: 'Tu inventario, más fácil de manejar',
-        items: [
-            { titulo: 'Buscador y filtros rápidos', probar: 'Inventario → escribe el nombre, código o ubicación; o toca "Por agotarse", "Agotados", "Combos"…' },
-            { titulo: 'Cambia precio y stock con un toque', probar: 'En la tabla toca el precio o el stock, escribe el nuevo valor y presiona Enter. Sin abrir nada.' },
-            { titulo: 'Historial de cada producto', probar: 'Inventario → "Ajuste" → "🕑 Ver historial". Ves entradas, ventas, mermas y conteos.' },
-            { titulo: 'Exportar a Excel', probar: 'Inventario → "📤 Exportar". Lo bajas, lo editas y lo puedes volver a importar.' },
-            { titulo: 'Cuánto ganarías si vendes todo', probar: 'En la tarjeta "Capital Estante" aparece tu ganancia potencial del inventario actual.' },
-        ],
-    },
-    {
-        emoji: '🛒', titulo: 'Vender más rápido',
-        items: [
-            { titulo: 'Fotos en tus productos', probar: 'Inventario → edita un producto → "📷 Agregar foto". Aparece en la caja.' },
-            { titulo: 'Cliente con su precio al facturar', probar: 'En el carrito busca el cliente; sus precios de mayoreo se aplican solos.' },
-        ],
-    },
-    {
-        emoji: '📦', titulo: 'Maneja tu inventario',
-        items: [
-            { titulo: 'Importar desde Excel', probar: 'Inventario → "📥 Importar". Descarga la plantilla, llénala y súbela.' },
-            { titulo: 'Reorden inteligente', probar: 'Inventario te dice "te quedan ~3 días" y arma la lista de compras por WhatsApp.' },
-        ],
-    },
-    {
-        emoji: '💰', titulo: 'Sabe si ganas o pierdes',
-        items: [
-            { titulo: 'Registro de gastos', probar: 'Menú "💸 Gastos". Anota compras, luz, alquiler. Tu ganancia ahora es la REAL.' },
-            { titulo: 'Resumen diario', probar: 'Cada mañana en "Resumen" ves cómo te fue ayer y lo mandas a tu WhatsApp.' },
-            { titulo: 'A quién cobrar hoy', probar: 'En Clientes, lista de quién te debe y hace más tiempo no abona.' },
-        ],
-    },
-    {
-        emoji: '🧾', titulo: 'Para la DGII',
-        items: [
-            { titulo: 'Reporte 607', probar: 'Reportes → elige el mes → "Generar 607". Listo para la Oficina Virtual.' },
-            { titulo: 'Tu logo en la factura', probar: 'Ajustes → sube tu logo; sale en el recibo impreso.' },
-        ],
-    },
-    {
-        emoji: '👥', titulo: 'Tu equipo',
-        items: [
-            { titulo: 'Invitar cajeros y vendedores', probar: 'Ajustes → Mi Equipo → "+ Agregar". Le mandas un link, pone su clave y entra.' },
-            { titulo: 'El vendedor sale en la factura', probar: 'Sabes quién hizo cada venta en el ticket y el historial.' },
-        ],
-    },
-    {
-        emoji: '🖨️', titulo: 'Imprime mejor',
-        items: [
-            { titulo: 'Ajustes de impresión', probar: 'Ajustes → 🖨️ Impresión. Papel 58/80mm, letra grande, 2 copias, automático.' },
-        ],
-    },
-    {
-        emoji: '⚡', titulo: 'Por debajo (no se ve, pero importa)',
-        items: [
-            { titulo: 'Varias cajas a la vez', probar: 'El inventario nunca se descuadra y los comprobantes (NCF) no se repiten entre cajas.' },
         ],
     },
 ];
