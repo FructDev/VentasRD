@@ -36,8 +36,8 @@ export default function AsistenteNegocio() {
 
         return {
             ventas: ventas.map(v => ({ total: v.total, fecha_creacion: v.fecha_creacion })),
-            detalles: detalles.map(d => ({ producto_id: d.producto_id, cantidad: d.cantidad, fecha_creacion: d.fecha_creacion })),
-            productos: productos.map(p => ({ id: p.id, nombre: p.nombre, stock_actual: p.stock_actual, tipo: p.tipo, eliminado: p.eliminado })),
+            detalles: detalles.map(d => ({ producto_id: d.producto_id, cantidad: d.cantidad, fecha_creacion: d.fecha_creacion, precio_unitario: d.precio_unitario })),
+            productos: productos.map(p => ({ id: p.id, nombre: p.nombre, stock_actual: p.stock_actual, tipo: p.tipo, eliminado: p.eliminado, costo: p.costo })),
             clientes: clientes.map(c => ({ id: c.id, nombre: c.nombre })),
             transacciones: transacciones.map(t => ({ cliente_id: t.cliente_id, tipo: t.tipo, monto: t.monto, fecha_creacion: t.fecha_creacion })),
             ahora,

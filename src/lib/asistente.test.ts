@@ -131,3 +131,89 @@ describe('generarInsights', () => {
         expect(ins[0].tipo).toBe('stock');
     });
 });
+
+describe('nivel 2: ganancia, quincena, compras, anomalía, hora pico', () => {
+    it('reporta caída de margen semanal cuando hay costos registrados', () => {
+        const detalles: DatosAsistente['detalles'] = [];
+        // Semana pasada: 12 líneas al 50% de margen (precio 100, costo 50)
+        for (let i = 0; i < 12; i++) detalles.push({ producto_id: 'p1', cantidad: 1, precio_unitario: 100, fecha_creacion: AHORA - (8 + (i % 6)) * DIA });
+        // Esta semana: 12 líneas al 30% de margen (precio 100, costo 70)
+        for (let i = 0; i < 12; i++) detalles.push({ producto_id: 'p2', cantidad: 1, precio_unitario: 100, fecha_creacion: AHORA - (1 + (i % 6)) * DIA });
+        const d = base({
+            detalles,
+            productos: [
+                { id: 'p1', nombre: 'A', stock_actual: 99, tipo: 'simple', costo: 50 },
+                { id: 'p2', nombre: 'B', stock_actual: 99, tipo: 'simple', costo: 70 },
+            ],
+        });
+        const g = generarInsights(d).find(i => i.tipo === 'ganancia')!;
+        expect(g.texto).toContain('menos');
+        expect(g.emoji).toBe('📉');
+    });
+
+    it('no calcula margen si la mayoría de productos no tiene costo', () => {
+        const detalles: DatosAsistente['detalles'] = [];
+        for (let i = 0; i < 20; i++) detalles.push({ producto_id: 'p1', cantidad: 1, precio_unitario: 100, fecha_creacion: AHORA - (1 + (i % 6)) * DIA });
+        const d = base({
+            detalles,
+            productos: [{ id: 'p1', nombre: 'SinCosto', stock_actual: 99, tipo: 'simple', costo: 0 }],
+        });
+        expect(generarInsights(d).filter(i => i.tipo === 'ganancia')).toHaveLength(0);
+    });
+
+    it('avisa la quincena cuando mañana es 15', () => {
+        const casi15 = new Date('2026-07-14T18:00:00').getTime();
+        const d = base({ ahora: casi15 });
+        const q = generarInsights(d).find(i => i.tipo === 'quincena')!;
+        expect(q.texto).toContain('quincena');
+    });
+
+    it('no avisa quincena un día normal', () => {
+        expect(generarInsights(base()).filter(i => i.tipo === 'quincena')).toHaveLength(0); // mañana es 16
+    });
+
+    it('arma la lista de compras con cantidades e inversión', () => {
+        const d = base({
+            productos: [
+                { id: 'a', nombre: 'Aceite', stock_actual: 2, tipo: 'simple', costo: 150 },  // vende 1/día → necesita 13
+                { id: 'b', nombre: 'Arroz', stock_actual: 5, tipo: 'simple', costo: 200 },   // vende 1/día → necesita 10
+            ],
+            detalles: [
+                ...Array.from({ length: 14 }, (_, i) => ({ producto_id: 'a', cantidad: 1, fecha_creacion: AHORA - i * DIA })),
+                ...Array.from({ length: 14 }, (_, i) => ({ producto_id: 'b', cantidad: 1, fecha_creacion: AHORA - i * DIA })),
+            ],
+        });
+        const c = generarInsights(d).find(i => i.tipo === 'compra')!;
+        expect(c.texto).toContain('Aceite');
+        expect(c.texto).toContain('inversión estimada');
+    });
+
+    it('detecta anomalía: hoy vas a menos de la mitad del ritmo normal', () => {
+        const mediodia = new Date('2026-07-15T15:00:00').getTime(); // miércoles 3pm
+        const ventas: DatosAsistente['ventas'] = [
+            { total: 500, fecha_creacion: mediodia - 60 * 60 * 1000 }, // hoy: 500
+        ];
+        // Miércoles anteriores: 3,000 acumulados a la misma hora
+        for (const sem of [1, 2, 3]) {
+            const dia = mediodia - sem * 7 * DIA;
+            ventas.push({ total: 3000, fecha_creacion: dia - 3 * 60 * 60 * 1000 });
+        }
+        const a = generarInsights(base({ ventas, ahora: mediodia })).find(i => i.tipo === 'anomalia')!;
+        expect(a.texto).toContain('¿Todo bien');
+        expect(a.prioridad).toBe(0); // lo más urgente de todo
+    });
+
+    it('detecta la hora fuerte cuando la venta se concentra', () => {
+        const ventas: DatosAsistente['ventas'] = [];
+        for (let dia = 1; dia <= 20; dia++) {
+            const f = new Date(AHORA - dia * DIA);
+            f.setHours(17, 30, 0, 0); // 5:30pm siempre
+            ventas.push({ total: 800, fecha_creacion: f.getTime() });
+            const f2 = new Date(AHORA - dia * DIA);
+            f2.setHours(10, 0, 0, 0);
+            ventas.push({ total: 200, fecha_creacion: f2.getTime() });
+        }
+        const h = generarInsights(base({ ventas })).find(i => i.tipo === 'horapico')!;
+        expect(h.texto).toContain('5pm');
+    });
+});
