@@ -108,6 +108,8 @@ export default function POSPage() {
   const [productoParaSerial, setProductoParaSerial] = useState<ProductoLocal | null>(null);
   const [busquedaSerial, setBusquedaSerial] = useState('');
   const [scannerSerialPOS, setScannerSerialPOS] = useState(false);
+  // Escáner de cámara para productos: cualquier celular = pistola de escaneo
+  const [scannerProductoPOS, setScannerProductoPOS] = useState(false);
   const inputMontoRef = useRef<HTMLInputElement>(null);
 
   const ticketRef = useRef<HTMLDivElement>(null);
@@ -781,6 +783,13 @@ export default function POSPage() {
                 <span className="hidden sm:block absolute right-3 top-3 text-vr-gray font-mono text-xs bg-navy-3 px-2 py-1 rounded">F2</span>
               </div>
               <button
+                onClick={() => setScannerProductoPOS(true)}
+                title="Escanear código de barras con la cámara"
+                className="px-3 sm:px-4 py-3 bg-navy-2 border border-navy-3 rounded-xl text-vr-gray hover:text-gold hover:border-gold/30 transition-all font-bold text-sm flex items-center gap-1 sm:gap-2 whitespace-nowrap"
+              >
+                📷 <span className="hidden sm:inline">Escanear</span>
+              </button>
+              <button
                 onClick={() => setIsVentaLibreOpen(true)}
                 className="px-3 sm:px-4 py-3 bg-navy-2 border border-navy-3 rounded-xl text-vr-gray hover:text-gold hover:border-gold/30 transition-all font-bold text-sm flex items-center gap-1 sm:gap-2 whitespace-nowrap"
               >
@@ -1239,6 +1248,29 @@ export default function POSPage() {
               setScannerSerialPOS(false);
             }}
             onClose={() => setScannerSerialPOS(false)}
+          />
+        </Suspense>
+      )}
+
+      {/* ESCÁNER DE CÁMARA PARA PRODUCTOS */}
+      {scannerProductoPOS && (
+        <Suspense fallback={null}>
+          <BarcodeScanner
+            onScan={(code) => {
+              setScannerProductoPOS(false);
+              const producto = productosEnDB.find(p => p.codigo_barras === code);
+              if (producto) {
+                // Respeta el flujo de seriales (abre el selector si aplica)
+                onSelectProducto(producto);
+                showToast(`${producto.nombre} ${producto.serializable ? '— elige el serial' : 'agregado al carrito'}`, 'success');
+              } else {
+                // No existe: dejar el código en el buscador para que el cajero
+                // lo vea y decida (crear el producto o venta libre)
+                setSearchTerm(code);
+                showToast('Ese código no está en tu inventario.', 'info');
+              }
+            }}
+            onClose={() => setScannerProductoPOS(false)}
           />
         </Suspense>
       )}
