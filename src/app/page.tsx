@@ -92,6 +92,7 @@ export default function POSPage() {
   const [clienteSeleccionadoId, setClienteSeleccionadoId] = useState<string>('');
   // Nombre libre del cliente para la factura (no exige cliente registrado)
   const [clienteNombreVenta, setClienteNombreVenta] = useState('');
+  const [dropdownClienteFactura, setDropdownClienteFactura] = useState(false);
   const [isVentaLibreOpen, setIsVentaLibreOpen] = useState(false);
   const [isCajaOpen, setIsCajaOpen] = useState(false);
   const [ultimoTicketNum, setUltimoTicketNum] = useState<number | undefined>(undefined);
@@ -985,14 +986,36 @@ export default function POSPage() {
                     ))}
                   </div>
 
-                  {/* Nombre del cliente para la factura (texto libre, opcional) */}
-                  <div className="mb-4 sm:mb-6">
+                  {/* Cliente para la factura: elige uno registrado o escribe un nombre libre */}
+                  <div className="mb-4 sm:mb-6 relative">
                     <label className="block text-xs font-bold text-vr-gray mb-1.5">👤 Cliente para la factura <span className="font-normal text-vr-gray/60">(opcional)</span></label>
                     <input
-                      type="text" placeholder="Nombre del cliente — sale impreso en el ticket"
+                      type="text" placeholder="Escribe el nombre o elige un cliente registrado"
                       className="w-full bg-navy border border-navy-3 rounded-xl px-3 py-2.5 text-sm text-white placeholder-vr-gray/50 focus:border-gold outline-none transition-all"
-                      value={clienteNombreVenta} onChange={e => setClienteNombreVenta(e.target.value)}
+                      value={clienteNombreVenta}
+                      onChange={e => { setClienteNombreVenta(e.target.value); setDropdownClienteFactura(true); }}
+                      onFocus={() => setDropdownClienteFactura(true)}
+                      onBlur={() => setTimeout(() => setDropdownClienteFactura(false), 150)}
                     />
+                    {dropdownClienteFactura && clientes.length > 0 && (() => {
+                      const q = clienteNombreVenta.trim().toLowerCase();
+                      const sugeridos = (q ? clientes.filter(c => c.nombre.toLowerCase().includes(q)) : clientes).slice(0, 6);
+                      // Si el texto ya coincide exacto con un cliente, no hay nada que sugerir
+                      if (sugeridos.length === 0 || (sugeridos.length === 1 && sugeridos[0].nombre === clienteNombreVenta)) return null;
+                      return (
+                        <div className="absolute z-50 w-full bg-navy border border-navy-3 rounded-xl mt-1 shadow-xl max-h-44 overflow-y-auto">
+                          {sugeridos.map(c => (
+                            <button
+                              key={c.id} type="button"
+                              onMouseDown={() => { setClienteNombreVenta(c.nombre); setDropdownClienteFactura(false); }}
+                              className="w-full text-left px-3 py-2.5 hover:bg-navy-3 transition-colors border-b border-navy-3/50 last:border-0 text-sm font-bold text-white truncate"
+                            >
+                              {c.nombre}
+                            </button>
+                          ))}
+                        </div>
+                      );
+                    })()}
                   </div>
 
                   {/* QR de transferencia (si el negocio configuró sus datos de pago) */}
