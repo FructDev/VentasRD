@@ -218,7 +218,7 @@ export default function HistorialPage() {
         ventas.forEach(v => lista.push({
             key: `v-${v.id}`, tipo: 'venta', fecha: v.fecha_creacion,
             titulo: `Venta #${formatTicket(v.numero_ticket, v.caja_codigo)}`,
-            sub: v.metodo_pago === 'fiado' && v.cliente_id ? (clientesMap.get(v.cliente_id) || 'Fiado') : undefined,
+            sub: v.cliente_nombre ?? (v.metodo_pago === 'fiado' && v.cliente_id ? (clientesMap.get(v.cliente_id) || 'Fiado') : undefined),
             monto: v.total, signo: 'in',
         }));
         reps.forEach(r => lista.push({
@@ -559,8 +559,8 @@ export default function HistorialPage() {
                                                             <span className={`px-2 py-0.5 rounded text-xs font-bold border ${METODO_COLOR[venta.metodo_pago] || 'text-vr-gray'}`}>
                                                                 {METODO_LABEL[venta.metodo_pago] || venta.metodo_pago}
                                                             </span>
-                                                            {venta.metodo_pago === 'fiado' && venta.cliente_id && (
-                                                                <span className="ml-2 text-xs text-vr-gray">{clientesMap.get(venta.cliente_id) || ''}</span>
+                                                            {clienteDeVenta(venta) && (
+                                                                <span className="ml-2 text-xs text-vr-gray">👤 {clienteDeVenta(venta)}</span>
                                                             )}
                                                         </td>
                                                         <td className="p-3 sm:p-4 font-mono font-bold text-gold text-sm">{formatDOP(venta.total)}</td>
