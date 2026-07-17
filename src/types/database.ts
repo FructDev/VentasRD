@@ -39,6 +39,7 @@ export interface VentaLocal {
     monto_efectivo?: number;      // Para metodo_pago === 'mixto'
     monto_transferencia?: number; // Para metodo_pago === 'mixto'
     cliente_id?: string;          // Para metodo_pago === 'fiado'
+    cliente_nombre?: string;      // Nombre libre para la factura (no requiere cliente registrado)
     estado_sincronizacion: 0 | 1;
     fecha_creacion: number;
 }

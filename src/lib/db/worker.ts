@@ -585,6 +585,7 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                         ...(venta.vendedor_nombre && { vendedor_nombre: venta.vendedor_nombre }),
                         // Fiado
                         ...(venta.cliente_id && { cliente_id: venta.cliente_id }),
+                        ...(venta.cliente_nombre && { cliente_nombre: venta.cliente_nombre }),
                     })
                 );
                 if (!error) await db.ventas.update(venta.id, { estado_sincronizacion: 1 });

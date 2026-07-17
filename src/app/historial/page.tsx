@@ -86,7 +86,7 @@ export default function HistorialPage() {
     const [itemsReimpresion, setItemsReimpresion] = useState<CartItem[]>([]);
     const handleReimprimir = useReactToPrint({ contentRef: ticketReimpresionRef });
 
-    const clienteDeVenta = (v: VentaLocal | null) => v?.cliente_id ? clientes.find(c => c.id === v.cliente_id)?.nombre : undefined;
+    const clienteDeVenta = (v: VentaLocal | null) => v?.cliente_nombre ?? (v?.cliente_id ? clientes.find(c => c.id === v.cliente_id)?.nombre : undefined);
 
     const abrirReimpresion = async (venta: VentaLocal) => {
         const detallesVenta = detallesPorVenta.get(venta.id) || [];

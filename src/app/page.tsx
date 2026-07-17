@@ -90,6 +90,8 @@ export default function POSPage() {
   const [montoTransferenciaMixto, setMontoTransferenciaMixto] = useState<string>('');
   const [ventaExitosa, setVentaExitosa] = useState(false);
   const [clienteSeleccionadoId, setClienteSeleccionadoId] = useState<string>('');
+  // Nombre libre del cliente para la factura (no exige cliente registrado)
+  const [clienteNombreVenta, setClienteNombreVenta] = useState('');
   const [isVentaLibreOpen, setIsVentaLibreOpen] = useState(false);
   const [isCajaOpen, setIsCajaOpen] = useState(false);
   const [ultimoTicketNum, setUltimoTicketNum] = useState<number | undefined>(undefined);
@@ -148,7 +150,7 @@ export default function POSPage() {
           cajaCodigo: dispositivoId || undefined,
           ncf: ncfVenta ?? ultimoNcf,
           vendedor: nombreUsuario || undefined,
-          clienteNombre: ((clienteSeleccionadoId ? clientes.find(c => c.id === clienteSeleccionadoId) : null) ?? clienteActivo)?.nombre,
+          clienteNombre: clienteNombreVenta.trim() || undefined,
           mensajePie: negocioMensajeTicket || undefined,
           logoUrl: logoTicket,
         }, impresion);
@@ -270,6 +272,7 @@ export default function POSPage() {
     setVentaExitosa(false);
     // Pre-popular fiado con el cliente activo del carrito si existe
     setClienteSeleccionadoId(clienteActivoId ?? '');
+    setClienteNombreVenta(clienteActivo?.nombre ?? '');
     setEmitirNcf(false);
     setIsCartOpen(false);
     setIsCheckoutOpen(true);
@@ -348,6 +351,7 @@ export default function POSPage() {
           ...(metodoPago === 'fiado' && clienteSeleccionadoId && {
             cliente_id: clienteSeleccionadoId,
           }),
+          ...(clienteNombreVenta.trim() && { cliente_nombre: clienteNombreVenta.trim() }),
           estado_sincronizacion: 0,
           fecha_creacion: Date.now(),
         });
@@ -767,7 +771,7 @@ export default function POSPage() {
             ncf={ultimoNcf}
             logoUrl={logoTicket}
             vendedor={nombreUsuario || undefined}
-            clienteNombre={((clienteSeleccionadoId ? clientes.find(c => c.id === clienteSeleccionadoId) : null) ?? clienteActivo)?.nombre}
+            clienteNombre={clienteNombreVenta.trim() || undefined}
           />
         </div>
 
@@ -981,6 +985,16 @@ export default function POSPage() {
                     ))}
                   </div>
 
+                  {/* Nombre del cliente para la factura (texto libre, opcional) */}
+                  <div className="mb-4 sm:mb-6">
+                    <label className="block text-xs font-bold text-vr-gray mb-1.5">👤 Cliente para la factura <span className="font-normal text-vr-gray/60">(opcional)</span></label>
+                    <input
+                      type="text" placeholder="Nombre del cliente — sale impreso en el ticket"
+                      className="w-full bg-navy border border-navy-3 rounded-xl px-3 py-2.5 text-sm text-white placeholder-vr-gray/50 focus:border-gold outline-none transition-all"
+                      value={clienteNombreVenta} onChange={e => setClienteNombreVenta(e.target.value)}
+                    />
+                  </div>
+
                   {/* QR de transferencia (si el negocio configuró sus datos de pago) */}
                   {metodoPago === 'transferencia' && (
                     <div className="mb-4 sm:mb-6">
@@ -1060,7 +1074,12 @@ export default function POSPage() {
                       <select
                         className="w-full text-base bg-navy border border-navy-3 focus:border-gold focus:outline-none py-3 px-4 rounded-lg font-bold text-white"
                         value={clienteSeleccionadoId}
-                        onChange={(e) => setClienteSeleccionadoId(e.target.value)}
+                        onChange={(e) => {
+                          setClienteSeleccionadoId(e.target.value);
+                          // Prellenar el nombre de la factura con el cliente del fiado
+                          const c = clientes.find(x => x.id === e.target.value);
+                          if (c) setClienteNombreVenta(c.nombre);
+                        }}
                       >
                         <option value="" disabled>-- Elige un cliente --</option>
                         {clientes.map(c => (
