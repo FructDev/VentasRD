@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useMemo } from 'react';
+import QrCobro from './QrCobro';
 import { ShoppingCart, RefreshCw, MessageCircle, Check, X, Clock, Users, AlertCircle, Search, Lock, Eye, EyeOff } from 'lucide-react';
 
 interface Negocio {
@@ -457,6 +458,9 @@ function Panel({ secret, onLogout }: { secret: string; onLogout: () => void }) {
                         </div>
                     </div>
                 </div>
+
+                {/* QR para cobrar VentaRD (herramienta del operador) */}
+                <QrCobro />
 
                 {/* Búsqueda + filtros por estado */}
                 <div className="flex flex-col sm:flex-row sm:items-center gap-3 mb-4">
