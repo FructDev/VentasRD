@@ -6,27 +6,26 @@
 
 import { useEffect, useState } from 'react';
 import { useConfigStore } from '@/store/useConfigStore';
+import { crearLinkPago } from '@/lib/linkPago';
 import { formatDOP } from '@/lib/utils';
 
 export default function QrTransferencia({ monto }: { monto: number }) {
     const datosPago = useConfigStore(s => s.datosPago);
+    const negocioNombre = useConfigStore(s => s.negocioNombre);
     const [qr, setQr] = useState<string | null>(null);
 
     useEffect(() => {
         let vivo = true;
         if (!datosPago?.cuenta) { setQr(null); return; }
-        const texto =
-            `TRANSFERENCIA\n` +
-            `Banco: ${datosPago.banco || '-'}\n` +
-            `Cuenta: ${datosPago.cuenta}\n` +
-            `Titular: ${datosPago.titular || '-'}\n` +
-            `Monto: ${formatDOP(monto)}`;
+        // El QR contiene un LINK a /pagar: los QR de texto con numeros de
+        // cuenta los leen mal los celulares (los interpretan como telefono).
+        const texto = crearLinkPago({ banco: datosPago.banco, cuenta: datosPago.cuenta, titular: datosPago.titular, monto, nombre: negocioNombre || undefined });
         import('qrcode')
             .then(QR => QR.toDataURL(texto, { width: 280, margin: 1, color: { dark: '#0D1B2E', light: '#FFFFFF' } }))
             .then(url => { if (vivo) setQr(url); })
             .catch(() => { if (vivo) setQr(null); });
         return () => { vivo = false; };
-    }, [datosPago, monto]);
+    }, [datosPago, monto, negocioNombre]);
 
     if (!datosPago?.cuenta) return null;
 

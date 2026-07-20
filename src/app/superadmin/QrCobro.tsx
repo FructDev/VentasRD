@@ -6,6 +6,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { crearLinkPago } from '@/lib/linkPago';
 
 const DATOS_KEY = 'vrd_sa_datos_cobro';
 
@@ -41,12 +42,9 @@ export default function QrCobro() {
         let vivo = true;
         const m = parseFloat(monto) || 0;
         if (!datos.cuenta.trim() || m <= 0) { setQr(null); return; }
-        const texto =
-            `PAGO VENTARD\n` +
-            `Banco: ${datos.banco.trim() || '-'}\n` +
-            `Cuenta: ${datos.cuenta.trim()}\n` +
-            `Titular: ${datos.titular.trim() || '-'}\n` +
-            `Monto: RD$${m.toLocaleString('es-DO', { minimumFractionDigits: 2 })}`;
+        // El QR contiene un LINK (los QR de texto con numeros de cuenta los
+        // leen mal los celulares: los interpretan como telefono)
+        const texto = crearLinkPago({ banco: datos.banco.trim(), cuenta: datos.cuenta.trim(), titular: datos.titular.trim(), monto: m, nombre: 'VentaRD' });
         import('qrcode')
             .then(QR => QR.toDataURL(texto, { width: 480, margin: 2, color: { dark: '#0D1B2E', light: '#FFFFFF' } }))
             .then(url => { if (vivo) setQr(url); })
