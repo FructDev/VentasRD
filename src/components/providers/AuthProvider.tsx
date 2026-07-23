@@ -9,6 +9,16 @@ import PinScreen from '@/components/ui/PinScreen';
 import SubscriptionGate from '@/components/ui/SubscriptionGate';
 import { puedeAcceder } from '@/lib/acceso';
 
+// Una red 'conectada pero muerta' (WiFi sin internet) deja navigator.onLine
+// en true y las peticiones colgadas por 30-60s — el arranque se eternizaba.
+// Timeout corto: si Supabase no responde rápido, caemos al caché local.
+function conTimeout<T>(p: PromiseLike<T>, ms: number, fallback: T): Promise<T> {
+    return Promise.race([
+        Promise.resolve(p),
+        new Promise<T>(res => setTimeout(() => res(fallback), ms)),
+    ]);
+}
+
 const RUTAS_PUBLICAS = ['/login', '/registro', '/landing', '/offline', '/pin', '/recuperar-contrasena', '/actualizar-contrasena', '/superadmin', '/auth/confirm', '/onboarding', '/select-branch', '/unirse', '/catalogo', '/terminos', '/privacidad', '/ayuda', '/pagar'];
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -89,13 +99,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 // limit(1) + prioridad al onboarding completado: si el dueño quedó
                 // con negocios duplicados (bug histórico), maybeSingle() a secas
                 // lanzaba error con >1 fila y el login entraba en bucle.
-                const { data: negocioDueno, error } = await supabase
-                    .from('negocios')
-                    .select('id, nombre, onboarding_completado, pin_admin, whatsapp_dueno, telefono, rnc, direccion, mensaje_ticket, logo_url, plan_activo, plan_tier, color_marca, fuente_marca, catalogo_publico, banco_nombre, banco_cuenta, banco_titular, trial_hasta, acceso_hasta')
-                    .eq('dueño_id', user.id)
-                    .order('onboarding_completado', { ascending: false })
-                    .limit(1)
-                    .maybeSingle();
+                const { data: negocioDueno, error } = await conTimeout(
+                    supabase
+                        .from('negocios')
+                        .select('id, nombre, onboarding_completado, pin_admin, whatsapp_dueno, telefono, rnc, direccion, mensaje_ticket, logo_url, plan_activo, plan_tier, color_marca, fuente_marca, catalogo_publico, banco_nombre, banco_cuenta, banco_titular, trial_hasta, acceso_hasta')
+                        .eq('dueño_id', user.id)
+                        .order('onboarding_completado', { ascending: false })
+                        .limit(1)
+                        .maybeSingle(),
+                    5000,
+                    // Red muerta: tratar como error → cae al fallback del caché local
+                    { data: null, error: { message: 'timeout_red_muerta' } } as never
+                );
                 let negocio = negocioDueno;
 
                 // 2B. Si no es dueño, buscar en usuarios_negocio (empleado)

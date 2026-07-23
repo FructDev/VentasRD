@@ -14,26 +14,33 @@ const withPWA = withPWAInit({
   workboxOptions: {
     disableDevLogs: true,
     runtimeCaching: [
-      {
-        urlPattern: /^https:\/\/[^/]+\/(|pos|dashboard|clientes|inventario|select-branch|onboarding).*/i,
-        handler: "NetworkFirst",
-        options: {
-          cacheName: "ventard-pages",
-          networkTimeoutSeconds: 3,
-          expiration: {
-            maxEntries: 32,
-            maxAgeSeconds: 24 * 60 * 60,
-          },
-        },
-      },
+      // Assets del build: cache primero, larga vida (los nombres llevan hash)
       {
         urlPattern: /\/_next\/static\/.*/i,
         handler: "CacheFirst",
         options: {
           cacheName: "ventard-static",
           expiration: {
-            maxEntries: 128,
-            maxAgeSeconds: 7 * 24 * 60 * 60,
+            maxEntries: 256,
+            maxAgeSeconds: 30 * 24 * 60 * 60,
+          },
+        },
+      },
+      // TODAS las páginas de la app (documentos y payloads RSC).
+      // StaleWhileRevalidate: sirve el cache AL INSTANTE (offline no espera
+      // ningún timeout de red) y refresca en segundo plano cuando hay señal.
+      // Lecciones del incidente offline: (1) NetworkFirst hacía esperar 3s+
+      // por página en redes muertas; (2) el patrón viejo omitía historial,
+      // reparaciones, gastos, reportes, configuración… que offline fallaban
+      // SIEMPRE; (3) expirar en 24h dejaba la app vacía tras un día sin abrir.
+      {
+        urlPattern: /^https:\/\/[^/]+\/($|login|registro|landing|pin|select-branch|onboarding|historial|inventario|clientes|gastos|dashboard|reportes|configuracion|admin|reparaciones|garantias|apartados|ayuda|offline)([/?#].*)?$/i,
+        handler: "StaleWhileRevalidate",
+        options: {
+          cacheName: "ventard-pages",
+          expiration: {
+            maxEntries: 96,
+            maxAgeSeconds: 30 * 24 * 60 * 60,
           },
         },
       },
