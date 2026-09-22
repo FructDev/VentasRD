@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { User as SupabaseUser } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase/client';
 import { useConfigStore } from '@/store/useConfigStore';
@@ -8,6 +8,8 @@ import { useRouter, usePathname } from 'next/navigation';
 import PinScreen from '@/components/ui/PinScreen';
 import SubscriptionGate from '@/components/ui/SubscriptionGate';
 import { puedeAcceder } from '@/lib/acceso';
+import { hayServidor } from '@/lib/red';
+import { iniciarMedicion, registrarMetrica, type ResultadoMetrica } from '@/lib/rendimiento';
 
 // Una red 'conectada pero muerta' (WiFi sin internet) deja navigator.onLine
 // en true y las peticiones colgadas por 30-60s — el arranque se eternizaba.
@@ -24,6 +26,8 @@ const RUTAS_PUBLICAS = ['/login', '/registro', '/landing', '/offline', '/pin', '
 export function AuthProvider({ children }: { children: React.ReactNode }) {
     const router = useRouter();
     const pathname = usePathname();
+    const pathnameRef = useRef(pathname);
+    pathnameRef.current = pathname;
     const [isReady, setIsReady] = useState(false);
     const [needsPin, setNeedsPin] = useState(false);
 
@@ -37,32 +41,55 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // se guarda y se procesa al terminar (descartar el SIGNED_IN del registro
         // dejaba al usuario sin negocioId y el onboarding con el botón muerto).
         let procesando = false;
-        let pendiente: { user: SupabaseUser | null | undefined } | null = null;
+        let usuarioEnProceso: string | null | undefined;
+        let offlineEnProceso = false;
+        let pendiente: { user: SupabaseUser | null | undefined; forzarOffline: boolean } | null = null;
 
-        const procesarUsuario = async (user: SupabaseUser | null | undefined) => {
-            if (procesando) { pendiente = { user }; return; }
+        const procesarUsuario = async (user: SupabaseUser | null | undefined, forzarOffline = false) => {
+            if (procesando) {
+                // getSession e INITIAL_SESSION pueden informar exactamente la misma
+                // sesión durante el arranque. No repetir todas las consultas por un
+                // evento equivalente; sí conservar un login/logout realmente nuevo.
+                if (usuarioEnProceso === user?.id && offlineEnProceso === forzarOffline) return;
+                pendiente = { user, forzarOffline };
+                return;
+            }
             procesando = true;
+            usuarioEnProceso = user?.id;
+            offlineEnProceso = forzarOffline;
             try {
-                await procesarUsuarioInterno(user);
+                await procesarUsuarioInterno(user, forzarOffline);
                 // Procesar el último evento que llegó mientras trabajábamos
                 while (pendiente && montado) {
                     const siguiente = pendiente;
                     pendiente = null;
-                    await procesarUsuarioInterno(siguiente.user);
+                    usuarioEnProceso = siguiente.user?.id;
+                    offlineEnProceso = siguiente.forzarOffline;
+                    await procesarUsuarioInterno(siguiente.user, siguiente.forzarOffline);
                 }
             } finally {
                 procesando = false;
+                usuarioEnProceso = undefined;
+                offlineEnProceso = false;
             }
         };
 
-        const procesarUsuarioInterno = async (user: SupabaseUser | null | undefined) => {
+        const procesarUsuarioInterno = async (user: SupabaseUser | null | undefined, forzarOffline = false) => {
+            const finalizarArranque = iniciarMedicion();
+            const rutaActual = pathnameRef.current;
             const rutasPublicas = RUTAS_PUBLICAS;
             // Coincidencia por prefijo: cubre rutas con parámetros como /catalogo/:id
             const esPublica = (p: string) => rutasPublicas.some(r => p === r || p.startsWith(r + '/'));
             const currentState = useConfigStore.getState();
 
-            // SIN INTERNET — usar caché directamente
-            if (!navigator.onLine) {
+            // SIN INTERNET — usar caché directamente.
+            // Comprobamos el servidor de verdad: con el router muerto (se fue la
+            // luz) navigator.onLine sigue en true y antes caíamos al camino online,
+            // que terminaba expulsando al cajero a /login sin poder autenticarse.
+            const inicioRed = performance.now();
+            const servidorAlcanzable = forzarOffline ? false : await hayServidor();
+            registrarMetrica('arranque.comprobar_servidor', performance.now() - inicioRed, 'ok', { alcanzable: servidorAlcanzable });
+            if (!servidorAlcanzable) {
                 if (currentState.negocioId) {
                     // El dispositivo conoce este negocio
                     // ¿Ya desbloqueó con el PIN en esta sesión offline? → dejar pasar
@@ -70,29 +97,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                     if (!currentState.isOfflineUnlocked) {
                         setNeedsPin(true);
                     } else {
-                        if (rutasPublicas.includes(pathname)) router.push('/');
+                        if (rutasPublicas.includes(rutaActual)) router.push('/');
                         // Empleados: respetar las rutas permitidas por su rol también offline
-                        else if (currentState.nombreUsuario && !puedeAcceder(currentState.rolUsuario, pathname)) router.push('/');
+                        else if (currentState.nombreUsuario && !puedeAcceder(currentState.rolUsuario, rutaActual)) router.push('/');
                     }
                 } else {
                     // Dispositivo nuevo sin datos → no puede hacer nada offline
-                    if (!esPublica(pathname)) router.push('/login');
+                    if (!esPublica(rutaActual)) router.push('/login');
                 }
                 if (montado) setIsReady(true);
+                finalizarArranque('arranque.autenticacion', 'ok', { modo: 'offline-cache' });
                 return;
             }
 
             // CON INTERNET — flujo normal con Supabase
             if (!user) {
                 useConfigStore.getState().cerrarSesionUsuario();
-                if (!esPublica(pathname)) {
+                if (!esPublica(rutaActual)) {
                     const isPWA = window.matchMedia('(display-mode: standalone)').matches || ('standalone' in window.navigator && (window.navigator as any).standalone);
                     router.push(isPWA ? '/login' : '/landing');
                 }
                 if (montado) setIsReady(true);
+                finalizarArranque('arranque.autenticacion', 'ok', { modo: 'sin-sesion' });
                 return;
             }
 
+            let resultadoArranque: ResultadoMetrica = 'ok';
             try {
 
                 // 2A. Buscar si es el DUEÑO del negocio.
@@ -254,11 +284,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 } else {
                     useConfigStore.getState().marcarTiempoVisto();
                 }
-                // Establecer rol: empleado usa su rol asignado, dueño siempre es admin
-                useConfigStore.getState().setRol(
-                    empleado ? (empleado.rol as any) : 'admin',
-                    empleado ? empleado.nombre : null
-                );
+                // Establecer rol: empleado usa su rol asignado, dueño siempre es admin.
+                // OJO: solo cuando el servidor confirmó quién es. En el fallback
+                // offline `empleado` siempre viene null, y asignar 'admin' ahí
+                // convertía a un cajero en administrador con solo abrir la app sin
+                // señal. Sin confirmación del servidor se conserva el rol cacheado.
+                if (empleado) {
+                    useConfigStore.getState().setRol(empleado.rol as any, empleado.nombre);
+                } else if (!error) {
+                    useConfigStore.getState().setRol('admin', null);
+                }
 
                 // Contexto para Sentry: identifica el negocio/rol en cada error
                 // (sin datos personales de clientes finales)
@@ -273,44 +308,62 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 // Mientras el usuario está restableciendo su contraseña (llegó por el
                 // enlace de recuperación), NO redirigir a ningún lado: debe poder
                 // completar el cambio aunque la sesión ya esté activa.
-                const enRecuperacion = pathname.startsWith('/actualizar-contrasena') || pathname.startsWith('/recuperar-contrasena');
+                const enRecuperacion = rutaActual.startsWith('/actualizar-contrasena') || rutaActual.startsWith('/recuperar-contrasena');
                 // El catálogo es una vista pública: no aplicar el enrutador estricto
                 // (evita rebotar al dueño a /select-branch cuando abre su propio link).
-                if (negocio && !enRecuperacion && !pathname.startsWith('/catalogo')) {
+                if (negocio && !enRecuperacion && !rutaActual.startsWith('/catalogo')) {
                     const { sucursalId } = useConfigStore.getState();
 
-                    if (!empleado && negocio.onboarding_completado === false && pathname !== '/onboarding') {
+                    if (!empleado && negocio.onboarding_completado === false && rutaActual !== '/onboarding') {
                         router.push('/onboarding');
                     } else if (negocio.onboarding_completado === true || empleado) {
-                        if (pathname === '/login' || pathname === '/registro' || pathname === '/onboarding' || pathname === '/landing' || pathname === '/unirse') {
+                        if (rutaActual === '/login' || rutaActual === '/registro' || rutaActual === '/onboarding' || rutaActual === '/landing' || rutaActual === '/unirse') {
                             router.push('/');
                         }
                         // Todos (dueño y empleados) deben seleccionar sucursal para que el stock sincronice correctamente
-                        if (!sucursalId && pathname !== '/select-branch' && !pathname.startsWith('/admin') && !pathname.startsWith('/superadmin')) {
+                        if (!sucursalId && rutaActual !== '/select-branch' && !rutaActual.startsWith('/admin') && !rutaActual.startsWith('/superadmin')) {
                             router.push('/select-branch');
                         }
                         // Empleados: bloquear rutas fuera de su rol (la navegación las oculta,
                         // pero esto cubre el acceso directo por URL)
-                        if (empleado && !rutasPublicas.includes(pathname) && !puedeAcceder(empleado.rol as any, pathname)) {
+                        if (empleado && !rutasPublicas.includes(rutaActual) && !puedeAcceder(empleado.rol as any, rutaActual)) {
                             router.push('/');
                         }
                     }
                 }
             } catch (error) {
+                resultadoArranque = 'error';
                 console.error("Error en AuthProvider:", error);
             } finally {
+                finalizarArranque('arranque.autenticacion', resultadoArranque, { modo: 'online' });
                 // Solo mostramos la app cuando todo este proceso haya terminado
                 if (montado) setIsReady(true);
             }
         };
 
-        // Revisar la sesión al entrar a la página
-        supabase.auth.getSession().then(({ data: { session } }) => {
-            procesarUsuario(session?.user);
+        // Revisar la sesión al entrar a la página.
+        // getSession() intenta refrescar el token si expiró — y a las 7 de la
+        // mañana SIEMPRE expiró. Con el router muerto esa petición se cuelga y
+        // el arranque nunca termina. Con timeout: si no responde, arrancamos por
+        // el camino offline en vez de quedarnos en "Iniciando VentaRD…".
+        conTimeout<{ respondio: boolean; user: SupabaseUser | undefined }>(
+            supabase.auth.getSession().then(({ data: { session } }) => ({
+                respondio: true,
+                user: session?.user,
+            })),
+            6000,
+            { respondio: false, user: undefined },
+        ).then(({ respondio, user }) => {
+            // Si getSession no respondió no sabemos si hay sesión: NO expulsar al
+            // login. Forzamos el camino offline, que pide PIN y deja trabajar.
+            procesarUsuario(user, !respondio);
         });
 
         // Escuchar si el usuario inicia sesión o se sale
-        const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+        const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+            // La sesión inicial ya la obtiene getSession con timeout y fallback
+            // offline. Procesarla también aquí duplicaba todas las consultas.
+            if (event === 'INITIAL_SESSION') return;
             procesarUsuario(session?.user);
         });
 
@@ -318,7 +371,38 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             montado = false;
             subscription.unsubscribe();
         };
-    }, [pathname, router]);
+    }, [router]);
+
+    // La autorización de navegación usa únicamente el estado local ya validado.
+    // Cambiar de módulo nunca debe volver a consultar sesión, negocio ni plan.
+    useEffect(() => {
+        if (!isReady || needsPin) return;
+
+        const esPublica = RUTAS_PUBLICAS.some(r => pathname === r || pathname.startsWith(r + '/'));
+        const state = useConfigStore.getState();
+        const enRecuperacion = pathname.startsWith('/actualizar-contrasena') || pathname.startsWith('/recuperar-contrasena');
+        if (enRecuperacion || pathname.startsWith('/catalogo')) return;
+
+        if (!state.negocioId) {
+            if (!esPublica) router.push('/login');
+            return;
+        }
+
+        if (state.user && ['/login', '/registro', '/onboarding', '/landing', '/unirse'].includes(pathname)) {
+            router.push('/');
+            return;
+        }
+
+        if (!state.sucursalId && pathname !== '/select-branch' && !pathname.startsWith('/admin') && !pathname.startsWith('/superadmin')) {
+            router.push('/select-branch');
+            return;
+        }
+
+        const esEmpleado = state.rolUsuario !== 'admin';
+        if (esEmpleado && !esPublica && !puedeAcceder(state.rolUsuario, pathname)) {
+            router.push('/');
+        }
+    }, [isReady, needsPin, pathname, router]);
 
     // Pantalla de carga mientras piensa a dónde enviarte
     if (!isReady) {

@@ -10,6 +10,7 @@ import Novedades from "@/components/ui/Novedades";
 import InstalarApp from "@/components/ui/InstalarApp";
 import { ErrorBoundary } from "@/components/ui/ErrorBoundary";
 import ThemeApplier from "@/components/providers/ThemeApplier";
+import { RendimientoProvider } from "@/components/providers/RendimientoProvider";
 
 // Aplica el tema y el color de marca guardados ANTES de pintar (evita parpadeo)
 const themeInitScript = `(function(){try{
@@ -90,16 +91,18 @@ export default function RootLayout({
       </head>
       <body className="font-body antialiased">
         <ErrorBoundary>
-          <SyncProvider>
-            <AuthProvider>
-              <ThemeApplier />
-              {children}
-              <GlobalToast />
-              <TutorialChecklist />
-              <Novedades />
-              <InstalarApp />
-            </AuthProvider>
-          </SyncProvider>
+          <RendimientoProvider>
+            <SyncProvider>
+              <AuthProvider>
+                <ThemeApplier />
+                {children}
+                <GlobalToast />
+                <TutorialChecklist />
+                <Novedades />
+                <InstalarApp />
+              </AuthProvider>
+            </SyncProvider>
+          </RendimientoProvider>
         </ErrorBoundary>
       </body>
     </html>

@@ -1,6 +1,6 @@
 // src/lib/db/dexie.ts
 import Dexie, { Table } from 'dexie';
-import { VentaLocal, ProductoLocal, ComposicionLocal, ClienteLocal, TransaccionFiadoLocal, VentaDetalleLocal, CajaLocal, SucursalLocal, DevolucionLocal, CorteCajaLocal, SerialLocal, MovimientoStockLocal, GastoLocal, ReparacionLocal, ApartadoLocal } from '@/types/database';
+import { VentaLocal, ProductoLocal, ComposicionLocal, ClienteLocal, TransaccionFiadoLocal, VentaDetalleLocal, CajaLocal, SucursalLocal, DevolucionLocal, CorteCajaLocal, SerialLocal, MovimientoStockLocal, GastoLocal, ReparacionLocal, ApartadoLocal, SecuenciaLocal } from '@/types/database';
 
 export class VentaRDDatabase extends Dexie {
     ventas!: Table<VentaLocal>;
@@ -18,9 +18,10 @@ export class VentaRDDatabase extends Dexie {
     gastos!: Table<GastoLocal>;
     reparaciones!: Table<ReparacionLocal>;
     apartados!: Table<ApartadoLocal>;
+    secuencias!: Table<SecuenciaLocal>;
 
-    constructor() {
-        super('VentaRD_Vault');
+    constructor(nombre = 'VentaRD_Vault') {
+        super(nombre);
 
         this.version(7).stores({
             ventas: 'id, negocio_id, estado_sincronizacion, fecha_creacion',
@@ -94,6 +95,12 @@ export class VentaRDDatabase extends Dexie {
         // v20: apartados (Plan Pro — layaway / plan separe)
         this.version(20).stores({
             apartados: 'id, negocio_id, sucursal_id, folio, estado, cliente_telefono, estado_sincronizacion, fecha_creacion, fecha_actualizacion',
+        });
+
+        // v21: contadores locales transaccionales por caja. Es aditivo; el valor
+        // inicial se deriva perezosamente del historial y ultimoTicket cacheado.
+        this.version(21).stores({
+            secuencias: 'id, negocio_id, caja_codigo, tipo',
         });
     }
 }

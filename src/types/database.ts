@@ -5,6 +5,17 @@ export interface Negocio {
     nombre: string;
 }
 
+/** Contador durable por negocio/caja. Evita recorrer todo el historial para
+ * asignar tickets y permite reservar el número dentro de la misma transacción. */
+export interface SecuenciaLocal {
+    id: string;
+    negocio_id: string;
+    caja_codigo: string;
+    tipo: 'ticket';
+    ultimo: number;
+    fecha_actualizacion: number;
+}
+
 export interface ProductoLocal {
     id: string;
     negocio_id: string;
@@ -326,4 +337,4 @@ export interface SucursalLocal {
     nombre: string;
     direccion?: string | null;
     fecha_creacion?: number;
-}
+}

@@ -6,7 +6,10 @@ const withPWA = withPWAInit({
   dest: "public",
   cacheOnFrontEndNav: true,
   aggressiveFrontEndNavCaching: true,
-  reloadOnOnline: true,
+  // NO recargar al volver la señal: en un POS eso borra el carrito, el formulario
+  // de fiado o el conteo de efectivo que solo vive en React. El worker de sync
+  // ya se pone al día en segundo plano sin tocar la pantalla.
+  reloadOnOnline: false,
   disable: process.env.NODE_ENV === "development",
   fallbacks: {
     document: "/offline",

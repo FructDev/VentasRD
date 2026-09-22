@@ -25,6 +25,7 @@ import CajaModal from '@/components/shared/CajaModal';
 import ConfirmModal from '@/components/ui/ConfirmModal';
 import { SkeletonProductGrid } from '@/components/ui/Skeleton';
 import { useLiveQuery } from 'dexie-react-hooks';
+import { estaSyncActivo, iniciarMedicion, type ResultadoMetrica } from '@/lib/rendimiento';
 
 // Color del stock según nivel (puro — fuera del componente para no recrearse)
 function getStockColor(producto: ProductoLocal) {
@@ -309,15 +310,21 @@ export default function POSPage() {
     if (procesandoVentaRef.current) return;
     procesandoVentaRef.current = true;
     setProcesandoVenta(true);
+    const finalizarInterfazLista = iniciarMedicion();
+    const syncActivoAlIniciar = estaSyncActivo();
+    const finalizarVenta = iniciarMedicion();
+    let resultadoVenta: ResultadoMetrica = 'ok';
 
     try {
       // ── Validación de stock antes de procesar ────────────────────────────
+      const finalizarValidacion = iniciarMedicion();
       for (const item of items) {
         const receta = await db.composiciones.where('producto_padre_id').equals(item.id).toArray();
         if (receta.length === 0) {
           // Producto simple/insumo — verificar stock disponible
           const producto = await db.productos.get(item.id);
           if (producto && producto.stock_actual < item.cantidad) {
+            resultadoVenta = 'cancelada';
             showToast(
               `Stock insuficiente: ${producto.nombre} (disponible: ${producto.stock_actual < 0 ? 0 : producto.stock_actual})`,
               'error'
@@ -326,12 +333,14 @@ export default function POSPage() {
           }
         }
       }
+      finalizarValidacion('venta.validacion', 'ok', { articulos: items.length });
 
       const ncfGenerado = emitirNcf ? consumirNcf() || undefined : undefined;
 
       const cajaCodigo = getDispositivoId();
       const idVenta = uuidv4();
 
+      const finalizarTransaccion = iniciarMedicion();
       await db.transaction('rw', [db.ventas, db.venta_detalles, db.productos, db.composiciones, db.transacciones_fiado, db.movimientos_stock], async () => {
         const ticketNum = await getNextTicketNumber(negocioId, cajaCodigo);
 
@@ -411,9 +420,11 @@ export default function POSPage() {
           }
         }
       });
+      finalizarTransaccion('venta.transaccion_local', 'ok', { articulos: items.length });
 
       // Marcar seriales como vendidos (fuera de la transacción principal para no bloquearla)
       const serialesVendidos = items.filter(i => i.serial_id);
+      const finalizarSeriales = iniciarMedicion();
       if (serialesVendidos.length > 0) {
         // Manejador de evento (checkout): Date.now() es seguro aquí.
         // eslint-disable-next-line react-hooks/purity
@@ -436,8 +447,11 @@ export default function POSPage() {
           })
         ));
       }
+      finalizarSeriales('venta.seriales', 'ok', { seriales: serialesVendidos.length });
 
+      const finalizarTicket = iniciarMedicion();
       const ticketNumFinal = await getNextTicketNumber(negocioId, cajaCodigo) - 1;
+      finalizarTicket('venta.ticket_final');
       setUltimoTicketNum(ticketNumFinal);
       // Persistir el último ticket emitido (sobrevive a la purga de datos viejos)
       useConfigStore.setState({ ultimoTicket: ticketNumFinal });
@@ -452,11 +466,32 @@ export default function POSPage() {
       }
 
     } catch (error) {
+      resultadoVenta = 'error';
       console.error("Error en la transacción de venta:", error);
       showToast("Hubo un problema al procesar la venta.", "error");
     } finally {
+      finalizarVenta('venta.total', resultadoVenta, {
+        articulos: items.length,
+        seriales: items.filter(i => i.serial_id).length,
+        online: navigator.onLine,
+        syncActivoInicio: syncActivoAlIniciar,
+        syncActivoFinal: estaSyncActivo(),
+        impresionAutomatica: impresion.autoImprimir,
+        pwa: window.matchMedia('(display-mode: standalone)').matches,
+      });
       procesandoVentaRef.current = false;
       setProcesandoVenta(false);
+      // Dos frames: el primero aplica el estado React y el segundo aproxima el
+      // momento en que la interfaz ya volvió a estar pintada y utilizable.
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        finalizarInterfazLista('venta.interfaz_lista', resultadoVenta, {
+          articulos: items.length,
+          seriales: items.filter(i => i.serial_id).length,
+          syncActivoInicio: syncActivoAlIniciar,
+          syncActivoFinal: estaSyncActivo(),
+          impresionAutomatica: impresion.autoImprimir,
+        });
+      }));
     }
   };
 

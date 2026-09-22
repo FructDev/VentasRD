@@ -4,11 +4,16 @@ import { supabase } from '../supabase/client';
 import { useConfigStore } from '@/store/useConfigStore';
 import { productosConMovimientosPendientes } from './stock';
 import type { ProductoLocal } from '@/types/database';
+import { iniciarMedicion, marcarSyncActivo, registrarMetrica, type ResultadoMetrica } from '../rendimiento';
+import type { RealtimeChannel } from '@supabase/supabase-js';
 
 // ─── Singleton ────────────────────────────────────────────────────────────────
 // Garantiza que nunca corra más de un intervalo de sync a la vez,
 // aunque SyncProvider se desmonte y remonte (ej. navegación rápida).
 let activeInterval: ReturnType<typeof setInterval> | null = null;
+// Referencias a los listeners para poder removerlos en stopSyncWorker.
+let onVisibilidad: (() => void) | null = null;
+let onOnline: (() => void) | null = null;
 
 // ─── Timeout helper ───────────────────────────────────────────────────────────
 // Lanza error si Supabase no responde en `ms` ms, liberando el flag isSyncing.
@@ -19,6 +24,27 @@ function withTimeout<T>(fn: () => PromiseLike<T>, ms = 8000): Promise<T> {
             v => { clearTimeout(id); resolve(v); },
             e => { clearTimeout(id); reject(e); }
         );
+    });
+}
+
+// ─── Protección de cambios pendientes ─────────────────────────────────────────
+// Un pull nunca debe pisar una fila que el dispositivo todavía no ha subido.
+// Antes, el bulkPut sobrescribía el dato local Y lo marcaba como sincronizado:
+// la edición hecha sin señal se perdía en silencio, sin error y sin log.
+// Regla: si la fila local está pendiente (estado_sincronizacion === 0), gana ella
+// — el push de este mismo ciclo la mandará a la nube.
+type FilaSincronizable = { id: string; estado_sincronizacion?: 0 | 1 };
+
+async function sinPisarPendientes<T extends FilaSincronizable>(
+    tabla: { bulkGet: (ids: string[]) => Promise<(T | undefined)[]> },
+    filasNube: T[],
+    mapear: (fila: T) => T = f => f,
+): Promise<T[]> {
+    const locales = await tabla.bulkGet(filasNube.map(f => f.id));
+    return filasNube.map((fila, i) => {
+        const local = locales[i];
+        if (local?.estado_sincronizacion === 0) return local;
+        return { ...mapear(fila), estado_sincronizacion: 1 as const };
     });
 }
 
@@ -69,12 +95,22 @@ const isValidUUID = (s: string | null | undefined): boolean => !!s && UUID_RE.te
 // la pestaña oculta: al llegar un movimiento de otra caja, se refresca ese
 // producto puntualmente (2 lecturas de 1 fila, costo mínimo).
 let realtimeNegocio: string | null = null;
+let realtimeStockChannel: RealtimeChannel | null = null;
 
-function suscribirRealtimeStock(negocioId: string) {
-    if (realtimeNegocio === negocioId) return;
-    realtimeNegocio = negocioId;
+async function limpiarCanalRealtimeStock(): Promise<void> {
+    // getChannels también cubre Fast Refresh: el módulo nuevo puede perder su
+    // referencia, pero el cliente Supabase conserva el canal anterior.
+    const canalesStock = supabase.getChannels().filter(c => c.topic.startsWith('realtime:stock-'));
+    await Promise.allSettled(canalesStock.map(c => supabase.removeChannel(c)));
+    realtimeStockChannel = null;
+    realtimeNegocio = null;
+}
 
-    supabase
+async function suscribirRealtimeStock(negocioId: string): Promise<void> {
+    if (realtimeNegocio === negocioId && realtimeStockChannel) return;
+    await limpiarCanalRealtimeStock();
+
+    realtimeStockChannel = supabase
         .channel(`stock-${negocioId}`)
         .on('postgres_changes', {
             event: 'INSERT',
@@ -82,8 +118,9 @@ function suscribirRealtimeStock(negocioId: string) {
             table: 'movimientos_stock',
             filter: `negocio_id=eq.${negocioId}`,
         }, async (payload) => {
+            const inicioRealtime = performance.now();
             try {
-                const m = payload.new as { id: string; producto_id: string };
+                const m = payload.new as { id: string; producto_id: string; fecha_creacion?: number };
                 if (!m?.producto_id) return;
                 // ¿Es un movimiento nuestro? Ya está aplicado localmente.
                 if (await db.movimientos_stock.get(m.id)) return;
@@ -115,11 +152,16 @@ function suscribirRealtimeStock(negocioId: string) {
                     stock_actual: stock,
                     fecha_actualizacion: (prod.fecha_actualizacion as number) ?? Date.now(),
                 });
+                registrarMetrica('stock.realtime_aplicacion', performance.now() - inicioRealtime, 'ok', {
+                    retrasoRelojMs: m.fecha_creacion ? Math.max(0, Date.now() - m.fecha_creacion) : null,
+                });
             } catch (e) {
+                registrarMetrica('stock.realtime_aplicacion', performance.now() - inicioRealtime, 'error');
                 console.warn('[realtime-stock]', e);
             }
         })
         .subscribe();
+    realtimeNegocio = negocioId;
 }
 
 // ─── Worker principal ─────────────────────────────────────────────────────────
@@ -143,13 +185,18 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
         }
 
         isSyncing = true;
+        marcarSyncActivo(true);
+        const inicioSync = performance.now();
+        const finalizarSync = iniciarMedicion();
+        let resultadoSync: ResultadoMetrica = 'ok';
+        let finPull: number | null = null;
 
         try {
             const { sucursalId, negocioId } = useConfigStore.getState();
             if (!negocioId) return;
 
             // Stock en vivo entre cajas (se suscribe una vez por negocio)
-            suscribirRealtimeStock(negocioId);
+            await suscribirRealtimeStock(negocioId);
 
             // Productos con movimientos de stock aún no subidos: el pull no debe
             // pisar su stock local (la nube todavía no refleja esos movimientos)
@@ -351,7 +398,7 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                 supabase.from('composiciones').select('*').gt('fecha_actualizacion', lastCompTs)
             );
             if (!pullCompErr && cloudComps && cloudComps.length > 0) {
-                await db.composiciones.bulkPut(cloudComps.map(c => ({ ...c, estado_sincronizacion: 1 })));
+                await db.composiciones.bulkPut(await sinPisarPendientes(db.composiciones, cloudComps));
                 setSyncTs('composiciones', maxTs(cloudComps));
             }
 
@@ -361,7 +408,7 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                 supabase.from('clientes').select('*').eq('negocio_id', negocioId).gt('fecha_actualizacion', lastClienteTs)
             );
             if (!pullClienteErr && cloudClientes && cloudClientes.length > 0) {
-                await db.clientes.bulkPut(cloudClientes.map(c => ({ ...c, estado_sincronizacion: 1 })));
+                await db.clientes.bulkPut(await sinPisarPendientes(db.clientes, cloudClientes));
                 setSyncTs('clientes', maxTs(cloudClientes));
             }
 
@@ -371,11 +418,11 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                 supabase.from('transacciones_fiado').select('*').eq('negocio_id', negocioId).gt('fecha_actualizacion', lastTransTs)
             );
             if (!pullTransErr && cloudTrans && cloudTrans.length > 0) {
-                await db.transacciones_fiado.bulkPut(cloudTrans.map(t => ({
-                    ...t,
-                    fecha_creacion: new Date(t.fecha_creacion).getTime(),
-                    estado_sincronizacion: 1,
-                })));
+                await db.transacciones_fiado.bulkPut(await sinPisarPendientes(
+                    db.transacciones_fiado,
+                    cloudTrans,
+                    t => ({ ...t, fecha_creacion: new Date(t.fecha_creacion).getTime() }),
+                ));
                 setSyncTs('transacciones_fiado', maxTs(cloudTrans));
             }
 
@@ -405,7 +452,7 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                 supabase.from('venta_detalles').select('*').eq('negocio_id', negocioId).gt('fecha_creacion', lastDetallesTs)
             );
             if (!pullDetallesErr && cloudDetalles && cloudDetalles.length > 0) {
-                await db.venta_detalles.bulkPut(cloudDetalles.map(d => ({ ...d, estado_sincronizacion: 1 })));
+                await db.venta_detalles.bulkPut(await sinPisarPendientes(db.venta_detalles, cloudDetalles));
                 setSyncTs('venta_detalles', maxCreacionTs(cloudDetalles));
             }
 
@@ -416,7 +463,7 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                 : supabase.from('cajas').select('*').eq('negocio_id', negocioId).gt('fecha_actualizacion', lastCajasTs);
             const { data: cloudCajas, error: pullCajasErr } = await withTimeout(() => cajasQuery);
             if (!pullCajasErr && cloudCajas && cloudCajas.length > 0) {
-                await db.cajas.bulkPut(cloudCajas.map(c => ({ ...c, estado_sincronizacion: 1 })));
+                await db.cajas.bulkPut(await sinPisarPendientes(db.cajas, cloudCajas));
                 setSyncTs('cajas', maxTs(cloudCajas));
             }
 
@@ -426,7 +473,7 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                 supabase.from('devoluciones').select('*').eq('negocio_id', negocioId).gt('fecha_creacion', lastDevTs)
             );
             if (!pullDevErr && cloudDevs && cloudDevs.length > 0) {
-                await db.devoluciones.bulkPut(cloudDevs.map(d => ({ ...d, estado_sincronizacion: 1 })));
+                await db.devoluciones.bulkPut(await sinPisarPendientes(db.devoluciones, cloudDevs));
                 setSyncTs('devoluciones', maxCreacionTs(cloudDevs));
             }
 
@@ -437,12 +484,7 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
             );
             if (!pullRepErr && cloudReps && cloudReps.length > 0) {
                 // No pisar reparaciones con cambios locales sin subir
-                const merged = await Promise.all(cloudReps.map(async r => {
-                    const local = await db.reparaciones.get(r.id);
-                    if (local && local.estado_sincronizacion === 0) return local;
-                    return { ...r, estado_sincronizacion: 1 as const };
-                }));
-                await db.reparaciones.bulkPut(merged);
+                await db.reparaciones.bulkPut(await sinPisarPendientes(db.reparaciones, cloudReps));
                 setSyncTs('reparaciones', clampTs(maxTs(cloudReps)));
             }
 
@@ -452,12 +494,7 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                 supabase.from('apartados').select('*').eq('negocio_id', negocioId).gt('fecha_actualizacion', lastApTs)
             );
             if (!pullApErr && cloudAps && cloudAps.length > 0) {
-                const mergedAp = await Promise.all(cloudAps.map(async a => {
-                    const local = await db.apartados.get(a.id);
-                    if (local && local.estado_sincronizacion === 0) return local;
-                    return { ...a, estado_sincronizacion: 1 as const };
-                }));
-                await db.apartados.bulkPut(mergedAp);
+                await db.apartados.bulkPut(await sinPisarPendientes(db.apartados, cloudAps));
                 setSyncTs('apartados', clampTs(maxTs(cloudAps)));
             }
 
@@ -468,12 +505,7 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
             );
             if (!pullSerialesErr && cloudSeriales && cloudSeriales.length > 0) {
                 // No pisar seriales con cambios locales sin subir (ej. recién vendidos)
-                const mergedSer = await Promise.all(cloudSeriales.map(async s => {
-                    const local = await db.seriales.get(s.id);
-                    if (local && local.estado_sincronizacion === 0) return local;
-                    return { ...s, estado_sincronizacion: 1 as const };
-                }));
-                await db.seriales.bulkPut(mergedSer);
+                await db.seriales.bulkPut(await sinPisarPendientes(db.seriales, cloudSeriales));
                 setSyncTs('seriales', clampTs(maxTs(cloudSeriales)));
             }
 
@@ -483,7 +515,7 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                 supabase.from('gastos').select('*').eq('negocio_id', negocioId).gt('fecha_actualizacion', lastGastosTs)
             );
             if (!pullGastosErr && cloudGastos && cloudGastos.length > 0) {
-                await db.gastos.bulkPut(cloudGastos.map(g => ({ ...g, estado_sincronizacion: 1 })));
+                await db.gastos.bulkPut(await sinPisarPendientes(db.gastos, cloudGastos));
                 setSyncTs('gastos', maxTs(cloudGastos));
             }
 
@@ -493,7 +525,7 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                 supabase.from('cortes_caja').select('*').eq('negocio_id', negocioId).gt('fecha_creacion', lastCortesTs)
             );
             if (!pullCortesErr && cloudCortes && cloudCortes.length > 0) {
-                await db.cortes_caja.bulkPut(cloudCortes.map(c => ({ ...c, estado_sincronizacion: 1 })));
+                await db.cortes_caja.bulkPut(await sinPisarPendientes(db.cortes_caja, cloudCortes));
                 setSyncTs('cortes_caja', maxCreacionTs(cloudCortes));
             }
 
@@ -562,6 +594,8 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
             // ══════════════════════════════════════════════════════════════════
             // 2. PUSH — Subir a la nube
             // ══════════════════════════════════════════════════════════════════
+            finPull = performance.now();
+            registrarMetrica('sync.pull', finPull - inicioSync);
 
             // ── 2.A  Ventas ───────────────────────────────────────────────────
             const ventasPendientes = await db.ventas.where('estado_sincronizacion').equals(0).toArray();
@@ -681,6 +715,7 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                 .where('estado_sincronizacion').equals(0).toArray())
                 .sort((a, b) => a.fecha_creacion - b.fecha_creacion);
             for (const mov of movsPendientes) {
+                const inicioMovimiento = performance.now();
                 const { error: movErr } = await withTimeout(() =>
                     supabase.rpc('aplicar_movimiento_stock', {
                         p_id: mov.id,
@@ -695,6 +730,7 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                     })
                 );
                 if (movErr) {
+                    registrarMetrica('stock.push_confirmacion', performance.now() - inicioMovimiento, 'error');
                     // Errores PERMANENTES (FK rota, dato inválido): reintentar jamás
                     // funcionará y el break bloquearía TODOS los movimientos futuros
                     // → descartar esta fila (queda en el log) y seguir con el resto.
@@ -709,6 +745,7 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                     break;
                 }
                 await db.movimientos_stock.update(mov.id, { estado_sincronizacion: 1 });
+                registrarMetrica('stock.push_confirmacion', performance.now() - inicioMovimiento, 'ok');
             }
 
             // ── 2.D  Composiciones ────────────────────────────────────────────
@@ -1049,6 +1086,7 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
             consecutiveErrors = 0;
 
         } catch (err) {
+            resultadoSync = 'error';
             consecutiveErrors++;
             const isTimeout = err instanceof Error && err.message === 'sync_timeout';
             console.error(`🚨 Error en sync worker (intento ${consecutiveErrors}):`, isTimeout ? 'timeout de Supabase' : err);
@@ -1059,6 +1097,13 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                 }).catch(() => { });
             }
         } finally {
+            const finSync = performance.now();
+            if (finPull !== null) registrarMetrica('sync.push_y_mantenimiento', finSync - finPull, resultadoSync);
+            finalizarSync('sync.total', resultadoSync, {
+                online: navigator.onLine,
+                erroresConsecutivos: consecutiveErrors,
+            });
+            marcarSyncActivo(false);
             isSyncing = false;
         }
     };
@@ -1068,17 +1113,20 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
     // Al volver la pestaña al frente: sincronizar YA (sin esperar el próximo
     // tick) y forzar el reconteo de stock (el gate de 120s se resetea) — la PC
     // del taller que estuvo minimizada se pone al día en segundos.
+    onVisibilidad = () => {
+        if (!document.hidden) {
+            localStorage.removeItem('vrd_stock_recon_ts');
+            tick();
+        }
+    };
+    onOnline = () => { tick(); };
+
     if (typeof document !== 'undefined') {
-        document.addEventListener('visibilitychange', () => {
-            if (!document.hidden) {
-                localStorage.removeItem('vrd_stock_recon_ts');
-                tick();
-            }
-        });
+        document.addEventListener('visibilitychange', onVisibilidad);
     }
     // Al recuperar internet: sincronizar de inmediato
     if (typeof window !== 'undefined') {
-        window.addEventListener('online', () => tick());
+        window.addEventListener('online', onOnline);
     }
 
     return activeInterval;
@@ -1089,4 +1137,16 @@ export const stopSyncWorker = () => {
         clearInterval(activeInterval);
         activeInterval = null;
     }
+    // Sin esto los listeners se acumulan en cada reinicio del provider (cambio de
+    // sesión, navegación) y cada evento dispara varios ticks en paralelo.
+    if (onVisibilidad && typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', onVisibilidad);
+        onVisibilidad = null;
+    }
+    if (onOnline && typeof window !== 'undefined') {
+        window.removeEventListener('online', onOnline);
+        onOnline = null;
+    }
+    // No dejar canales del negocio anterior ni callbacks duplicados al remontar.
+    void limpiarCanalRealtimeStock();
 };

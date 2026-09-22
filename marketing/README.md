@@ -1,5 +1,11 @@
 # Kit promocional VentaRD
 
+## Kit comercial 2026
+
+El kit actualizado para ventas digitales, guiones, WhatsApp, calendario y artes
+se encuentra en [`kit-ventas/`](kit-ventas/README.md). Incluye 8 posts, 4
+historias y un folleto PDF generado automáticamente.
+
 ## Contenido
 
 | Archivo | Formato | Uso |

@@ -386,7 +386,7 @@ export default function CajaModal({ isOpen, onClose }: Props) {
         <>
         {ticketOculto}
         <div className="fixed inset-0 bg-black/70 backdrop-blur-md z-50 flex items-center justify-center p-4 animate-fade-in">
-            <div className="bg-navy-2 w-full max-w-lg rounded-2xl border border-navy-3 shadow-2xl overflow-hidden animate-scale-in max-h-[90vh] flex flex-col">
+            <div className={`bg-navy-2 w-full ${esCierre ? 'max-w-2xl' : 'max-w-lg'} rounded-2xl border border-navy-3 shadow-2xl overflow-hidden animate-scale-in max-h-[95vh] flex flex-col`}>
                 {/* Header */}
                 <div className="p-4 sm:p-6 border-b border-navy-3 flex justify-between items-start shrink-0 gap-3">
                     <div>
@@ -511,26 +511,32 @@ export default function CajaModal({ isOpen, onClose }: Props) {
                 )}
 
                 {/* Denominaciones */}
-                <div className="flex-1 overflow-y-auto p-6">
-                    <p className="text-xs font-bold text-vr-gray uppercase tracking-wider mb-3">Conteo de Denominaciones</p>
-                    <div className="space-y-2">
+                <div className="flex-1 overflow-y-auto p-4 sm:p-6">
+                    <p className="text-sm font-bold text-white uppercase tracking-wider mb-3">Conteo de denominaciones</p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         {DENOMINACIONES.map(d => (
-                            <div key={d.valor} className="flex items-center gap-3">
-                                <span className="w-24 text-sm font-bold text-white">{d.label}</span>
-                                <span className="text-vr-gray">×</span>
+                            <label
+                                key={d.valor}
+                                className="grid grid-cols-[minmax(4.5rem,1fr)_auto_minmax(6rem,1.15fr)] items-center gap-2 rounded-xl border border-navy-3 bg-navy px-3 py-2.5 focus-within:border-gold/60 focus-within:bg-gold/5 transition-colors"
+                            >
+                                <span className="text-base font-black text-white whitespace-nowrap">{d.label}</span>
+                                <span className="text-vr-gray font-bold" aria-hidden="true">×</span>
                                 <input
-                                    type="number" min="0"
-                                    className="w-20 bg-navy-3 border border-navy-3 rounded-lg px-3 py-2 text-white font-mono text-center focus:border-gold outline-none transition-all text-sm"
+                                    type="number"
+                                    min="0"
+                                    inputMode="numeric"
+                                    aria-label={`Cantidad de ${d.label}`}
+                                    className="w-full min-w-0 h-12 bg-navy-3 border border-navy-3 rounded-lg px-3 text-white font-mono font-bold text-center focus:border-gold outline-none transition-all text-lg"
                                     value={denominaciones[String(d.valor)] || ''}
                                     onChange={e => handleDenominacion(d.valor, e.target.value)}
                                     placeholder="0"
                                 />
-                                <span className="text-vr-gray text-sm font-mono flex-1 text-right">
+                                <span className="col-span-3 text-vr-gray text-xs font-mono text-right min-h-4">
                                     {(denominaciones[String(d.valor)] || 0) > 0
                                         ? formatDOP(d.valor * (denominaciones[String(d.valor)] || 0))
                                         : '-'}
                                 </span>
-                            </div>
+                            </label>
                         ))}
                     </div>
 
