@@ -10,6 +10,7 @@ export type Severity = 'INFO' | 'WARNING' | 'ERROR' | 'CRITICAL';
 export type Category = 'SALE' | 'INVENTORY' | 'SYNC' | 'PAYMENT' | 'CASH' | 'REPORTING' | 'COMPATIBILITY' | 'UNKNOWN';
 export type Verificability = 'VERIFIED' | 'DISCREPANT' | 'UNVERIFIABLE';
 export type SyncState = 'PENDING' | 'PENDING_AGED' | 'APPLIED_VERIFIED' | 'RECOVERABLE_ERROR' | 'INTERVENTION_REQUIRED' | 'FALSE_CONFIRMED' | 'UNKNOWN';
+export type PropagationStage = 'UPLOAD' | 'REMOTE_APPLY' | 'DEVICE_RECEIVE' | 'DEVICE_UPDATE';
 export type FindingCode =
     | 'SALE_ORPHAN_LINE' | 'SALE_MISSING_REQUIRED_EFFECT' | 'SALE_TOTAL_MISMATCH' | 'SALE_TOTAL_UNVERIFIABLE'
     | 'STOCK_BASE_UNVERIFIABLE' | 'STOCK_MATERIALIZED_MISMATCH' | 'STOCK_PRODUCT_MISSING'
@@ -128,7 +129,7 @@ export interface SnapshotRecords {
 export interface SourceSnapshot {
     contractVersion: '1.0';
     source: { sourceId: string; kind: 'LOCAL' | 'REMOTE'; deviceLabel?: string; negocioId: string; sucursalId?: string; serverIdentityVerified?: boolean };
-    capture: { startedAt: number; finishedAt: number; asOf: number; temporalConsistency: 'COHERENT' | 'WINDOWED' | 'UNKNOWN'; connectivityObserved?: boolean };
+    capture: { startedAt: number; finishedAt: number; asOf: number; temporalConsistency: 'COHERENT' | 'WINDOWED' | 'UNKNOWN'; connectivityObserved?: boolean; /** Capture sequence asserted by the diagnostic operator/workflow, not inferred from PC clocks. */ observedAfterSourceIds?: string[] };
     coverage: Coverage[];
     records: SnapshotRecords;
 }
@@ -147,6 +148,7 @@ export interface Finding {
     remoteEvidence: EvidenceRef[];
     missingEvidence: string[];
     interpretedSyncState?: SyncState;
+    stage?: PropagationStage;
     verificability: Verificability;
     diagnosticRecommendation: string;
 }

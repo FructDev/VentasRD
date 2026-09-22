@@ -20,6 +20,7 @@ export function analyzeLocalSync(snapshot: SourceSnapshot, request: Reconciliati
             explanation: row.syncFlag === 1 ? 'Marca local de sincronizado sin evidencia remota independiente; aplicación remota desconocida.' : aged ? 'Operación local pendiente más allá del umbral diagnóstico con conectividad observada; no demuestra pérdida.' : 'Operación local pendiente de sincronización o verificación.',
             localEvidence: [{ sourceId: snapshot.source.sourceId, entity: row.entity, id: row.id, field: 'syncFlag', observedValue: row.syncFlag, capturedAt: snapshot.capture.finishedAt, coverageStatus: coverage ? effectiveCoverage(coverage) : 'UNAVAILABLE' }], remoteEvidence: [],
             missingEvidence: row.syncFlag === 1 ? ['REMOTE_RECEIPT'] : [], interpretedSyncState: row.syncFlag === 1 ? 'UNKNOWN' : aged ? 'PENDING_AGED' : 'PENDING',
+            stage: row.syncFlag === 1 ? 'REMOTE_APPLY' : 'UPLOAD',
             verificability: row.syncFlag === 1 ? 'UNVERIFIABLE' : 'VERIFIED', diagnosticRecommendation: 'Obtener lectura remota autorizada por ID en una fase separada; no reintentar desde el diagnóstico.',
         });
     }

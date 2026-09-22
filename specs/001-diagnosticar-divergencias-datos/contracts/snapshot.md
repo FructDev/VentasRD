@@ -46,6 +46,7 @@ SourceSnapshot {
     finishedAt: epochMilliseconds
     asOf: epochMilliseconds
     temporalConsistency: "COHERENT" | "WINDOWED" | "UNKNOWN"
+    observedAfterSourceIds?: stableString[] // orden de captura explícito; nunca deducido de relojes de PCs
   }
   coverage: Coverage[]
   records: {

@@ -28,7 +28,7 @@ const coverage = z.strictObject({ entity, scope, status: z.enum(['COMPLETE', 'PA
 const snapshot = z.strictObject({
     contractVersion: z.literal('1.0'),
     source: z.strictObject({ sourceId: z.string().min(1).max(120), kind: z.enum(['LOCAL', 'REMOTE']), deviceLabel: z.string().min(1).max(120).optional(), negocioId: uuid, sucursalId: uuid.optional(), serverIdentityVerified: z.boolean().optional() }),
-    capture: z.strictObject({ startedAt: ms, finishedAt: ms, asOf: ms, temporalConsistency: z.enum(['COHERENT', 'WINDOWED', 'UNKNOWN']), connectivityObserved: z.boolean().optional() }),
+    capture: z.strictObject({ startedAt: ms, finishedAt: ms, asOf: ms, temporalConsistency: z.enum(['COHERENT', 'WINDOWED', 'UNKNOWN']), connectivityObserved: z.boolean().optional(), observedAfterSourceIds: z.array(z.string().min(1).max(120)).max(2).optional() }),
     coverage: z.array(coverage), records,
 }).superRefine((value, ctx) => {
     if (value.capture.startedAt > value.capture.finishedAt) ctx.addIssue({ code: 'custom', message: 'capture window inverted' });
@@ -61,6 +61,10 @@ const inputSchema = z.strictObject({
         sources.add(s.source.sourceId);
         if (s.source.negocioId !== value.request.negocioId || (value.request.sucursalId && s.source.sucursalId && s.source.sucursalId !== value.request.sucursalId)) ctx.addIssue({ code: 'custom', message: 'source scope mismatch' });
         if (s.capture.asOf !== value.request.asOf) ctx.addIssue({ code: 'custom', message: 'asOf mismatch' });
+        if (s.capture.observedAfterSourceIds?.includes(s.source.sourceId)) ctx.addIssue({ code: 'custom', message: 'self capture order' });
+    }
+    for (const s of value.snapshots) for (const prior of s.capture.observedAfterSourceIds ?? []) {
+        if (!sources.has(prior)) ctx.addIssue({ code: 'custom', message: 'unknown prior source' });
     }
 });
 
@@ -89,6 +93,7 @@ const finding = z.strictObject({
     ids: z.strictObject({ saleId: z.string().optional(), productId: z.string().optional(), movementId: z.string().optional(), cashId: z.string().optional(), refundId: z.string().optional(), operationId: z.string().optional() }),
     sources: z.array(z.string()), explanation: z.string(), localEvidence: z.array(evidence), remoteEvidence: z.array(evidence), missingEvidence: z.array(z.string()),
     interpretedSyncState: z.enum(['PENDING', 'PENDING_AGED', 'APPLIED_VERIFIED', 'RECOVERABLE_ERROR', 'INTERVENTION_REQUIRED', 'FALSE_CONFIRMED', 'UNKNOWN']).optional(),
+    stage: z.enum(['UPLOAD', 'REMOTE_APPLY', 'DEVICE_RECEIVE', 'DEVICE_UPDATE']).optional(),
     verificability: z.enum(['VERIFIED', 'DISCREPANT', 'UNVERIFIABLE']), diagnosticRecommendation: z.string(),
 });
 const reportSchema = z.strictObject({
