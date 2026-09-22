@@ -120,17 +120,17 @@ description: "Tareas de implementación de la conciliación diagnóstica de Vent
 
 ### Pruebas — escribir primero y comprobar fallo
 
-- [ ] T035 [P] [US3] Escribir pruebas de caracterización de la fórmula hoy usada por `src/components/shared/CajaModal.tsx` (incluidos ventas, gastos y módulos Pro) frente al subconjunto filtrado por negocio/sucursal/turno en `src/lib/diagnostics/reconciliation/rules/cash.test.ts`; probar caja superpuesta y corte incompleto.
-- [ ] T036 [P] [US3] Escribir pruebas de pago registrado versus venta/caja, mixto/fiado/parcial y devolución sin método de reembolso en `src/lib/diagnostics/reconciliation/rules/payments.test.ts`; ninguna salida de efectivo se supone sin evidencia.
-- [ ] T037 [P] [US3] Escribir pruebas de reportes de `src/lib/exports/queries.ts`: ITBIS calculado con tasa actual sin histórica, devolución omitida, venta purgada e histórico remoto no disponible en `src/lib/diagnostics/reconciliation/rules/reporting.test.ts`.
-- [ ] T038 [US3] Escribir aceptación con fixtures de `quickstart.md` y hashes local/remoto antes/después en `src/lib/diagnostics/reconciliation/finance.integration.test.ts`; exigir contexto correcto, no verificables y cero modificación de ventas, devoluciones, caja o reportes.
+- [X] T035 [P] [US3] Escribir pruebas de caracterización de la fórmula hoy usada por `src/components/shared/CajaModal.tsx` (incluidos ventas, gastos y módulos Pro) frente al subconjunto filtrado por negocio/sucursal/turno en `src/lib/diagnostics/reconciliation/rules/cash.test.ts`; probar caja superpuesta y corte incompleto.
+- [X] T036 [P] [US3] Escribir pruebas de pago registrado versus venta/caja, mixto/fiado/parcial y devolución sin método de reembolso en `src/lib/diagnostics/reconciliation/rules/payments.test.ts`; ninguna salida de efectivo se supone sin evidencia.
+- [X] T037 [P] [US3] Escribir pruebas de reportes de `src/lib/exports/queries.ts`: ITBIS calculado con tasa actual sin histórica, devolución omitida, venta purgada e histórico remoto no disponible en `src/lib/diagnostics/reconciliation/rules/reporting.test.ts`.
+- [X] T038 [US3] Escribir aceptación con fixtures de `quickstart.md` y hashes local/remoto antes/después en `src/lib/diagnostics/reconciliation/finance.integration.test.ts`; exigir contexto correcto, no verificables y cero modificación de ventas, devoluciones, caja o reportes.
 
 ### Implementación
 
-- [ ] T039 [P] [US3] Implementar atribución de venta a caja por negocio, sucursal, ventana y vínculo disponible, y comparación entre fórmula observable y cifra contextual en `src/lib/diagnostics/reconciliation/rules/cash.ts`; si hay cajas superpuestas o falta vínculo, declarar atribución ambigua y no reescribir la caja.
-- [ ] T040 [P] [US3] Implementar comparación monetaria decimal de método/desglose/importe con venta, caja, fiado y devolución en `src/lib/diagnostics/reconciliation/rules/payments.ts`; distinguir `PAYMENT_CASH_MISMATCH` probado de `REFUND_SETTLEMENT_UNVERIFIABLE`.
-- [ ] T041 [P] [US3] Implementar `REPORT_TAX_UNVERIFIABLE`, `REPORT_REFUND_GAP` y `REPORT_HISTORY_PARTIAL` en `src/lib/diagnostics/reconciliation/rules/reporting.ts`, usando tasa/importe históricos solo si existen y retención/cobertura declaradas.
-- [ ] T042 [US3] Conectar reglas de caja, pago y reporte al motor en `src/lib/diagnostics/reconciliation/analyze.ts`, manteniendo la salida US1/US2 y los nombres de módulos/ingresos Pro según `source-mapping.md`.
+- [X] T039 [P] [US3] Implementar atribución de venta a caja por negocio, sucursal, ventana y vínculo disponible, y comparación entre fórmula observable y cifra contextual en `src/lib/diagnostics/reconciliation/rules/cash.ts`; si hay cajas superpuestas o falta vínculo, declarar atribución ambigua y no reescribir la caja.
+- [X] T040 [P] [US3] Implementar comparación monetaria decimal de método/desglose/importe con venta, caja, fiado y devolución en `src/lib/diagnostics/reconciliation/rules/payments.ts`; distinguir `PAYMENT_CASH_MISMATCH` probado de `REFUND_SETTLEMENT_UNVERIFIABLE`.
+- [X] T041 [P] [US3] Implementar `REPORT_TAX_UNVERIFIABLE`, `REPORT_REFUND_GAP` y `REPORT_HISTORY_PARTIAL` en `src/lib/diagnostics/reconciliation/rules/reporting.ts`, usando tasa/importe históricos solo si existen y retención/cobertura declaradas.
+- [X] T042 [US3] Conectar reglas de caja, pago y reporte al motor en `src/lib/diagnostics/reconciliation/analyze.ts`, manteniendo la salida US1/US2 y los nombres de módulos/ingresos Pro según `source-mapping.md`.
 
 **Checkpoint**: Cifras explicadas sin declarar como exacto aquello que no conserva hechos históricos suficientes.
 

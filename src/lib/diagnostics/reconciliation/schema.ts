@@ -16,13 +16,13 @@ const records = z.strictObject({
     movimientosStock: z.array(z.strictObject({ ...base, productoId: uuid, delta: decimal.optional(), valorAbsoluto: decimal.optional(), tipo: z.string().max(40), referenciaOperacionId: uuid.optional(), fecha: ms, syncFlag, causalOrder: z.number().int().nonnegative().optional(), duplicateEffectVerified: z.boolean().optional() }).refine(v => v.delta !== undefined || v.valorAbsoluto !== undefined)),
     transaccionesFiado: z.array(z.strictObject({ ...base, ventaId: uuid.optional(), clienteId: uuid.optional(), tipo: z.string().max(32), monto: decimal, fecha: ms })),
     seriales: z.array(z.strictObject({ ...base, productoId: uuid, ventaId: uuid.optional(), estado: z.string().max(32), fechaVenta: ms.optional() })),
-    devoluciones: z.array(z.strictObject({ ...base, ventaId: uuid, monto: decimal, fecha: ms })),
-    cajas: z.array(z.strictObject({ ...base, estado: z.string().max(32), fechaApertura: ms, fechaCierre: ms.optional() })),
-    cortesCaja: z.array(z.strictObject({ ...base, cajaId: uuid, tipo: z.enum(['X', 'Z']), fecha: ms })),
-    gastos: z.array(z.strictObject({ ...base, monto: decimal, fecha: ms, metodo: z.string().max(32) })),
-    reparaciones: z.array(z.strictObject({ ...base, fecha: ms, pagos: z.array(payment) })),
-    apartados: z.array(z.strictObject({ ...base, fecha: ms, abonos: z.array(payment) })),
-    reportes: z.array(z.strictObject({ ...base, tipo: z.string().max(64), total: decimal, desde: ms, hasta: ms })),
+    devoluciones: z.array(z.strictObject({ ...base, ventaId: uuid, monto: decimal, fecha: ms, settlementMethod: z.string().max(32).optional() })),
+    cajas: z.array(z.strictObject({ ...base, estado: z.string().max(32), fechaApertura: ms, fechaCierre: ms.optional(), montoApertura: decimal.optional(), montoCierre: decimal.optional(), montoEsperado: decimal.optional(), diferencia: decimal.optional() })),
+    cortesCaja: z.array(z.strictObject({ ...base, cajaId: uuid, tipo: z.enum(['X', 'Z']), fecha: ms, efectivo: decimal.optional(), tarjeta: decimal.optional(), transferencia: decimal.optional(), fiado: decimal.optional(), mixto: decimal.optional(), totalVentas: decimal.optional(), ingresoReparaciones: decimal.optional(), ingresoApartados: decimal.optional(), montoApertura: decimal.optional(), montoEsperado: decimal.optional(), montoContado: decimal.optional(), diferencia: decimal.optional() })),
+    gastos: z.array(z.strictObject({ ...base, monto: decimal, fecha: ms, metodo: z.string().max(32), eliminado: z.boolean().optional() })),
+    reparaciones: z.array(z.strictObject({ ...base, fecha: ms, total: decimal.optional(), declaredPaid: decimal.optional(), paymentHistoryComplete: z.boolean().optional(), pagos: z.array(payment.extend({ origin: z.enum(['HISTORY', 'LEGACY_PERSISTED', 'LEGACY_DEFAULT']).optional() })) })),
+    apartados: z.array(z.strictObject({ ...base, fecha: ms, total: decimal.optional(), declaredPaid: decimal.optional(), paymentHistoryComplete: z.boolean().optional(), abonos: z.array(payment.extend({ origin: z.enum(['HISTORY', 'LEGACY_PERSISTED', 'LEGACY_DEFAULT']).optional() })) })),
+    reportes: z.array(z.strictObject({ ...base, tipo: z.string().max(64), total: decimal, desde: ms, hasta: ms, taxTotal: decimal.optional(), taxFormula: z.enum(['HISTORICAL', 'CURRENT_PRODUCT_RATE', 'DEFAULT_RATE']).optional(), refundsIncluded: z.boolean().optional() })),
 });
 const coverage = z.strictObject({ entity, scope, status: z.enum(['COMPLETE', 'PARTIAL', 'UNAVAILABLE', 'DENIED']), startedAt: ms, finishedAt: ms, rowsRead: z.number().int().nonnegative(), pagesRead: z.number().int().nonnegative().optional(), exhausted: z.boolean().optional(), retentionHorizon: ms.optional(), concurrentChangePossible: z.boolean(), reason: z.string().max(120).optional() }).refine(v => v.startedAt <= v.finishedAt);
 const snapshot = z.strictObject({

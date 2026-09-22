@@ -5,6 +5,9 @@ import { analyzeInventory } from './rules/inventory';
 import { analyzeLocalSync } from './rules/local-sync';
 import { analyzePropagation } from './rules/propagation';
 import { analyzeConflicts } from './rules/conflicts';
+import { analyzeCash } from './rules/cash';
+import { analyzePayments } from './rules/payments';
+import { analyzeReporting } from './rules/reporting';
 import type { ReconciliationInput, ReconciliationReport } from './types';
 
 /** US1 only: pure, deterministic analysis of one already captured local source. */
@@ -16,6 +19,9 @@ export function analyzeLocal(rawInput: ReconciliationInput): ReconciliationRepor
         ...analyzeSales(snapshot, input.request),
         ...analyzeInventory(snapshot, input.request),
         ...analyzeLocalSync(snapshot, input.request),
+        ...analyzeCash(snapshot, input.request),
+        ...analyzePayments(snapshot, input.request),
+        ...analyzeReporting(snapshot, input.request),
     ];
     return buildReport(input, findings);
 }
@@ -31,6 +37,7 @@ export function analyzeReconciliation(rawInput: ReconciliationInput): Reconcilia
     const localSync = analyzeLocalSync(a, input.request).filter(f => f.code !== 'SYNC_REMOTE_UNVERIFIABLE' || !definitive.has(`${f.entity}:${f.ids.movementId ?? f.ids.saleId ?? ''}`));
     return buildReport(input, [
         ...analyzeSales(a, input.request), ...analyzeInventory(a, input.request), ...localSync,
+        ...analyzeCash(a, input.request), ...analyzePayments(a, input.request), ...analyzeReporting(a, input.request),
         ...propagation, ...analyzeConflicts(a, remote, b, input.request),
     ]);
 }

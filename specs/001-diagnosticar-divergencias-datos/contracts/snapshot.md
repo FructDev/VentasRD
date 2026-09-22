@@ -105,6 +105,15 @@ proven. Incomplete historical local retention is PARTIAL for the old period.
   adapter for audit but not exposed in the public report.
 - Stock quantities use decimal strings with the source's precision. A
   valorAbsoluto is distinct from delta and requires causal ordering.
+- Cash snapshots preserve opening/closing/expected/count values when the
+  source actually stores them. Cuts preserve their persisted method totals;
+  these values are observations, not instructions to recalculate a close.
+- Repair and layaway summaries retain payment amount, method and date. A
+  cumulative paid amount is compared only when the complete nested payment
+  history is present. Legacy default methods are labelled as such.
+- Report fixtures may label a tax formula as historical, current-product-rate
+  or default-rate and state whether refunds were included. The analyzer never
+  manufactures these labels from a current catalog value.
 - Every record retains negocioId, available sucursalId, sourceId and
   observedAt/capture reference. Unknown source fields remain unknown, not
   defaulted to zero.

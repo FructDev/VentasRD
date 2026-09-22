@@ -104,13 +104,25 @@ export interface ObservedStockMovement extends ObservedBase {
 }
 export interface ObservedCreditTransaction extends ObservedBase { ventaId?: string; clienteId?: string; tipo: string; monto: string; fecha: number; }
 export interface ObservedSerial extends ObservedBase { productoId: string; ventaId?: string; estado: string; fechaVenta?: number; }
-export interface ObservedRefund extends ObservedBase { ventaId: string; monto: string; fecha: number; }
-export interface ObservedCashRegister extends ObservedBase { estado: string; fechaApertura: number; fechaCierre?: number; }
-export interface ObservedCashCut extends ObservedBase { cajaId: string; tipo: 'X' | 'Z'; fecha: number; }
-export interface ObservedExpense extends ObservedBase { monto: string; fecha: number; metodo: string; }
-export interface ObservedRepairPaymentSummary extends ObservedBase { fecha: number; pagos: { monto: string; fecha: number; metodo: string }[]; }
-export interface ObservedLayawayPaymentSummary extends ObservedBase { fecha: number; abonos: { monto: string; fecha: number; metodo: string }[]; }
-export interface ObservedReportValue extends ObservedBase { tipo: string; total: string; desde: number; hasta: number; }
+export interface ObservedRefund extends ObservedBase { ventaId: string; monto: string; fecha: number; /** Absent in the current local model. */ settlementMethod?: string; }
+export interface ObservedCashRegister extends ObservedBase {
+    estado: string; fechaApertura: number; fechaCierre?: number;
+    montoApertura?: string; montoCierre?: string; montoEsperado?: string; diferencia?: string;
+}
+export interface ObservedCashCut extends ObservedBase {
+    cajaId: string; tipo: 'X' | 'Z'; fecha: number;
+    efectivo?: string; tarjeta?: string; transferencia?: string; fiado?: string; mixto?: string;
+    totalVentas?: string; ingresoReparaciones?: string; ingresoApartados?: string;
+    montoApertura?: string; montoEsperado?: string; montoContado?: string; diferencia?: string;
+}
+export interface ObservedExpense extends ObservedBase { monto: string; fecha: number; metodo: string; eliminado?: boolean; }
+export interface ObservedPayment { monto: string; fecha: number; metodo: string; origin?: 'HISTORY' | 'LEGACY_PERSISTED' | 'LEGACY_DEFAULT'; }
+export interface ObservedRepairPaymentSummary extends ObservedBase { fecha: number; total?: string; declaredPaid?: string; paymentHistoryComplete?: boolean; pagos: ObservedPayment[]; }
+export interface ObservedLayawayPaymentSummary extends ObservedBase { fecha: number; total?: string; declaredPaid?: string; paymentHistoryComplete?: boolean; abonos: ObservedPayment[]; }
+export interface ObservedReportValue extends ObservedBase {
+    tipo: string; total: string; desde: number; hasta: number;
+    taxTotal?: string; taxFormula?: 'HISTORICAL' | 'CURRENT_PRODUCT_RATE' | 'DEFAULT_RATE'; refundsIncluded?: boolean;
+}
 export interface SnapshotRecords {
     ventas: ObservedSale[];
     ventaDetalles: ObservedSaleLine[];
