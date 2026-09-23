@@ -17,9 +17,10 @@ export function analyzeReporting(snapshot: SourceSnapshot, request: Reconciliati
         }
         const refundCoverage = coverageFor(snapshot.coverage, 'devoluciones');
         const refundInScope = (refund: SourceSnapshot['records']['devoluciones'][number]) => refund.negocioId === request.negocioId && (!request.sucursalId || refund.sucursalId === request.sucursalId || snapshot.records.ventas.find(sale => sale.id === refund.ventaId)?.sucursalId === request.sucursalId);
-        const omitted = report.refundsIncluded === false && snapshot.records.devoluciones.some(refund => refundInScope(refund) && overlaps(report, refund.fecha));
+        const matchingRefunds = snapshot.records.devoluciones.filter(refund => refundInScope(refund) && overlaps(report, refund.fecha)).sort((a, b) => a.id.localeCompare(b.id));
+        const omitted = report.refundsIncluded === false && matchingRefunds.length > 0;
         if (omitted && refundCoverage && effectiveCoverage(refundCoverage) === 'COMPLETE') {
-            const refund = snapshot.records.devoluciones.find(row => refundInScope(row) && overlaps(report, row.fecha))!;
+            const refund = matchingRefunds[0];
             findings.push({ code: 'REPORT_REFUND_GAP', severity: 'ERROR', category: 'REPORTING', entity: 'reportes', ids: { operationId: report.id, refundId: refund.id, saleId: refund.ventaId }, sources: [snapshot.source.sourceId], explanation: 'El reporte observado excluye devoluciones aunque existe una devolución cubierta dentro del mismo período.', localEvidence: [evidence(snapshot, 'reportes', report.id, 'refundsIncluded', false), evidence(snapshot, 'devoluciones', refund.id, 'monto', refund.monto)], remoteEvidence: [], missingEvidence: [], verificability: 'DISCREPANT', diagnosticRecommendation: 'Explicar la omisión del reporte actual; no modificar el reporte ni la devolución.' });
         }
         const required: EntityName[] = ['ventas', 'ventaDetalles', 'devoluciones'];

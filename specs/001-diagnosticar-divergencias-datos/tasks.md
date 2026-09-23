@@ -144,17 +144,17 @@ description: "Tareas de implementación de la conciliación diagnóstica de Vent
 
 ### Pruebas — escribir primero y comprobar fallo
 
-- [ ] T043 [P] [US4] Escribir pruebas de determinismo, `findingId`, severidades/categorías, `overall`, evidencia presente/faltante y orden estable bajo permutación de filas en `src/lib/diagnostics/reconciliation/report-contract.test.ts`.
-- [ ] T044 [P] [US4] Escribir pruebas de filtrado de token, contraseña, PIN, teléfono, correo, notas libres e IMEI completo en entradas y evidencias del informe en `src/lib/diagnostics/reconciliation/privacy.test.ts`.
-- [ ] T045 [P] [US4] Escribir pruebas de texto legible para operación/producto, etapa detenida y evidencia faltante, y de ausencia de comandos de reparación, en `src/lib/diagnostics/reconciliation/render.test.ts`.
-- [ ] T046 [US4] Escribir aceptación de informe repetible, redacción, acceso denegado y cero mutación en `src/lib/diagnostics/reconciliation/report.integration.test.ts`, apoyándose en pruebas del endpoint US2 para autorización real.
+- [X] T043 [P] [US4] Escribir pruebas de determinismo, `findingId`, severidades/categorías, `overall`, evidencia presente/faltante y orden estable bajo permutación de filas en `src/lib/diagnostics/reconciliation/report-contract.test.ts`.
+- [X] T044 [P] [US4] Escribir pruebas de filtrado de token, contraseña, PIN, teléfono, correo, notas libres e IMEI completo en entradas y evidencias del informe en `src/lib/diagnostics/reconciliation/privacy.test.ts`.
+- [X] T045 [P] [US4] Escribir pruebas de texto legible para operación/producto, etapa detenida y evidencia faltante, y de ausencia de comandos de reparación, en `src/lib/diagnostics/reconciliation/render.test.ts`.
+- [X] T046 [US4] Escribir aceptación de informe repetible, redacción, acceso denegado y cero mutación en `src/lib/diagnostics/reconciliation/report.integration.test.ts`, apoyándose en pruebas del endpoint US2 para autorización real.
 
 ### Implementación
 
-- [ ] T047 [US4] Implementar allowlist de campos y sanitización previa a serializar `EvidenceRef`/explicaciones en `src/lib/diagnostics/reconciliation/privacy.ts`; nunca incluir secretos, contacto, IMEI completo ni notas libres, aun cuando estén en capturas.
-- [ ] T048 [US4] Integrar sanitización y códigos estables de `contracts/report.md` en `src/lib/diagnostics/reconciliation/report.ts`; todo hallazgo debe contener entidad/IDs, explicación, evidencia local/remota o ausencia, estado conocido y siguiente paso solo diagnóstico.
-- [ ] T049 [US4] Implementar representación humana y JSON versionado del informe en `src/lib/diagnostics/reconciliation/render.ts`, indicando asOf, fuente/dispositivo conocido, ámbito, cobertura, resumen y límites de inferencia sin añadir reloj actual.
-- [ ] T050 [US4] Añadir runner interno que lea un informe JSON 1.0 ya generado y lo presente sin persistirlo ni llamar sync/red en `scripts/diagnostics/render-report.mjs`; no exportar capturas sensibles por defecto ni introducir una pantalla en el POS.
+- [X] T047 [US4] Implementar allowlist de campos y sanitización previa a serializar `EvidenceRef`/explicaciones en `src/lib/diagnostics/reconciliation/privacy.ts`; nunca incluir secretos, contacto, IMEI completo ni notas libres, aun cuando estén en capturas.
+- [X] T048 [US4] Integrar sanitización y códigos estables de `contracts/report.md` en `src/lib/diagnostics/reconciliation/report.ts`; todo hallazgo debe contener entidad/IDs, explicación, evidencia local/remota o ausencia, estado conocido y siguiente paso solo diagnóstico.
+- [X] T049 [US4] Implementar representación humana y JSON versionado del informe en `src/lib/diagnostics/reconciliation/render.ts`, indicando asOf, fuente/dispositivo conocido, ámbito, cobertura, resumen y límites de inferencia sin añadir reloj actual.
+- [X] T050 [US4] Añadir runner interno que lea un informe JSON 1.0 ya generado y lo presente sin persistirlo ni llamar sync/red en `scripts/diagnostics/render-report.mjs`; no exportar capturas sensibles por defecto ni introducir una pantalla en el POS.
 
 **Checkpoint**: Informe apto para revisión de soporte en entorno autorizado; uso con datos reales sujeto a procedimiento de privacidad.
 
