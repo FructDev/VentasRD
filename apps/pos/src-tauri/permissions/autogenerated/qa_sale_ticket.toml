@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-qa-sale-ticket"
+description = "Enables the qa_sale_ticket command without any pre-configured scope."
+commands.allow = ["qa_sale_ticket"]
+
+[[permission]]
+identifier = "deny-qa-sale-ticket"
+description = "Denies the qa_sale_ticket command without any pre-configured scope."
+commands.deny = ["qa_sale_ticket"]

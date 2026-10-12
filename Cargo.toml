@@ -1,0 +1,11 @@
+[workspace]
+members = ["crates/ventard-core", "apps/pos/src-tauri"]
+# No unificar features de fixture plaintext con las del shell cifrado.
+default-members = ["crates/ventard-core"]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+rust-version = "1.88"
+license = "UNLICENSED"
+publish = false

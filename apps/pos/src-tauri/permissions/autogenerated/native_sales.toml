@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-native-sales"
+description = "Enables the native_sales command without any pre-configured scope."
+commands.allow = ["native_sales"]
+
+[[permission]]
+identifier = "deny-native-sales"
+description = "Denies the native_sales command without any pre-configured scope."
+commands.deny = ["native_sales"]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-native-access-provision"
+description = "Enables the native_access_provision command without any pre-configured scope."
+commands.allow = ["native_access_provision"]
+
+[[permission]]
+identifier = "deny-native-access-provision"
+description = "Denies the native_access_provision command without any pre-configured scope."
+commands.deny = ["native_access_provision"]

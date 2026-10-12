@@ -1,0 +1,9 @@
+import {readFileSync} from 'node:fs';
+import {describe,it,expect} from 'vitest';
+const sql=readFileSync('supabase/migrations/20261009180752_native_provision_v1.sql','utf8').replace(/--[^\r\n]*/g,'');
+describe('contrato estático de migración, NO aceptación PostgreSQL/RLS real',()=>{
+ it('encierra el cambio en transacción y guard de ambos negocios sintéticos',()=>{expect(sql).toMatch(/begin;/i);expect(sql).toMatch(/commit;/i);expect(sql).toContain('NATIVE_STAGING_GUARD_FAILED');expect(sql).toContain('PRO00 QA A - SINTETICO');expect(sql).toContain('PRO00 QA B - SINTETICO');expect(sql).not.toMatch(/(?:insert into|update|delete from|alter table)\s+public\.(productos|inventario_sucursales|ventas|cajas|movimientos_stock|negocios)\b/i);});
+ it('nuevo helper/RPC independientes tienen search_path fijo y autorización explícita',()=>{expect(sql.match(/security definer set search_path=''/g)).toHaveLength(2);expect(sql).toContain('v_actor uuid:=auth.uid()');expect(sql).toContain('NATIVE_TENANT_DENIED');expect(sql).toContain('NATIVE_BRANCH_DENIED');expect(sql).toContain('NATIVE_OWNER_SETUP_REQUIRED');expect(sql).not.toMatch(/service_role|es_miembro_negocio/);});
+ it('cliente sólo SELECT en objetos nuevos, nunca escritura directa',()=>{expect(sql).toContain('enable row level security');expect(sql).toMatch(/revoke all on public.native_staging_licenses_v1.*from public,anon,authenticated/);expect(sql).not.toMatch(/grant\s+(?:all|insert|update|delete|truncate)/i);expect(sql).toContain('grant select on');});
+ it('replay conserva identidad y rechaza licencia o epoch cambiado en lugar de renovar permiso viejo',()=>{expect(sql).toContain('NATIVE_REGISTRATION_CONFLICT');expect(sql).toContain('NATIVE_ROLE_CHANGED');expect(sql).toContain('NATIVE_POLICY_CHANGED');expect(sql).toContain('NATIVE_EPOCH_CHANGED');expect(sql).toContain('return v_receipt;');});
+});

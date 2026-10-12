@@ -1,0 +1,6 @@
+import type {ReactNode} from 'react';
+/** VentaRD confirmation layout. Authorization is enforced by Rust, never a JS PIN. */
+export function ConfirmModal({isOpen,title,mensaje,confirmLabel='Confirmar',onConfirm,onClose,busy=false}:{isOpen:boolean;title:string;mensaje:ReactNode;confirmLabel?:string;onConfirm:()=>void;onClose:()=>void;busy?:boolean}){
+ if(!isOpen)return null;
+ return <div className="fixed inset-0 bg-black/70 backdrop-blur-md z-[60] flex items-end sm:items-center justify-center sm:p-4 animate-fade-in"><div role="dialog" aria-modal="true" aria-label={title} className="bg-navy-2 w-full sm:max-w-sm rounded-t-2xl sm:rounded-2xl border border-navy-3 shadow-2xl overflow-hidden animate-scale-in"><div className="p-5 sm:p-6"><h2 className="text-lg font-display font-bold mb-2 text-vr-red">{title}</h2><div className="text-sm text-vr-gray leading-relaxed">{mensaje}</div><div className="flex gap-3 mt-6"><button disabled={busy} onClick={onClose} className="flex-1 py-3 font-bold text-vr-gray hover:text-white border border-navy-3 rounded-xl transition-colors">Cancelar</button><button disabled={busy} onClick={onConfirm} className="flex-1 py-3 font-extrabold rounded-xl transition-all bg-vr-red/80 hover:bg-vr-red text-white disabled:opacity-30">{confirmLabel}</button></div></div></div></div>;
+}

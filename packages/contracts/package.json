@@ -1,0 +1,6 @@
+{
+  "name": "@ventard/contracts",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Contratos y fixtures versionados de VentaRD nativo, sin credenciales ni runtime web."
+}

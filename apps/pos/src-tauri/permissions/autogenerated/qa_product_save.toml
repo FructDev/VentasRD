@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-qa-product-save"
+description = "Enables the qa_product_save command without any pre-configured scope."
+commands.allow = ["qa_product_save"]
+
+[[permission]]
+identifier = "deny-qa-product-save"
+description = "Denies the qa_product_save command without any pre-configured scope."
+commands.deny = ["qa_product_save"]

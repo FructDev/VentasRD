@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-qa-cart-action"
+description = "Enables the qa_cart_action command without any pre-configured scope."
+commands.allow = ["qa_cart_action"]
+
+[[permission]]
+identifier = "deny-qa-cart-action"
+description = "Denies the qa_cart_action command without any pre-configured scope."
+commands.deny = ["qa_cart_action"]

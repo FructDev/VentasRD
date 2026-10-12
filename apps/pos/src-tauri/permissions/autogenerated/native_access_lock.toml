@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-native-access-lock"
+description = "Enables the native_access_lock command without any pre-configured scope."
+commands.allow = ["native_access_lock"]
+
+[[permission]]
+identifier = "deny-native-access-lock"
+description = "Denies the native_access_lock command without any pre-configured scope."
+commands.deny = ["native_access_lock"]

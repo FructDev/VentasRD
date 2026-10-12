@@ -2,13 +2,31 @@
   "name": "ventard",
   "version": "0.1.0",
   "private": true,
+  "workspaces": [
+    "apps/pos",
+    "packages/contracts",
+    "packages/ui"
+  ],
   "scripts": {
     "dev": "next dev --webpack -p 3001",
     "build": "next build --webpack",
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "native:contract": "vitest run --config scripts/native/vitest.fixtures.config.ts",
+    "native:core:test": "cargo test -p ventard-core --locked",
+    "native:fixture:test": "cargo test -p ventard-core --features fixture-storage --locked",
+    "native:cipher:test": "cargo test -p ventard-core --features encrypted-storage --locked",
+    "native:cipher:lint": "cargo clippy -p ventard-core --features encrypted-storage --all-targets --locked -- -D warnings",
+    "native:dev": "npm run dev --workspace=@ventard/pos",
+    "native:ui:build": "npm run ui:build --workspace=@ventard/pos",
+    "native:build:debug": "npm run build:debug --workspace=@ventard/pos",
+    "native:shell:test": "node --test scripts/native/shell-contract.test.mjs scripts/native/shell-ui.test.mjs scripts/native/pos-presentation-contract.test.mjs scripts/native/pos-interaction.test.mjs",
+    "native:ui:typecheck": "npm run typecheck --workspace=@ventard/pos",
+    "native:qa:build": "npm run build:qa --workspace=@ventard/pos",
+    "native:qa:test": "node --test scripts/native/checkout-contract.test.mjs scripts/native/checkout-webview.test.mjs",
+    "native:core:lint": "cargo clippy -p ventard-core --features fixture-storage --all-targets --locked -- -D warnings"
   },
   "dependencies": {
     "@ducanh2912/next-pwa": "^10.2.9",
@@ -40,6 +58,7 @@
     "zustand": "^5.0.12"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "0.3.14",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/qrcode": "^1.5.6",

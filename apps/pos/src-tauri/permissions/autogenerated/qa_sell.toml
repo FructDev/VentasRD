@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-qa-sell"
+description = "Enables the qa_sell command without any pre-configured scope."
+commands.allow = ["qa_sell"]
+
+[[permission]]
+identifier = "deny-qa-sell"
+description = "Denies the qa_sell command without any pre-configured scope."
+commands.deny = ["qa_sell"]

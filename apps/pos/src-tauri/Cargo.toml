@@ -1,0 +1,40 @@
+[package]
+name = "ventard-pos"
+version = "0.1.0"
+edition.workspace = true
+rust-version = "1.90"
+license.workspace = true
+publish.workspace = true
+
+[lib]
+name = "ventard_pos_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "=2.7.1", features = [] }
+
+[dependencies]
+tauri = { version = "=2.12.1", features = [] }
+ventard-core = { path = "../../../crates/ventard-core", default-features = false, features = ["encrypted-storage"] }
+
+[features]
+custom-protocol = ["tauri/custom-protocol"]
+qa-spike = ["ventard-core/qa-spike"]
+
+[dependencies.serde]
+version = "1"
+features = ["derive"]
+[dependencies.serde_json]
+version = "1"
+
+[target.'cfg(windows)'.dependencies]
+keyring-core = { version = "=1.0.0", default-features = false }
+windows-native-keyring-store = { version = "=1.1.0", default-features = false }
+fs2 = "=0.4.3"
+zeroize = "=1.9.1"
+subtle = "=2.6.1"
+reqwest = {version="=0.13.5",default-features=false,features= ["blocking", "json", "native-tls-no-alpn"] }
+base64 = "=0.23.1"
+
+[dev-dependencies]
+uuid = {version = "1", features = ["v4"] }

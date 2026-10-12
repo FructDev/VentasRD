@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-native-catalogue-download"
+description = "Enables the native_catalogue_download command without any pre-configured scope."
+commands.allow = ["native_catalogue_download"]
+
+[[permission]]
+identifier = "deny-native-catalogue-download"
+description = "Denies the native_catalogue_download command without any pre-configured scope."
+commands.deny = ["native_catalogue_download"]

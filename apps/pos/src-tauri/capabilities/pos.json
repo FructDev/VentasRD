@@ -1,0 +1,8 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "pos-main",
+  "description": "Ventas nativas Staging con contexto verificado; sin SQL, secretos, URLs ni plugins desde UI.",
+  "windows": ["main"],
+  "local": true,
+  "permissions": ["allow-qa-read","allow-qa-create","allow-qa-sell","allow-qa-result","allow-qa-quote","allow-qa-sale-abandon","allow-qa-sale-ticket","allow-qa-history-read","allow-qa-product-save","allow-qa-stock-adjust","allow-qa-cart-save","allow-qa-cart-action","allow-native-access-status","allow-native-access-login","allow-native-access-provision","allow-native-access-pin","allow-native-access-lock","allow-native-catalogue-download","allow-native-catalogue-read","allow-native-cart-read","allow-native-cart-save","allow-native-cart-action","allow-native-catalogue-quote","allow-native-cash-read","allow-native-history-read","allow-native-history-ticket","allow-native-fiscal-read","allow-native-fiscal-prepare","allow-native-sales"]
+}

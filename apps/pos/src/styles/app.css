@@ -1,0 +1,52 @@
+@import "tailwindcss";
+@source "../../../../src/components/ui/Pagination.tsx";
+@source "../../../../packages/ui/src";
+@theme {
+  --color-navy: #0D1B2E;
+  --color-navy-2: #152438;
+  --color-navy-3: #1E3352;
+  --color-navy-4: #263d5c;
+  --color-gold: #D4A017;
+  --color-gold-2: #EFC84A;
+  --color-vr-gray: #8899AA;
+  --color-vr-green: #22C55E;
+  --color-vr-red: #EF4444;
+  --color-vr-orange: #F59E0B;
+  --font-display: system-ui, sans-serif;
+}
+@layer base {
+  body { margin:0; background:#0D1B2E; color:white; font-family:system-ui, sans-serif; }
+  input { display:block; min-width:0; }
+  a:focus-visible, button:focus-visible, input:focus-visible { outline:2px solid #D4A017; outline-offset:3px; }
+  a[aria-current="page"] { color:#D4A017; }
+  dt { color:#8899AA; font-size:.85rem; }
+  dd { margin:0; }
+}
+.bg-gold-gradient {background:linear-gradient(135deg,#D4A017,#EFC84A);}
+.scrollbar-none {scrollbar-width:none;}
+.scrollbar-none::-webkit-scrollbar {display:none;}
+::-webkit-scrollbar {width:6px;height:6px;}
+::-webkit-scrollbar-track {background:#152438;}
+::-webkit-scrollbar-thumb {background:#1E3352;border-radius:999px;}
+@media print {
+  .native-ticket-second-copy {break-before:page;}
+  @page {size:auto;margin:0;}
+  body {background:white;color:black;}
+  body * {visibility:hidden;}
+  .native-ticket-document,.native-ticket-document * {visibility:visible;}
+  .native-ticket-document {position:absolute;top:0;left:0;margin:0!important;background:white;max-height:none!important;overflow:visible!important;}
+  [role="dialog"] {max-height:none!important;overflow:visible!important;border:0!important;border-radius:0!important;}
+}
+/* Original VentaRD ticket font/spacing preferences. */
+.ticket-grande {font-size:16px;}
+.ticket-grande .text-\[10px\] {font-size:12px;}
+.ticket-grande .text-xs {font-size:14px;}
+.ticket-grande .text-sm {font-size:16px;}
+.ticket-grande .text-base {font-size:18px;}
+.ticket-grande .text-xl {font-size:24px;}
+.ticket-compacto {line-height:1.15;}
+.ticket-compacto .mb-4 {margin-bottom:.4rem;}
+.ticket-compacto .mb-2 {margin-bottom:.2rem;}
+.ticket-compacto .mt-6 {margin-top:.6rem;}
+.ticket-compacto .mt-2 {margin-top:.2rem;}
+.ticket-compacto .py-1 {padding-top:1px;padding-bottom:1px;}

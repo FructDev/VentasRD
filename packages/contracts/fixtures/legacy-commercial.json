@@ -1,0 +1,1722 @@
+{
+  "fixture": "legacy-commercial",
+  "version": 2,
+  "source": "src/lib/domain/ventas/totales.ts#calcularTotalesExactos",
+  "commercialSource": "src/lib/domain/ventas/contrato.ts#construirEfectosVenta",
+  "turnSource": "src/lib/domain/ventas/confirmarVentaLocal.ts#confirmarVentaLocal",
+  "policy": "ITBIS exacto agregado y half-up por ticket; descuento sobre bruto, limitado al bruto",
+  "units": "importes en centavos (string decimal)",
+  "scope": "Totales exactos y efectos de pagos/fiado/recetas/seriales; turnos caracterizados con confirmarVentaLocal en fake-indexeddb. No certifica la implementación nativa.",
+  "cases": [
+    {
+      "id": "basic-18",
+      "note": "una línea 18 %",
+      "legacyInput": {
+        "items": [
+          {
+            "precio_venta": 100,
+            "cantidad": 1,
+            "tasa_itbis": 0.18
+          }
+        ],
+        "tipo": "monto",
+        "valor": 0
+      },
+      "native": {
+        "lines": [
+          {
+            "unitPriceCents": "10000",
+            "quantity": "1",
+            "taxRate": "0.18"
+          }
+        ],
+        "discount": {
+          "kind": "AMOUNT",
+          "cents": "0"
+        }
+      },
+      "expected": {
+        "ok": {
+          "subtotal": "10000",
+          "itbis": "1800",
+          "descuento": "0",
+          "total": "11800"
+        }
+      }
+    },
+    {
+      "id": "itbis-aggregate",
+      "note": "ITBIS agregado: 3×0.54 c = 1.62 → 2 c (por línea serían 3 c)",
+      "legacyInput": {
+        "items": [
+          {
+            "precio_venta": 0.03,
+            "cantidad": 1,
+            "tasa_itbis": 0.18
+          },
+          {
+            "precio_venta": 0.03,
+            "cantidad": 1,
+            "tasa_itbis": 0.18
+          },
+          {
+            "precio_venta": 0.03,
+            "cantidad": 1,
+            "tasa_itbis": 0.18
+          }
+        ],
+        "tipo": "monto",
+        "valor": 0
+      },
+      "native": {
+        "lines": [
+          {
+            "unitPriceCents": "3",
+            "quantity": "1",
+            "taxRate": "0.18"
+          },
+          {
+            "unitPriceCents": "3",
+            "quantity": "1",
+            "taxRate": "0.18"
+          },
+          {
+            "unitPriceCents": "3",
+            "quantity": "1",
+            "taxRate": "0.18"
+          }
+        ],
+        "discount": {
+          "kind": "AMOUNT",
+          "cents": "0"
+        }
+      },
+      "expected": {
+        "ok": {
+          "subtotal": "9",
+          "itbis": "2",
+          "descuento": "0",
+          "total": "11"
+        }
+      }
+    },
+    {
+      "id": "half-up-boundary",
+      "note": "4.5 c de ITBIS → 5",
+      "legacyInput": {
+        "items": [
+          {
+            "precio_venta": 0.25,
+            "cantidad": 1,
+            "tasa_itbis": 0.18
+          }
+        ],
+        "tipo": "monto",
+        "valor": 0
+      },
+      "native": {
+        "lines": [
+          {
+            "unitPriceCents": "25",
+            "quantity": "1",
+            "taxRate": "0.18"
+          }
+        ],
+        "discount": {
+          "kind": "AMOUNT",
+          "cents": "0"
+        }
+      },
+      "expected": {
+        "ok": {
+          "subtotal": "25",
+          "itbis": "5",
+          "descuento": "0",
+          "total": "30"
+        }
+      }
+    },
+    {
+      "id": "mixed-rates",
+      "note": "tasas 0, 0.16, 0.18 y ausente",
+      "legacyInput": {
+        "items": [
+          {
+            "precio_venta": 50,
+            "cantidad": 2,
+            "tasa_itbis": 0
+          },
+          {
+            "precio_venta": 33.33,
+            "cantidad": 3,
+            "tasa_itbis": 0.16
+          },
+          {
+            "precio_venta": 19.99,
+            "cantidad": 1,
+            "tasa_itbis": 0.18
+          },
+          {
+            "precio_venta": 7.5,
+            "cantidad": 4
+          }
+        ],
+        "tipo": "monto",
+        "valor": 0
+      },
+      "native": {
+        "lines": [
+          {
+            "unitPriceCents": "5000",
+            "quantity": "2",
+            "taxRate": "0"
+          },
+          {
+            "unitPriceCents": "3333",
+            "quantity": "3",
+            "taxRate": "0.16"
+          },
+          {
+            "unitPriceCents": "1999",
+            "quantity": "1",
+            "taxRate": "0.18"
+          },
+          {
+            "unitPriceCents": "750",
+            "quantity": "4",
+            "taxRate": "0"
+          }
+        ],
+        "discount": {
+          "kind": "AMOUNT",
+          "cents": "0"
+        }
+      },
+      "expected": {
+        "ok": {
+          "subtotal": "24998",
+          "itbis": "1960",
+          "descuento": "0",
+          "total": "26958"
+        }
+      }
+    },
+    {
+      "id": "fractional-qty",
+      "note": "cantidad 0.5 con precio par",
+      "legacyInput": {
+        "items": [
+          {
+            "precio_venta": 10.5,
+            "cantidad": 0.5,
+            "tasa_itbis": 0.18
+          }
+        ],
+        "tipo": "monto",
+        "valor": 0
+      },
+      "native": {
+        "lines": [
+          {
+            "unitPriceCents": "1050",
+            "quantity": "0.5",
+            "taxRate": "0.18"
+          }
+        ],
+        "discount": {
+          "kind": "AMOUNT",
+          "cents": "0"
+        }
+      },
+      "expected": {
+        "ok": {
+          "subtotal": "525",
+          "itbis": "95",
+          "descuento": "0",
+          "total": "620"
+        }
+      }
+    },
+    {
+      "id": "fractional-qty-1.5",
+      "note": "cantidad 1.5",
+      "legacyInput": {
+        "items": [
+          {
+            "precio_venta": 2,
+            "cantidad": 1.5,
+            "tasa_itbis": 0.18
+          }
+        ],
+        "tipo": "monto",
+        "valor": 0
+      },
+      "native": {
+        "lines": [
+          {
+            "unitPriceCents": "200",
+            "quantity": "1.5",
+            "taxRate": "0.18"
+          }
+        ],
+        "discount": {
+          "kind": "AMOUNT",
+          "cents": "0"
+        }
+      },
+      "expected": {
+        "ok": {
+          "subtotal": "300",
+          "itbis": "54",
+          "descuento": "0",
+          "total": "354"
+        }
+      }
+    },
+    {
+      "id": "non-representable",
+      "note": "0.01 × 0.5 no es centavo exacto",
+      "legacyInput": {
+        "items": [
+          {
+            "precio_venta": 0.01,
+            "cantidad": 0.5
+          }
+        ],
+        "tipo": "monto",
+        "valor": 0
+      },
+      "native": {
+        "lines": [
+          {
+            "unitPriceCents": "1",
+            "quantity": "0.5",
+            "taxRate": "0"
+          }
+        ],
+        "discount": {
+          "kind": "AMOUNT",
+          "cents": "0"
+        }
+      },
+      "expected": {
+        "error": "importe_subtotal_no_representable"
+      }
+    },
+    {
+      "id": "scientific-qty",
+      "note": "cantidad 1e-7: 100000 c × 1e-7 = 0.01 c no representable",
+      "legacyInput": {
+        "items": [
+          {
+            "precio_venta": 1000,
+            "cantidad": 1e-7
+          }
+        ],
+        "tipo": "monto",
+        "valor": 0
+      },
+      "native": {
+        "lines": [
+          {
+            "unitPriceCents": "100000",
+            "quantity": "1e-7",
+            "taxRate": "0"
+          }
+        ],
+        "discount": {
+          "kind": "AMOUNT",
+          "cents": "0"
+        }
+      },
+      "expected": {
+        "error": "importe_subtotal_no_representable"
+      }
+    },
+    {
+      "id": "scientific-qty-ok",
+      "note": "cantidad 1e-7: 10000000 c × 1e-7 = 1 c",
+      "legacyInput": {
+        "items": [
+          {
+            "precio_venta": 100000,
+            "cantidad": 1e-7
+          }
+        ],
+        "tipo": "monto",
+        "valor": 0
+      },
+      "native": {
+        "lines": [
+          {
+            "unitPriceCents": "10000000",
+            "quantity": "1e-7",
+            "taxRate": "0"
+          }
+        ],
+        "discount": {
+          "kind": "AMOUNT",
+          "cents": "0"
+        }
+      },
+      "expected": {
+        "ok": {
+          "subtotal": "1",
+          "itbis": "0",
+          "descuento": "0",
+          "total": "1"
+        }
+      }
+    },
+    {
+      "id": "scientific-qty-large",
+      "note": "cantidad 1e21 (toString científico) con precio 0",
+      "legacyInput": {
+        "items": [
+          {
+            "precio_venta": 0,
+            "cantidad": 1e+21
+          }
+        ],
+        "tipo": "monto",
+        "valor": 0
+      },
+      "native": {
+        "lines": [
+          {
+            "unitPriceCents": "0",
+            "quantity": "1e+21",
+            "taxRate": "0"
+          }
+        ],
+        "discount": {
+          "kind": "AMOUNT",
+          "cents": "0"
+        }
+      },
+      "expected": {
+        "ok": {
+          "subtotal": "0",
+          "itbis": "0",
+          "descuento": "0",
+          "total": "0"
+        }
+      }
+    },
+    {
+      "id": "discount-pct-10",
+      "note": "descuento sobre bruto",
+      "legacyInput": {
+        "items": [
+          {
+            "precio_venta": 100,
+            "cantidad": 1,
+            "tasa_itbis": 0.18
+          }
+        ],
+        "tipo": "porcentaje",
+        "valor": 10
+      },
+      "native": {
+        "lines": [
+          {
+            "unitPriceCents": "10000",
+            "quantity": "1",
+            "taxRate": "0.18"
+          }
+        ],
+        "discount": {
+          "kind": "PERCENT",
+          "value": "10"
+        }
+      },
+      "expected": {
+        "ok": {
+          "subtotal": "10000",
+          "itbis": "1800",
+          "descuento": "1180",
+          "total": "10620"
+        }
+      }
+    },
+    {
+      "id": "discount-pct-12.5",
+      "note": "porcentaje fraccionario half-up",
+      "legacyInput": {
+        "items": [
+          {
+            "precio_venta": 0.99,
+            "cantidad": 1,
+            "tasa_itbis": 0.18
+          }
+        ],
+        "tipo": "porcentaje",
+        "valor": 12.5
+      },
+      "native": {
+        "lines": [
+          {
+            "unitPriceCents": "99",
+            "quantity": "1",
+            "taxRate": "0.18"
+          }
+        ],
+        "discount": {
+          "kind": "PERCENT",
+          "value": "12.5"
+        }
+      },
+      "expected": {
+        "ok": {
+          "subtotal": "99",
+          "itbis": "18",
+          "descuento": "15",
+          "total": "102"
+        }
+      }
+    },
+    {
+      "id": "discount-pct-100",
+      "note": "100 % → total 0",
+      "legacyInput": {
+        "items": [
+          {
+            "precio_venta": 100,
+            "cantidad": 1,
+            "tasa_itbis": 0.18
+          }
+        ],
+        "tipo": "porcentaje",
+        "valor": 100
+      },
+      "native": {
+        "lines": [
+          {
+            "unitPriceCents": "10000",
+            "quantity": "1",
+            "taxRate": "0.18"
+          }
+        ],
+        "discount": {
+          "kind": "PERCENT",
+          "value": "100"
+        }
+      },
+      "expected": {
+        "ok": {
+          "subtotal": "10000",
+          "itbis": "1800",
+          "descuento": "11800",
+          "total": "0"
+        }
+      }
+    },
+    {
+      "id": "discount-pct-150",
+      "note": ">100 % se limita al bruto",
+      "legacyInput": {
+        "items": [
+          {
+            "precio_venta": 100,
+            "cantidad": 1,
+            "tasa_itbis": 0.18
+          }
+        ],
+        "tipo": "porcentaje",
+        "valor": 150
+      },
+      "native": {
+        "lines": [
+          {
+            "unitPriceCents": "10000",
+            "quantity": "1",
+            "taxRate": "0.18"
+          }
+        ],
+        "discount": {
+          "kind": "PERCENT",
+          "value": "150"
+        }
+      },
+      "expected": {
+        "ok": {
+          "subtotal": "10000",
+          "itbis": "1800",
+          "descuento": "11800",
+          "total": "0"
+        }
+      }
+    },
+    {
+      "id": "discount-amount-over",
+      "note": "monto > bruto se limita",
+      "legacyInput": {
+        "items": [
+          {
+            "precio_venta": 100,
+            "cantidad": 1,
+            "tasa_itbis": 0.18
+          }
+        ],
+        "tipo": "monto",
+        "valor": 500
+      },
+      "native": {
+        "lines": [
+          {
+            "unitPriceCents": "10000",
+            "quantity": "1",
+            "taxRate": "0.18"
+          }
+        ],
+        "discount": {
+          "kind": "AMOUNT",
+          "cents": "50000"
+        }
+      },
+      "expected": {
+        "ok": {
+          "subtotal": "10000",
+          "itbis": "1800",
+          "descuento": "11800",
+          "total": "0"
+        }
+      }
+    },
+    {
+      "id": "discount-amount",
+      "note": "monto exacto",
+      "legacyInput": {
+        "items": [
+          {
+            "precio_venta": 100,
+            "cantidad": 2,
+            "tasa_itbis": 0.18
+          }
+        ],
+        "tipo": "monto",
+        "valor": 36
+      },
+      "native": {
+        "lines": [
+          {
+            "unitPriceCents": "10000",
+            "quantity": "2",
+            "taxRate": "0.18"
+          }
+        ],
+        "discount": {
+          "kind": "AMOUNT",
+          "cents": "3600"
+        }
+      },
+      "expected": {
+        "ok": {
+          "subtotal": "20000",
+          "itbis": "3600",
+          "descuento": "3600",
+          "total": "20000"
+        }
+      }
+    },
+    {
+      "id": "empty-ticket",
+      "note": "ticket vacío: política actual devuelve 0, no error",
+      "legacyInput": {
+        "items": [],
+        "tipo": "monto",
+        "valor": 0
+      },
+      "native": {
+        "lines": [],
+        "discount": {
+          "kind": "AMOUNT",
+          "cents": "0"
+        }
+      },
+      "expected": {
+        "ok": {
+          "subtotal": "0",
+          "itbis": "0",
+          "descuento": "0",
+          "total": "0"
+        }
+      }
+    },
+    {
+      "id": "price-zero",
+      "note": "precio 0 permitido",
+      "legacyInput": {
+        "items": [
+          {
+            "precio_venta": 0,
+            "cantidad": 3,
+            "tasa_itbis": 0.18
+          }
+        ],
+        "tipo": "monto",
+        "valor": 0
+      },
+      "native": {
+        "lines": [
+          {
+            "unitPriceCents": "0",
+            "quantity": "3",
+            "taxRate": "0.18"
+          }
+        ],
+        "discount": {
+          "kind": "AMOUNT",
+          "cents": "0"
+        }
+      },
+      "expected": {
+        "ok": {
+          "subtotal": "0",
+          "itbis": "0",
+          "descuento": "0",
+          "total": "0"
+        }
+      }
+    },
+    {
+      "id": "qty-zero",
+      "note": "cantidad 0 rechazada",
+      "legacyInput": {
+        "items": [
+          {
+            "precio_venta": 10,
+            "cantidad": 0
+          }
+        ],
+        "tipo": "monto",
+        "valor": 0
+      },
+      "native": {
+        "lines": [
+          {
+            "unitPriceCents": "1000",
+            "quantity": "0",
+            "taxRate": "0"
+          }
+        ],
+        "discount": {
+          "kind": "AMOUNT",
+          "cents": "0"
+        }
+      },
+      "expected": {
+        "error": "importe_cantidad_invalida"
+      }
+    },
+    {
+      "id": "tax-over-1",
+      "note": "tasa > 1 rechazada",
+      "legacyInput": {
+        "items": [
+          {
+            "precio_venta": 10,
+            "cantidad": 1,
+            "tasa_itbis": 1.5
+          }
+        ],
+        "tipo": "monto",
+        "valor": 0
+      },
+      "native": {
+        "lines": [
+          {
+            "unitPriceCents": "1000",
+            "quantity": "1",
+            "taxRate": "1.5"
+          }
+        ],
+        "discount": {
+          "kind": "AMOUNT",
+          "cents": "0"
+        }
+      },
+      "expected": {
+        "error": "importe_tasa_invalida"
+      }
+    },
+    {
+      "id": "price-sub-cent",
+      "note": "precio 0.001 no representable en centavos",
+      "legacyInput": {
+        "items": [
+          {
+            "precio_venta": 0.001,
+            "cantidad": 1
+          }
+        ],
+        "tipo": "monto",
+        "valor": 0
+      },
+      "native": {
+        "conversionError": "importe_no_representable_en_centavos"
+      },
+      "expected": {
+        "error": "importe_no_representable_en_centavos"
+      }
+    },
+    {
+      "id": "ieee-noise",
+      "note": "0.1+0.2 se acepta como 30 c",
+      "legacyInput": {
+        "items": [
+          {
+            "precio_venta": 0.30000000000000004,
+            "cantidad": 1
+          }
+        ],
+        "tipo": "monto",
+        "valor": 0
+      },
+      "native": {
+        "lines": [
+          {
+            "unitPriceCents": "30",
+            "quantity": "1",
+            "taxRate": "0"
+          }
+        ],
+        "discount": {
+          "kind": "AMOUNT",
+          "cents": "0"
+        }
+      },
+      "expected": {
+        "ok": {
+          "subtotal": "30",
+          "itbis": "0",
+          "descuento": "0",
+          "total": "30"
+        }
+      }
+    },
+    {
+      "id": "near-max-safe",
+      "note": "total cerca de MAX_SAFE",
+      "legacyInput": {
+        "items": [
+          {
+            "precio_venta": 90071992547409.9,
+            "cantidad": 1
+          }
+        ],
+        "tipo": "monto",
+        "valor": 0
+      },
+      "native": {
+        "lines": [
+          {
+            "unitPriceCents": "9007199254740991",
+            "quantity": "1",
+            "taxRate": "0"
+          }
+        ],
+        "discount": {
+          "kind": "AMOUNT",
+          "cents": "0"
+        }
+      },
+      "expected": {
+        "ok": {
+          "subtotal": "9007199254740991",
+          "itbis": "0",
+          "descuento": "0",
+          "total": "9007199254740991"
+        }
+      }
+    },
+    {
+      "id": "over-max-safe",
+      "note": "suma excede MAX_SAFE",
+      "legacyInput": {
+        "items": [
+          {
+            "precio_venta": 90071992547409.9,
+            "cantidad": 1
+          },
+          {
+            "precio_venta": 0.01,
+            "cantidad": 1
+          }
+        ],
+        "tipo": "monto",
+        "valor": 0
+      },
+      "native": {
+        "lines": [
+          {
+            "unitPriceCents": "9007199254740991",
+            "quantity": "1",
+            "taxRate": "0"
+          },
+          {
+            "unitPriceCents": "1",
+            "quantity": "1",
+            "taxRate": "0"
+          }
+        ],
+        "discount": {
+          "kind": "AMOUNT",
+          "cents": "0"
+        }
+      },
+      "expected": {
+        "error": "importe_centavos_fuera_rango"
+      }
+    },
+    {
+      "id": "many-lines",
+      "note": "25 líneas con 18 %",
+      "legacyInput": {
+        "items": [
+          {
+            "precio_venta": 1.07,
+            "cantidad": 1,
+            "tasa_itbis": 0.18
+          },
+          {
+            "precio_venta": 2.0700000000000003,
+            "cantidad": 2,
+            "tasa_itbis": 0.18
+          },
+          {
+            "precio_venta": 3.0700000000000003,
+            "cantidad": 3,
+            "tasa_itbis": 0.18
+          },
+          {
+            "precio_venta": 4.07,
+            "cantidad": 1,
+            "tasa_itbis": 0.18
+          },
+          {
+            "precio_venta": 5.07,
+            "cantidad": 2,
+            "tasa_itbis": 0.18
+          },
+          {
+            "precio_venta": 6.07,
+            "cantidad": 3,
+            "tasa_itbis": 0.18
+          },
+          {
+            "precio_venta": 7.07,
+            "cantidad": 1,
+            "tasa_itbis": 0.18
+          },
+          {
+            "precio_venta": 8.07,
+            "cantidad": 2,
+            "tasa_itbis": 0.18
+          },
+          {
+            "precio_venta": 9.07,
+            "cantidad": 3,
+            "tasa_itbis": 0.18
+          },
+          {
+            "precio_venta": 10.07,
+            "cantidad": 1,
+            "tasa_itbis": 0.18
+          },
+          {
+            "precio_venta": 11.07,
+            "cantidad": 2,
+            "tasa_itbis": 0.18
+          },
+          {
+            "precio_venta": 12.07,
+            "cantidad": 3,
+            "tasa_itbis": 0.18
+          },
+          {
+            "precio_venta": 13.07,
+            "cantidad": 1,
+            "tasa_itbis": 0.18
+          },
+          {
+            "precio_venta": 14.07,
+            "cantidad": 2,
+            "tasa_itbis": 0.18
+          },
+          {
+            "precio_venta": 15.07,
+            "cantidad": 3,
+            "tasa_itbis": 0.18
+          },
+          {
+            "precio_venta": 16.07,
+            "cantidad": 1,
+            "tasa_itbis": 0.18
+          },
+          {
+            "precio_venta": 17.07,
+            "cantidad": 2,
+            "tasa_itbis": 0.18
+          },
+          {
+            "precio_venta": 18.07,
+            "cantidad": 3,
+            "tasa_itbis": 0.18
+          },
+          {
+            "precio_venta": 19.07,
+            "cantidad": 1,
+            "tasa_itbis": 0.18
+          },
+          {
+            "precio_venta": 20.07,
+            "cantidad": 2,
+            "tasa_itbis": 0.18
+          },
+          {
+            "precio_venta": 21.07,
+            "cantidad": 3,
+            "tasa_itbis": 0.18
+          },
+          {
+            "precio_venta": 22.07,
+            "cantidad": 1,
+            "tasa_itbis": 0.18
+          },
+          {
+            "precio_venta": 23.07,
+            "cantidad": 2,
+            "tasa_itbis": 0.18
+          },
+          {
+            "precio_venta": 24.07,
+            "cantidad": 3,
+            "tasa_itbis": 0.18
+          },
+          {
+            "precio_venta": 25.07,
+            "cantidad": 1,
+            "tasa_itbis": 0.18
+          }
+        ],
+        "tipo": "porcentaje",
+        "valor": 5
+      },
+      "native": {
+        "lines": [
+          {
+            "unitPriceCents": "107",
+            "quantity": "1",
+            "taxRate": "0.18"
+          },
+          {
+            "unitPriceCents": "207",
+            "quantity": "2",
+            "taxRate": "0.18"
+          },
+          {
+            "unitPriceCents": "307",
+            "quantity": "3",
+            "taxRate": "0.18"
+          },
+          {
+            "unitPriceCents": "407",
+            "quantity": "1",
+            "taxRate": "0.18"
+          },
+          {
+            "unitPriceCents": "507",
+            "quantity": "2",
+            "taxRate": "0.18"
+          },
+          {
+            "unitPriceCents": "607",
+            "quantity": "3",
+            "taxRate": "0.18"
+          },
+          {
+            "unitPriceCents": "707",
+            "quantity": "1",
+            "taxRate": "0.18"
+          },
+          {
+            "unitPriceCents": "807",
+            "quantity": "2",
+            "taxRate": "0.18"
+          },
+          {
+            "unitPriceCents": "907",
+            "quantity": "3",
+            "taxRate": "0.18"
+          },
+          {
+            "unitPriceCents": "1007",
+            "quantity": "1",
+            "taxRate": "0.18"
+          },
+          {
+            "unitPriceCents": "1107",
+            "quantity": "2",
+            "taxRate": "0.18"
+          },
+          {
+            "unitPriceCents": "1207",
+            "quantity": "3",
+            "taxRate": "0.18"
+          },
+          {
+            "unitPriceCents": "1307",
+            "quantity": "1",
+            "taxRate": "0.18"
+          },
+          {
+            "unitPriceCents": "1407",
+            "quantity": "2",
+            "taxRate": "0.18"
+          },
+          {
+            "unitPriceCents": "1507",
+            "quantity": "3",
+            "taxRate": "0.18"
+          },
+          {
+            "unitPriceCents": "1607",
+            "quantity": "1",
+            "taxRate": "0.18"
+          },
+          {
+            "unitPriceCents": "1707",
+            "quantity": "2",
+            "taxRate": "0.18"
+          },
+          {
+            "unitPriceCents": "1807",
+            "quantity": "3",
+            "taxRate": "0.18"
+          },
+          {
+            "unitPriceCents": "1907",
+            "quantity": "1",
+            "taxRate": "0.18"
+          },
+          {
+            "unitPriceCents": "2007",
+            "quantity": "2",
+            "taxRate": "0.18"
+          },
+          {
+            "unitPriceCents": "2107",
+            "quantity": "3",
+            "taxRate": "0.18"
+          },
+          {
+            "unitPriceCents": "2207",
+            "quantity": "1",
+            "taxRate": "0.18"
+          },
+          {
+            "unitPriceCents": "2307",
+            "quantity": "2",
+            "taxRate": "0.18"
+          },
+          {
+            "unitPriceCents": "2407",
+            "quantity": "3",
+            "taxRate": "0.18"
+          },
+          {
+            "unitPriceCents": "2507",
+            "quantity": "1",
+            "taxRate": "0.18"
+          }
+        ],
+        "discount": {
+          "kind": "PERCENT",
+          "value": "5"
+        }
+      },
+      "expected": {
+        "ok": {
+          "subtotal": "64443",
+          "itbis": "11600",
+          "descuento": "3802",
+          "total": "72241"
+        }
+      }
+    }
+  ],
+  "commercialCases": [
+    {
+      "id": "mixed",
+      "input": {
+        "version": 1,
+        "operacionId": "96000000-0000-4000-8000-000000000010",
+        "negocioId": "96000000-0000-4000-8000-000000000001",
+        "sucursalId": "96000000-0000-4000-8000-000000000002",
+        "cajaCodigo": "QA",
+        "cajaId": "96000000-0000-4000-8000-000000000005",
+        "numeroTicket": 1,
+        "fecha": 1700000000000,
+        "total": 118,
+        "metodoPago": "mixto",
+        "garantiaDias": 30,
+        "items": [
+          {
+            "productoId": "96000000-0000-4000-8000-000000000003",
+            "nombre": "Producto sintético",
+            "cantidad": 1,
+            "precioUnitario": 100
+          }
+        ],
+        "montoEfectivo": 18,
+        "montoTransferencia": 100
+      },
+      "expected": {
+        "ok": {
+          "cashCents": {
+            "efectivo": "1800",
+            "tarjeta": "0",
+            "transferencia": "10000",
+            "fiado": "0"
+          },
+          "credit": null,
+          "movements": [
+            {
+              "product": "96000000-0000-4000-8000-000000000003",
+              "delta": "-1",
+              "scope": "96000000-0000-4000-8000-000000000002"
+            }
+          ],
+          "serials": [],
+          "originalTurn": "96000000-0000-4000-8000-000000000005",
+          "localSyncFlag": 0
+        }
+      }
+    },
+    {
+      "id": "mixed-invalid",
+      "input": {
+        "version": 1,
+        "operacionId": "96000000-0000-4000-8000-000000000010",
+        "negocioId": "96000000-0000-4000-8000-000000000001",
+        "sucursalId": "96000000-0000-4000-8000-000000000002",
+        "cajaCodigo": "QA",
+        "cajaId": "96000000-0000-4000-8000-000000000005",
+        "numeroTicket": 1,
+        "fecha": 1700000000000,
+        "total": 118,
+        "metodoPago": "mixto",
+        "garantiaDias": 30,
+        "items": [
+          {
+            "productoId": "96000000-0000-4000-8000-000000000003",
+            "nombre": "Producto sintético",
+            "cantidad": 1,
+            "precioUnitario": 100
+          }
+        ],
+        "montoEfectivo": 18,
+        "montoTransferencia": 99
+      },
+      "expected": {
+        "error": "venta_invalida:pago_mixto_no_cuadra"
+      }
+    },
+    {
+      "id": "mixed-empty-part",
+      "input": {
+        "version": 1,
+        "operacionId": "96000000-0000-4000-8000-000000000010",
+        "negocioId": "96000000-0000-4000-8000-000000000001",
+        "sucursalId": "96000000-0000-4000-8000-000000000002",
+        "cajaCodigo": "QA",
+        "cajaId": "96000000-0000-4000-8000-000000000005",
+        "numeroTicket": 1,
+        "fecha": 1700000000000,
+        "total": 118,
+        "metodoPago": "mixto",
+        "garantiaDias": 30,
+        "items": [
+          {
+            "productoId": "96000000-0000-4000-8000-000000000003",
+            "nombre": "Producto sintético",
+            "cantidad": 1,
+            "precioUnitario": 100
+          }
+        ],
+        "montoEfectivo": 0,
+        "montoTransferencia": 118
+      },
+      "expected": {
+        "error": "venta_invalida:pago_mixto_incompleto"
+      }
+    },
+    {
+      "id": "credit",
+      "input": {
+        "version": 1,
+        "operacionId": "96000000-0000-4000-8000-000000000010",
+        "negocioId": "96000000-0000-4000-8000-000000000001",
+        "sucursalId": "96000000-0000-4000-8000-000000000002",
+        "cajaCodigo": "QA",
+        "cajaId": "96000000-0000-4000-8000-000000000005",
+        "numeroTicket": 1,
+        "fecha": 1700000000000,
+        "total": 118,
+        "metodoPago": "fiado",
+        "garantiaDias": 30,
+        "items": [
+          {
+            "productoId": "96000000-0000-4000-8000-000000000003",
+            "nombre": "Producto sintético",
+            "cantidad": 1,
+            "precioUnitario": 100
+          }
+        ],
+        "clienteId": "96000000-0000-4000-8000-000000000004"
+      },
+      "expected": {
+        "ok": {
+          "cashCents": {
+            "efectivo": "0",
+            "tarjeta": "0",
+            "transferencia": "0",
+            "fiado": "11800"
+          },
+          "credit": {
+            "customer": "96000000-0000-4000-8000-000000000004",
+            "amountCents": "11800",
+            "kind": "cargo"
+          },
+          "movements": [
+            {
+              "product": "96000000-0000-4000-8000-000000000003",
+              "delta": "-1",
+              "scope": "96000000-0000-4000-8000-000000000002"
+            }
+          ],
+          "serials": [],
+          "originalTurn": "96000000-0000-4000-8000-000000000005",
+          "localSyncFlag": 0
+        }
+      }
+    },
+    {
+      "id": "credit-without-client",
+      "input": {
+        "version": 1,
+        "operacionId": "96000000-0000-4000-8000-000000000010",
+        "negocioId": "96000000-0000-4000-8000-000000000001",
+        "sucursalId": "96000000-0000-4000-8000-000000000002",
+        "cajaCodigo": "QA",
+        "cajaId": "96000000-0000-4000-8000-000000000005",
+        "numeroTicket": 1,
+        "fecha": 1700000000000,
+        "total": 118,
+        "metodoPago": "fiado",
+        "garantiaDias": 30,
+        "items": [
+          {
+            "productoId": "96000000-0000-4000-8000-000000000003",
+            "nombre": "Producto sintético",
+            "cantidad": 1,
+            "precioUnitario": 100
+          }
+        ]
+      },
+      "expected": {
+        "error": "venta_invalida:fiado_sin_cliente"
+      }
+    },
+    {
+      "id": "card",
+      "input": {
+        "version": 1,
+        "operacionId": "96000000-0000-4000-8000-000000000010",
+        "negocioId": "96000000-0000-4000-8000-000000000001",
+        "sucursalId": "96000000-0000-4000-8000-000000000002",
+        "cajaCodigo": "QA",
+        "cajaId": "96000000-0000-4000-8000-000000000005",
+        "numeroTicket": 1,
+        "fecha": 1700000000000,
+        "total": 118,
+        "metodoPago": "tarjeta",
+        "garantiaDias": 30,
+        "items": [
+          {
+            "productoId": "96000000-0000-4000-8000-000000000003",
+            "nombre": "Producto sintético",
+            "cantidad": 1,
+            "precioUnitario": 100
+          }
+        ]
+      },
+      "expected": {
+        "ok": {
+          "cashCents": {
+            "efectivo": "0",
+            "tarjeta": "11800",
+            "transferencia": "0",
+            "fiado": "0"
+          },
+          "credit": null,
+          "movements": [
+            {
+              "product": "96000000-0000-4000-8000-000000000003",
+              "delta": "-1",
+              "scope": "96000000-0000-4000-8000-000000000002"
+            }
+          ],
+          "serials": [],
+          "originalTurn": "96000000-0000-4000-8000-000000000005",
+          "localSyncFlag": 0
+        }
+      }
+    },
+    {
+      "id": "transfer",
+      "input": {
+        "version": 1,
+        "operacionId": "96000000-0000-4000-8000-000000000010",
+        "negocioId": "96000000-0000-4000-8000-000000000001",
+        "sucursalId": "96000000-0000-4000-8000-000000000002",
+        "cajaCodigo": "QA",
+        "cajaId": "96000000-0000-4000-8000-000000000005",
+        "numeroTicket": 1,
+        "fecha": 1700000000000,
+        "total": 118,
+        "metodoPago": "transferencia",
+        "garantiaDias": 30,
+        "items": [
+          {
+            "productoId": "96000000-0000-4000-8000-000000000003",
+            "nombre": "Producto sintético",
+            "cantidad": 1,
+            "precioUnitario": 100
+          }
+        ]
+      },
+      "expected": {
+        "ok": {
+          "cashCents": {
+            "efectivo": "0",
+            "tarjeta": "0",
+            "transferencia": "11800",
+            "fiado": "0"
+          },
+          "credit": null,
+          "movements": [
+            {
+              "product": "96000000-0000-4000-8000-000000000003",
+              "delta": "-1",
+              "scope": "96000000-0000-4000-8000-000000000002"
+            }
+          ],
+          "serials": [],
+          "originalTurn": "96000000-0000-4000-8000-000000000005",
+          "localSyncFlag": 0
+        }
+      }
+    },
+    {
+      "id": "zero-ticket",
+      "input": {
+        "version": 1,
+        "operacionId": "96000000-0000-4000-8000-000000000010",
+        "negocioId": "96000000-0000-4000-8000-000000000001",
+        "sucursalId": "96000000-0000-4000-8000-000000000002",
+        "cajaCodigo": "QA",
+        "cajaId": "96000000-0000-4000-8000-000000000005",
+        "numeroTicket": 1,
+        "fecha": 1700000000000,
+        "total": 0,
+        "metodoPago": "efectivo",
+        "garantiaDias": 30,
+        "items": [
+          {
+            "productoId": "96000000-0000-4000-8000-000000000003",
+            "nombre": "Precio cero",
+            "cantidad": 1,
+            "precioUnitario": 0
+          }
+        ]
+      },
+      "expected": {
+        "ok": {
+          "cashCents": {
+            "efectivo": "0",
+            "tarjeta": "0",
+            "transferencia": "0",
+            "fiado": "0"
+          },
+          "credit": null,
+          "movements": [
+            {
+              "product": "96000000-0000-4000-8000-000000000003",
+              "delta": "-1",
+              "scope": "96000000-0000-4000-8000-000000000002"
+            }
+          ],
+          "serials": [],
+          "originalTurn": "96000000-0000-4000-8000-000000000005",
+          "localSyncFlag": 0
+        }
+      }
+    },
+    {
+      "id": "recipe-exact",
+      "input": {
+        "version": 1,
+        "operacionId": "96000000-0000-4000-8000-000000000010",
+        "negocioId": "96000000-0000-4000-8000-000000000001",
+        "sucursalId": "96000000-0000-4000-8000-000000000002",
+        "cajaCodigo": "QA",
+        "cajaId": "96000000-0000-4000-8000-000000000005",
+        "numeroTicket": 1,
+        "fecha": 1700000000000,
+        "total": 118,
+        "metodoPago": "efectivo",
+        "garantiaDias": 30,
+        "items": [
+          {
+            "productoId": "96000000-0000-4000-8000-000000000003",
+            "nombre": "Receta",
+            "cantidad": 4,
+            "precioUnitario": 25,
+            "ingredientes": [
+              {
+                "productoId": "96000000-0000-4000-8000-000000000006",
+                "cantidadNecesaria": 0.5
+              }
+            ]
+          }
+        ]
+      },
+      "expected": {
+        "ok": {
+          "cashCents": {
+            "efectivo": "11800",
+            "tarjeta": "0",
+            "transferencia": "0",
+            "fiado": "0"
+          },
+          "credit": null,
+          "movements": [
+            {
+              "product": "96000000-0000-4000-8000-000000000006",
+              "delta": "-2",
+              "scope": "96000000-0000-4000-8000-000000000002"
+            }
+          ],
+          "serials": [],
+          "originalTurn": "96000000-0000-4000-8000-000000000005",
+          "localSyncFlag": 0
+        }
+      }
+    },
+    {
+      "id": "recipe-fractional",
+      "input": {
+        "version": 1,
+        "operacionId": "96000000-0000-4000-8000-000000000010",
+        "negocioId": "96000000-0000-4000-8000-000000000001",
+        "sucursalId": "96000000-0000-4000-8000-000000000002",
+        "cajaCodigo": "QA",
+        "cajaId": "96000000-0000-4000-8000-000000000005",
+        "numeroTicket": 1,
+        "fecha": 1700000000000,
+        "total": 118,
+        "metodoPago": "efectivo",
+        "garantiaDias": 30,
+        "items": [
+          {
+            "productoId": "96000000-0000-4000-8000-000000000003",
+            "nombre": "Receta",
+            "cantidad": 3,
+            "precioUnitario": 25,
+            "ingredientes": [
+              {
+                "productoId": "96000000-0000-4000-8000-000000000006",
+                "cantidadNecesaria": 0.5
+              }
+            ]
+          }
+        ]
+      },
+      "expected": {
+        "error": "venta_invalida:item_0_ingrediente_0_stock_consumo_no_entero"
+      }
+    },
+    {
+      "id": "serial",
+      "input": {
+        "version": 1,
+        "operacionId": "96000000-0000-4000-8000-000000000010",
+        "negocioId": "96000000-0000-4000-8000-000000000001",
+        "sucursalId": "96000000-0000-4000-8000-000000000002",
+        "cajaCodigo": "QA",
+        "cajaId": "96000000-0000-4000-8000-000000000005",
+        "numeroTicket": 1,
+        "fecha": 1700000000000,
+        "total": 118,
+        "metodoPago": "efectivo",
+        "garantiaDias": 30,
+        "items": [
+          {
+            "productoId": "96000000-0000-4000-8000-000000000003",
+            "nombre": "Equipo",
+            "cantidad": 1,
+            "precioUnitario": 100,
+            "serial": {
+              "id": "96000000-0000-4000-8000-000000000007",
+              "numero": "001234567890123"
+            }
+          }
+        ]
+      },
+      "expected": {
+        "ok": {
+          "cashCents": {
+            "efectivo": "11800",
+            "tarjeta": "0",
+            "transferencia": "0",
+            "fiado": "0"
+          },
+          "credit": null,
+          "movements": [
+            {
+              "product": "96000000-0000-4000-8000-000000000003",
+              "delta": "-1",
+              "scope": "96000000-0000-4000-8000-000000000002"
+            }
+          ],
+          "serials": [
+            {
+              "serialId": "96000000-0000-4000-8000-000000000007",
+              "productoId": "96000000-0000-4000-8000-000000000003",
+              "numeroSerial": "001234567890123",
+              "ventaId": "96000000-0000-4000-8000-000000000010",
+              "fechaVenta": 1700000000000,
+              "garantiaDias": 30,
+              "garantiaHasta": 1702592000000,
+              "clienteNombre": null,
+              "precioVenta": 100
+            }
+          ],
+          "originalTurn": "96000000-0000-4000-8000-000000000005",
+          "localSyncFlag": 0
+        }
+      }
+    },
+    {
+      "id": "serial-multiple",
+      "input": {
+        "version": 1,
+        "operacionId": "96000000-0000-4000-8000-000000000010",
+        "negocioId": "96000000-0000-4000-8000-000000000001",
+        "sucursalId": "96000000-0000-4000-8000-000000000002",
+        "cajaCodigo": "QA",
+        "cajaId": "96000000-0000-4000-8000-000000000005",
+        "numeroTicket": 1,
+        "fecha": 1700000000000,
+        "total": 118,
+        "metodoPago": "efectivo",
+        "garantiaDias": 30,
+        "items": [
+          {
+            "productoId": "96000000-0000-4000-8000-000000000003",
+            "nombre": "Equipo",
+            "cantidad": 2,
+            "precioUnitario": 100,
+            "serial": {
+              "id": "96000000-0000-4000-8000-000000000007",
+              "numero": "001234567890123"
+            }
+          }
+        ]
+      },
+      "expected": {
+        "error": "venta_invalida:item_0_serial_cantidad_invalida"
+      }
+    }
+  ],
+  "turnCases": [
+    {
+      "id": "cash-no-turn",
+      "method": "efectivo",
+      "open": 0,
+      "requested": false,
+      "expected": {
+        "error": "turno_requerido"
+      },
+      "after": {
+        "sales": 0,
+        "stock": 5,
+        "movements": 0
+      }
+    },
+    {
+      "id": "transfer-no-turn",
+      "method": "transferencia",
+      "open": 0,
+      "requested": false,
+      "expected": {
+        "ok": {
+          "originalTurn": null,
+          "method": "transferencia"
+        }
+      },
+      "after": {
+        "sales": 1,
+        "stock": 4,
+        "movements": 1
+      }
+    },
+    {
+      "id": "cash-open-turn",
+      "method": "efectivo",
+      "open": 1,
+      "requested": false,
+      "expected": {
+        "ok": {
+          "originalTurn": "96000000-0000-4000-8000-000000000500",
+          "method": "efectivo"
+        }
+      },
+      "after": {
+        "sales": 1,
+        "stock": 4,
+        "movements": 1
+      }
+    },
+    {
+      "id": "cash-ambiguous-turn",
+      "method": "efectivo",
+      "open": 2,
+      "requested": false,
+      "expected": {
+        "error": "turno_ambiguo"
+      },
+      "after": {
+        "sales": 0,
+        "stock": 5,
+        "movements": 0
+      }
+    },
+    {
+      "id": "cash-changed-turn",
+      "method": "efectivo",
+      "open": 1,
+      "requested": true,
+      "expected": {
+        "error": "turno_cambiado"
+      },
+      "after": {
+        "sales": 0,
+        "stock": 5,
+        "movements": 0
+      }
+    }
+  ]
+}

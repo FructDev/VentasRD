@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-qa-sale-abandon"
+description = "Enables the qa_sale_abandon command without any pre-configured scope."
+commands.allow = ["qa_sale_abandon"]
+
+[[permission]]
+identifier = "deny-qa-sale-abandon"
+description = "Denies the qa_sale_abandon command without any pre-configured scope."
+commands.deny = ["qa_sale_abandon"]

@@ -2,6 +2,9 @@
 
 # dependencies
 /node_modules
+**/node_modules/
+/apps/pos/dist/
+/apps/pos/src-tauri/gen/schemas/
 /.pnp
 .pnp.*
 .yarn/*
@@ -53,3 +56,11 @@ next-env.d.ts
 /public/swe-worker-*.js*
 /public/workbox-*.js*
 /public/fallback-*.js*
+
+# Rust / Tauri / Cargo
+/target/
+/crates/*/target/
+/apps/pos/src-tauri/target/
+**/*.rs.bk
+**/*.prof*
+**/*.rlib

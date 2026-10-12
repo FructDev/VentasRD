@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-qa-read"
+description = "Enables the qa_read command without any pre-configured scope."
+commands.allow = ["qa_read"]
+
+[[permission]]
+identifier = "deny-qa-read"
+description = "Denies the qa_read command without any pre-configured scope."
+commands.deny = ["qa_read"]

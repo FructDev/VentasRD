@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-native-fiscal-prepare"
+description = "Enables the native_fiscal_prepare command without any pre-configured scope."
+commands.allow = ["native_fiscal_prepare"]
+
+[[permission]]
+identifier = "deny-native-fiscal-prepare"
+description = "Denies the native_fiscal_prepare command without any pre-configured scope."
+commands.deny = ["native_fiscal_prepare"]

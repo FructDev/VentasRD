@@ -1,0 +1,36 @@
+fn main() {
+    tauri_build::try_build(tauri_build::Attributes::new().app_manifest(
+        tauri_build::AppManifest::new().commands(&[
+            "qa_read",
+            "qa_create",
+            "qa_sell",
+            "qa_result",
+            "qa_quote",
+            "qa_sale_abandon",
+            "qa_sale_ticket",
+            "qa_history_read",
+            "qa_product_save",
+            "qa_stock_adjust",
+            "qa_cart_save",
+            "qa_cart_action",
+            "native_access_status",
+            "native_access_login",
+            "native_access_provision",
+            "native_access_pin",
+            "native_access_lock",
+            "native_catalogue_download",
+            "native_catalogue_read",
+            "native_cart_read",
+            "native_cart_save",
+            "native_cart_action",
+            "native_catalogue_quote",
+            "native_cash_read",
+            "native_history_read",
+            "native_history_ticket",
+            "native_fiscal_read",
+            "native_fiscal_prepare",
+            "native_sales",
+        ]),
+    ))
+    .expect("NATIVE_ACL_BUILD_FAILED");
+}
