@@ -1,6 +1,6 @@
 //! Durable read-only observations. Row equality/absence is never proof of
 //! complete remote effects, permission to replay, or commercial activation.
-use super::{catalogue_preview::CatalogueContext, legacy_web};
+use super::{catalogue_preview::CatalogueContext, legacy_inventory_proof as inventory, legacy_web};
 use crate::domain::money::MoneyCents;
 use num_bigint::BigInt;
 use num_traits::ToPrimitive;
@@ -322,9 +322,11 @@ pub fn compare(table: &str, local: &Value, remote: Option<&Value>) -> Result<Val
         "NOT_FOUND_AT_OBSERVATION"
     };
     let review_fields:Vec<_>=different.iter().chain(&unknown).map(|field|json!({"field":field,"local":display(o.get(field)),"remote":display(remote.and_then(|r|r.get(field)))})).collect();
-    Ok(
-        json!({"id":id,"table":table,"status":status,"effectStatus":"UNKNOWN_LEGACY","matchedFields":matched,"differentFields":different,"unverifiableFields":unknown,"limitations":limitations,"reviewFields":review_fields}),
-    )
+    let mut result = json!({"id":id,"table":table,"status":status,"effectStatus":"UNKNOWN_LEGACY","matchedFields":matched,"differentFields":different,"unverifiableFields":unknown,"limitations":limitations,"reviewFields":review_fields});
+    if table == "movimientos_stock" {
+        result["inventoryEvidence"] = inventory::pending(local);
+    }
+    Ok(result)
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -334,6 +336,7 @@ pub struct Batch {
     pub table: String,
     pub observation_id: String,
     pub ids: Vec<String>,
+    pub source_kind: String,
 }
 fn report(c: &Connection, ctx: &CatalogueContext, id: &str) -> Result<Value, Error> {
     authorize(c, ctx, id)?;
@@ -353,8 +356,16 @@ fn report(c: &Connection, ctx: &CatalogueContext, id: &str) -> Result<Value, Err
         let (k, n) = row?;
         counts.insert(k, n);
     }
+    let mut inventory_counts = BTreeMap::new();
+    let mut s=c.prepare("SELECT coalesce(json_extract(result,'$.inventoryEvidence.status'),'UNKNOWN_LEGACY'),count(*) FROM legacy_web_comparisons_v1 WHERE report_id=?1 AND table_name='movimientos_stock' GROUP BY 1")?;
+    for row in s.query_map([id], |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, usize>(1)?))
+    })? {
+        let (k, n) = row?;
+        inventory_counts.insert(k, n);
+    }
     Ok(
-        json!({"reportId":id,"exportId":export,"state":state,"lastError":error,"totalBatches":total,"completedBatches":completed,"createdAtMs":created,"counts":counts,"canActivate":false,"coverage":"REQUESTED_IDS_ONLY_WINDOWED","effectStatus":"UNKNOWN_LEGACY"}),
+        json!({"reportId":id,"exportId":export,"state":state,"lastError":error,"totalBatches":total,"completedBatches":completed,"createdAtMs":created,"counts":counts,"inventoryEffectCounts":inventory_counts,"canActivate":false,"coverage":"REQUESTED_IDS_ONLY_WINDOWED","effectStatus":"UNKNOWN_LEGACY"}),
     )
 }
 pub fn prepare(
@@ -406,6 +417,7 @@ pub fn prepare(
         return Err(Error("WEB_RECONCILE_CONTEXT"));
     }
     let mut index = 0u32;
+    let mut inventory_candidates = Vec::new();
     for table in source["tables"].as_array().ok_or_else(invalid)? {
         let name = table["name"].as_str().ok_or_else(invalid)?;
         let rows: Vec<Value> =
@@ -428,6 +440,14 @@ pub fn prepare(
             }
         }
         eligible.sort_by(|a, b| a["id"].as_str().cmp(&b["id"].as_str()));
+        if name == "movimientos_stock" {
+            inventory_candidates.extend(
+                eligible
+                    .iter()
+                    .filter(|row| inventory::candidate(row))
+                    .cloned(),
+            );
+        }
         for rows in eligible.chunks(100) {
             let ids: Vec<_> = rows
                 .iter()
@@ -435,7 +455,7 @@ pub fn prepare(
                 .collect();
             let observation = uuid::Uuid::new_v4().to_string();
             tx.execute(
-                "INSERT INTO legacy_web_observation_plans_v1 VALUES(?1,?2,?3,?4,?5,?6)",
+                "INSERT INTO legacy_web_observation_plans_v1(report_id,batch_index,table_name,observation_id,ids,local_rows) VALUES(?1,?2,?3,?4,?5,?6)",
                 rusqlite::params![
                     id,
                     index,
@@ -447,6 +467,14 @@ pub fn prepare(
             )?;
             index += 1;
         }
+    }
+    for rows in inventory_candidates.chunks(100) {
+        let ids: Vec<_> = rows
+            .iter()
+            .map(|r| r["id"].as_str().unwrap().to_owned())
+            .collect();
+        tx.execute("INSERT INTO legacy_web_observation_plans_v1(report_id,batch_index,table_name,observation_id,ids,local_rows,source_kind) VALUES(?1,?2,'movimientos_stock',?3,?4,?5,'INVENTORY_LEDGER_V2')",rusqlite::params![id,index,uuid::Uuid::new_v4().to_string(),serde_json::to_string(&ids).map_err(|_|invalid())?,serde_json::to_string(rows).map_err(|_|invalid())?])?;
+        index += 1;
     }
     tx.execute(
         "UPDATE legacy_web_reconciliations_v1 SET total_batches=?2,state=?3 WHERE report_id=?1",
@@ -465,14 +493,15 @@ pub fn prepare(
 }
 pub fn next(c: &Connection, ctx: &CatalogueContext, id: &str) -> Result<Option<Batch>, Error> {
     authorize(c, ctx, id)?;
-    let row:Option<(u32,String,String,String)>=c.query_row("SELECT p.batch_index,p.table_name,p.observation_id,p.ids FROM legacy_web_observation_plans_v1 p WHERE p.report_id=?1 AND NOT EXISTS(SELECT 1 FROM legacy_web_observations_v1 o WHERE o.report_id=p.report_id AND o.batch_index=p.batch_index) ORDER BY p.batch_index LIMIT 1",[id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional()?;
-    row.map(|(index, table, observation_id, ids)| {
+    let row:Option<(u32,String,String,String,String)>=c.query_row("SELECT p.batch_index,p.table_name,p.observation_id,p.ids,p.source_kind FROM legacy_web_observation_plans_v1 p WHERE p.report_id=?1 AND NOT EXISTS(SELECT 1 FROM legacy_web_observations_v1 o WHERE o.report_id=p.report_id AND o.batch_index=p.batch_index) ORDER BY p.batch_index LIMIT 1",[id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).optional()?;
+    row.map(|(index, table, observation_id, ids, source_kind)| {
         Ok(Batch {
             report_id: id.into(),
             index,
             table,
             observation_id,
             ids: serde_json::from_str(&ids).map_err(|_| invalid())?,
+            source_kind,
         })
     })
     .transpose()
@@ -509,6 +538,10 @@ struct Observation {
     rows: Vec<Value>,
     #[serde(default)]
     scope_evidence: Vec<ScopeEvidence>,
+    #[serde(default)]
+    ledger_rows_json: Option<String>,
+    #[serde(default)]
+    context_proof_json: Option<String>,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -546,6 +579,58 @@ fn observed_value(v: &Value, depth: u32) -> bool {
         _ => true,
     }
 }
+/// Existing public read RPC revalidates the private server fence/owner context.
+/// It is windowed evidence, never an atomic business cutover authorization.
+pub fn validate_context_probe(
+    ctx: &CatalogueContext,
+    batch: &Batch,
+    raw: &str,
+) -> Result<(), Error> {
+    if raw.len() > MAX_RESPONSE {
+        return Err(invalid());
+    }
+    let o: Observation = serde_json::from_str(raw).map_err(|_| invalid())?;
+    if o.protocol != "ventard.web.observation.1"
+        || o.observation_id != batch.observation_id
+        || o.tenant_id != ctx.tenant_id
+        || o.actor_id != ctx.actor_id
+        || o.installation_id != ctx.installation_id
+        || o.device_id != ctx.device_id
+        || o.writer_epoch != ctx.writer_epoch
+        || o.scope.kind != ctx.scope_type
+        || o.scope.branch_id != ctx.branch_id
+        || o.table != batch.table
+        || o.requested_ids != batch.ids
+        || o.coverage != "REQUESTED_IDS_ONLY"
+        || o.decimal_encoding != "TAGGED_NUMBERS_V1"
+        || o.ledger_rows_json.is_some()
+        || o.context_proof_json.is_some()
+        || !o.scope_evidence.is_empty()
+        || o.rows.len() > batch.ids.len()
+        || o.captured_at_ms
+            .parse::<u64>()
+            .ok()
+            .filter(|n| *n <= 9_007_199_254_740_991)
+            .is_none()
+    {
+        return Err(invalid());
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    for row in &o.rows {
+        let id = row["id"].as_str().ok_or_else(invalid)?;
+        if !batch.ids.iter().any(|requested| requested == id)
+            || !seen.insert(id)
+            || row["negocio_id"] != ctx.tenant_id
+            || legacy_web::secrets(row)
+            || !observed_value(row, 0)
+            || (ctx.scope_type == "BRANCH"
+                && row.get("sucursal_id").and_then(Value::as_str) != ctx.branch_id.as_deref())
+        {
+            return Err(invalid());
+        }
+    }
+    Ok(())
+}
 pub fn accept(
     c: &mut Connection,
     ctx: &CatalogueContext,
@@ -556,12 +641,22 @@ pub fn accept(
     if raw.len() > MAX_RESPONSE {
         return Err(Error("WEB_RECONCILE_TOO_LARGE"));
     }
+    let ledger = match batch.source_kind.as_str() {
+        "LEGACY_ROWS" => false,
+        "INVENTORY_LEDGER_V2" => true,
+        _ => return Err(invalid()),
+    };
     let obs: Observation = serde_json::from_str(raw).map_err(|_| invalid())?;
     let digest = hash(raw);
     let tx = c.transaction_with_behavior(TransactionBehavior::Immediate)?;
     authorize(&tx, ctx, id)?;
     if batch.report_id != id
-        || obs.protocol != "ventard.web.observation.1"
+        || obs.protocol
+            != if ledger {
+                "ventard.web.inventory-ledger.1"
+            } else {
+                "ventard.web.observation.1"
+            }
         || obs.observation_id != batch.observation_id
         || obs.tenant_id != ctx.tenant_id
         || obs.actor_id != ctx.actor_id
@@ -573,7 +668,18 @@ pub fn accept(
         || obs.table != batch.table
         || obs.requested_ids != batch.ids
         || obs.coverage != "REQUESTED_IDS_ONLY"
-        || obs.decimal_encoding != "TAGGED_NUMBERS_V1"
+        || obs.decimal_encoding
+            != if ledger {
+                "RAW_INT4_BIGINT_V1"
+            } else {
+                "TAGGED_NUMBERS_V1"
+            }
+        || (ledger
+            && (batch.table != "movimientos_stock"
+                || !obs.rows.is_empty()
+                || !obs.scope_evidence.is_empty()
+                || obs.ledger_rows_json.is_none()))
+        || (!ledger && (obs.ledger_rows_json.is_some() || obs.context_proof_json.is_some()))
         || obs
             .captured_at_ms
             .parse::<u64>()
@@ -594,68 +700,86 @@ pub fn accept(
     if next(&tx, ctx, id)?.as_ref() != Some(batch) {
         return Err(Error("WEB_RECONCILE_BATCH_CHANGED"));
     }
-    let mut inherited = BTreeMap::new();
-    for evidence in &obs.scope_evidence {
-        if ctx.scope_type != "BRANCH"
-            || batch.table != "devoluciones"
-            || evidence.source_table != "ventas"
-            || evidence.tenant_id != ctx.tenant_id
-            || Some(evidence.branch_id.as_str()) != ctx.branch_id.as_deref()
-            || evidence.source_id.is_empty()
-            || evidence.source_id.len() > 512
-            || !obs.rows.iter().any(|row| {
-                row["id"] == evidence.row_id
-                    && row["venta_id"] == evidence.source_id
-                    && row.get("sucursal_id").is_none()
-            })
-            || inherited
-                .insert(evidence.row_id.as_str(), evidence)
-                .is_some()
-        {
-            return Err(invalid());
+    if ledger {
+        validate_context_probe(
+            ctx,
+            batch,
+            obs.context_proof_json.as_deref().ok_or_else(invalid)?,
+        )?;
+        accept_inventory(&tx, ctx, id, batch, &obs)?;
+    } else {
+        let mut inherited = BTreeMap::new();
+        for evidence in &obs.scope_evidence {
+            if ctx.scope_type != "BRANCH"
+                || batch.table != "devoluciones"
+                || evidence.source_table != "ventas"
+                || evidence.tenant_id != ctx.tenant_id
+                || Some(evidence.branch_id.as_str()) != ctx.branch_id.as_deref()
+                || evidence.source_id.is_empty()
+                || evidence.source_id.len() > 512
+                || !obs.rows.iter().any(|row| {
+                    row["id"] == evidence.row_id
+                        && row["venta_id"] == evidence.source_id
+                        && row.get("sucursal_id").is_none()
+                })
+                || inherited
+                    .insert(evidence.row_id.as_str(), evidence)
+                    .is_some()
+            {
+                return Err(invalid());
+            }
         }
-    }
-    let mut remote = BTreeMap::new();
-    for row in &obs.rows {
-        let row_id = row["id"].as_str().ok_or_else(invalid)?;
-        if !batch.ids.iter().any(|id| id == row_id)
-            || row["negocio_id"] != ctx.tenant_id
-            || legacy_web::secrets(row)
-            || !observed_value(row, 0)
-            || (ctx.scope_type == "BRANCH"
-                && matches!(
-                    batch.table.as_str(),
-                    "apartados"
-                        | "cajas"
-                        | "cortes_caja"
-                        | "devoluciones"
-                        | "gastos"
-                        | "movimientos_stock"
-                        | "reparaciones"
-                        | "transacciones_fiado"
-                        | "venta_detalles"
-                        | "ventas"
-                )
-                && row.get("sucursal_id").and_then(Value::as_str) != ctx.branch_id.as_deref()
-                && !inherited.contains_key(row_id))
-            || remote.insert(row_id, row).is_some()
-        {
-            return Err(invalid());
+        let mut remote = BTreeMap::new();
+        for row in &obs.rows {
+            let row_id = row["id"].as_str().ok_or_else(invalid)?;
+            if !batch.ids.iter().any(|id| id == row_id)
+                || row["negocio_id"] != ctx.tenant_id
+                || legacy_web::secrets(row)
+                || !observed_value(row, 0)
+                || (ctx.scope_type == "BRANCH"
+                    && matches!(
+                        batch.table.as_str(),
+                        "apartados"
+                            | "cajas"
+                            | "cortes_caja"
+                            | "devoluciones"
+                            | "gastos"
+                            | "movimientos_stock"
+                            | "reparaciones"
+                            | "transacciones_fiado"
+                            | "venta_detalles"
+                            | "ventas"
+                    )
+                    && row.get("sucursal_id").and_then(Value::as_str) != ctx.branch_id.as_deref()
+                    && !inherited.contains_key(row_id))
+                || remote.insert(row_id, row).is_some()
+            {
+                return Err(invalid());
+            }
         }
-    }
-    let local:String=tx.query_row("SELECT local_rows FROM legacy_web_observation_plans_v1 WHERE report_id=?1 AND batch_index=?2",(id,batch.index),|r|r.get(0))?;
-    let local: Vec<Value> = serde_json::from_str(&local).map_err(|_| invalid())?;
-    for row in local {
-        let row_id = row["id"].as_str().ok_or_else(invalid)?;
-        let mut result = compare(&batch.table, &row, remote.get(row_id).copied())?;
-        if inherited.contains_key(row_id) {
-            result["limitations"]
-                .as_array_mut()
-                .ok_or_else(invalid)?
-                .push(json!("REMOTE_SCOPE_FROM_SALE"));
+        let local:String=tx.query_row("SELECT local_rows FROM legacy_web_observation_plans_v1 WHERE report_id=?1 AND batch_index=?2",(id,batch.index),|r|r.get(0))?;
+        let local: Vec<Value> = serde_json::from_str(&local).map_err(|_| invalid())?;
+        for row in local {
+            let row_id = row["id"].as_str().ok_or_else(invalid)?;
+            let mut result = compare(&batch.table, &row, remote.get(row_id).copied())?;
+            if batch.table == "movimientos_stock"
+                && result["inventoryEvidence"]["status"] == "PENDING_LOOKUP"
+            {
+                let planned:i64=tx.query_row("SELECT count(*) FROM legacy_web_observation_plans_v1 p,json_each(p.ids) i WHERE p.report_id=?1 AND p.source_kind='INVENTORY_LEDGER_V2' AND i.value=?2",(id,row_id),|r|r.get(0))?;
+                if planned == 0 {
+                    result["inventoryEvidence"] =
+                        json!({"status":"UNKNOWN_LEGACY","code":"FROZEN_REPORT_WITHOUT_LEDGER"});
+                }
+            }
+            if inherited.contains_key(row_id) {
+                result["limitations"]
+                    .as_array_mut()
+                    .ok_or_else(invalid)?
+                    .push(json!("REMOTE_SCOPE_FROM_SALE"));
+            }
+            result["observedAtMs"] = json!(obs.captured_at_ms);
+            insert_result(&tx, id, &batch.table, &result)?;
         }
-        result["observedAtMs"] = json!(obs.captured_at_ms);
-        insert_result(&tx, id, &batch.table, &result)?;
     }
     tx.execute(
         "INSERT INTO legacy_web_observations_v1 VALUES(?1,?2,?3,?4,?5)",
@@ -675,6 +799,59 @@ pub fn accept(
     )?;
     tx.commit()?;
     report(c, ctx, id)
+}
+fn accept_inventory(
+    c: &Connection,
+    ctx: &CatalogueContext,
+    report: &str,
+    batch: &Batch,
+    obs: &Observation,
+) -> Result<(), Error> {
+    let rows = inventory::parse_rows(obs.ledger_rows_json.as_deref().ok_or_else(invalid)?)
+        .map_err(|_| invalid())?;
+    let requested = batch
+        .ids
+        .iter()
+        .map(|id| {
+            uuid::Uuid::parse_str(id)
+                .map(|id| id.to_string())
+                .map_err(|_| invalid())
+        })
+        .collect::<Result<std::collections::BTreeSet<_>, _>>()?;
+    if requested.len() != batch.ids.len() {
+        return Err(invalid());
+    }
+    let mut remote = BTreeMap::new();
+    for row in &rows {
+        let key = uuid::Uuid::parse_str(row.operation_id())
+            .map_err(|_| invalid())?
+            .to_string();
+        if !requested.contains(&key)
+            || row.tenant_id() != ctx.tenant_id
+            || row.branch_id() != ctx.branch_id.as_deref()
+            || row.authority() != ctx.scope_type
+            || remote.insert(key, row).is_some()
+        {
+            return Err(invalid());
+        }
+    }
+    let raw:String=c.query_row("SELECT local_rows FROM legacy_web_observation_plans_v1 WHERE report_id=?1 AND batch_index=?2",(report,batch.index),|r|r.get(0))?;
+    let locals: Vec<Value> = serde_json::from_str(&raw).map_err(|_| invalid())?;
+    for local in locals {
+        let row_id = local["id"].as_str().ok_or_else(invalid)?;
+        let key = uuid::Uuid::parse_str(row_id)
+            .map_err(|_| invalid())?
+            .to_string();
+        if !requested.contains(&key) || !inventory::candidate(&local) {
+            return Err(invalid());
+        }
+        let saved:String=c.query_row("SELECT result FROM legacy_web_comparisons_v1 WHERE report_id=?1 AND table_name='movimientos_stock' AND row_id=?2",(report,row_id),|r|r.get(0))?;
+        let mut result: Value = serde_json::from_str(&saved).map_err(|_| invalid())?;
+        result["inventoryEvidence"] = inventory::classify(&local, remote.get(&key).copied());
+        result["inventoryReceivedAtMs"] = json!(obs.captured_at_ms);
+        c.execute("UPDATE legacy_web_comparisons_v1 SET result=?3 WHERE report_id=?1 AND table_name='movimientos_stock' AND row_id=?2",(report,row_id,result.to_string()))?;
+    }
+    Ok(())
 }
 pub fn failure(
     c: &mut Connection,

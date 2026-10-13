@@ -59,6 +59,223 @@ fn number(s: &str) -> Value {
     json!({"$number":s})
 }
 #[test]
+fn schema_23_upgrade_preserves_frozen_plan_and_existing_row_checkpoints() {
+    let dir = Dir::new();
+    let key = CipherKey::new([95; 32]);
+    let mut w = VaultWriter::create_encrypted(&dir.0, &key).unwrap();
+    let export = fixture(&mut w);
+    let report = "98000001-0000-4000-8000-000000000005";
+    let original = r::prepare(w.connection(), &ctx(), &export, report, "1791909500000").unwrap();
+    let first = r::next(w.connection(), &ctx(), report).unwrap().unwrap();
+    r::accept(
+        w.connection(),
+        &ctx(),
+        report,
+        &first,
+        &snapshot(&first, json!([])),
+    )
+    .unwrap();
+    let next = r::next(w.connection(), &ctx(), report).unwrap().unwrap();
+    // Owned synthetic fixture reconstructed as the actual prior schema; never
+    // downgrade a user's database or modify historical migration checksums.
+    w.connection().execute_batch("ALTER TABLE legacy_web_observation_plans_v1 DROP COLUMN source_kind; DELETE FROM migration_history WHERE version=24; PRAGMA user_version=23;").unwrap();
+    drop(w);
+    let mut w = VaultWriter::open_encrypted(&dir.0, &key).unwrap();
+    assert_eq!(
+        r::next(w.connection(), &ctx(), report).unwrap().unwrap(),
+        next
+    );
+    let status = r::status(w.connection(), &ctx(), report).unwrap();
+    assert_eq!(status["totalBatches"], original["totalBatches"]);
+    assert_eq!(status["completedBatches"], 1);
+    assert_eq!(next.source_kind, "LEGACY_ROWS");
+    assert_eq!(
+        w.connection()
+            .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        24
+    );
+}
+#[test]
+fn durable_inventory_evidence_resumes_after_row_observation_and_never_applies_stock_or_sales() {
+    use sha2::{Digest, Sha256};
+    let f: Value =
+        serde_json::from_str(include_str!("fixtures/legacy-inventory-proof.json")).unwrap();
+    let dir = Dir::new();
+    let key = CipherKey::new([94; 32]);
+    let mut w = VaultWriter::create_encrypted(&dir.0, &key).unwrap();
+    let p = legacy_web::decrypt(
+        include_bytes!("fixtures/legacy-web-v1.vrweb"),
+        include_bytes!("fixtures/legacy-web-v1.vrwebkey"),
+    )
+    .unwrap();
+    let mut body: Value = serde_json::from_str(p.raw_body()).unwrap();
+    let rows = f["fixtures"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v["local"].clone())
+        .collect::<Vec<_>>();
+    let raw_rows = serde_json::to_string(&rows).unwrap();
+    let table = body["tables"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|t| t["name"] == "movimientos_stock")
+        .unwrap();
+    table["count"] = json!(rows.len());
+    table["rowsJson"] = json!(raw_rows);
+    table["sha256"] = json!(format!("{:x}", Sha256::digest(raw_rows.as_bytes())));
+    let original = body.to_string();
+    let p = legacy_web::parse(original.clone()).unwrap();
+    let export = p.export_id().to_owned();
+    legacy_web::store(w.connection(), TENANT, &p).unwrap();
+    let mut scoped = ctx();
+    scoped.scope_type = "BRANCH".into();
+    scoped.branch_id = Some(f["branch"].as_str().unwrap().into());
+    let report = "98000001-0000-4000-8000-000000000004";
+    r::prepare(w.connection(), &scoped, &export, report, "1791909500000").unwrap();
+    let batch = loop {
+        let b = r::next(w.connection(), &scoped, report).unwrap().unwrap();
+        if b.source_kind == "INVENTORY_LEDGER_V2" {
+            break b;
+        }
+        let mut empty: Value = serde_json::from_str(&snapshot(&b, json!([]))).unwrap();
+        empty["scope"] = json!({"type":"BRANCH","branchId":scoped.branch_id});
+        r::accept(w.connection(), &scoped, report, &b, &empty.to_string()).unwrap();
+    };
+    let previous_rows_hash:String=w.connection().query_row("SELECT response_hash FROM legacy_web_observations_v1 JOIN legacy_web_observation_plans_v1 USING(report_id,batch_index) WHERE report_id=?1 AND table_name='movimientos_stock' AND source_kind='LEGACY_ROWS'",[report],|r|r.get(0)).unwrap();
+    r::failure(w.connection(), &scoped, report, "NETWORK_UNAVAILABLE").unwrap();
+    drop(w);
+    let mut w = VaultWriter::open_encrypted(&dir.0, &key).unwrap();
+    assert_eq!(
+        r::next(w.connection(), &scoped, report).unwrap().unwrap(),
+        batch
+    );
+    let mut value: Value = serde_json::from_str(&snapshot(&batch, json!([]))).unwrap();
+    value["scope"] = json!({"type":"BRANCH","branchId":scoped.branch_id});
+    value["protocol"] = json!("ventard.web.inventory-ledger.1");
+    value["decimalEncoding"] = json!("RAW_INT4_BIGINT_V1");
+    value["ledgerRowsJson"] = f["rawLedgerRows"].clone();
+    let mut probe: Value = serde_json::from_str(&snapshot(&batch, json!([]))).unwrap();
+    probe["scope"] = json!({"type":"BRANCH","branchId":scoped.branch_id});
+    value["contextProofJson"] = json!(probe.to_string());
+    let raw = value.to_string();
+    let mut injected_probe = probe.clone();
+    injected_probe["rows"] = json!([{"id":batch.ids[0],"negocio_id":"96000000-0000-4000-8000-000000000002","sucursal_id":scoped.branch_id}]);
+    let mut injected = value.clone();
+    injected["contextProofJson"] = json!(injected_probe.to_string());
+    assert!(r::accept(
+        w.connection(),
+        &scoped,
+        report,
+        &batch,
+        &injected.to_string()
+    )
+    .is_err());
+    let mut stale = value.clone();
+    probe["writerEpoch"] = json!("2");
+    stale["contextProofJson"] = json!(probe.to_string());
+    assert!(r::accept(w.connection(), &scoped, report, &batch, &stale.to_string()).is_err());
+    stale = value.clone();
+    stale.as_object_mut().unwrap().remove("contextProofJson");
+    assert!(r::accept(w.connection(), &scoped, report, &batch, &stale.to_string()).is_err());
+    for (source_field, ledger_field, new_id) in [
+        (
+            "negocio_id",
+            "negocio_id",
+            "96000000-0000-4000-8000-000000000002",
+        ),
+        (
+            "sucursal_id",
+            "sucursal_id",
+            "96400000-0000-4000-8000-000000000090",
+        ),
+        ("id", "operacion_id", "96400000-0000-4000-8000-000000000091"),
+    ] {
+        let mut source = f["fixtures"][0]["local"].clone();
+        source[source_field] = json!(new_id);
+        let canonical =
+            ventard_core::storage::legacy_inventory_proof::reconstruct(&source).unwrap();
+        let mut ledger: Value = serde_json::from_str(f["rawLedgerRows"].as_str().unwrap()).unwrap();
+        ledger[0][ledger_field] = json!(new_id);
+        ledger[0]["payload_hash"] = json!(format!("{:x}", Sha256::digest(canonical.as_bytes())));
+        assert!(
+            ventard_core::storage::legacy_inventory_proof::parse_rows(&ledger.to_string()).is_ok()
+        );
+        let mut injected = value.clone();
+        injected["ledgerRowsJson"] = json!(ledger.to_string());
+        assert!(
+            r::accept(
+                w.connection(),
+                &scoped,
+                report,
+                &batch,
+                &injected.to_string()
+            )
+            .is_err(),
+            "{ledger_field}"
+        );
+    }
+    let mut different = value.clone();
+    different["tenantId"] = json!("96000000-0000-4000-8000-000000000002");
+    assert!(r::accept(
+        w.connection(),
+        &scoped,
+        report,
+        &batch,
+        &different.to_string()
+    )
+    .is_err());
+    w.connection().execute_batch("CREATE TEMP TRIGGER ledger_fail BEFORE UPDATE ON legacy_web_comparisons_v1 BEGIN SELECT RAISE(ABORT,'fixture interrupted'); END;").unwrap();
+    assert!(r::accept(w.connection(), &scoped, report, &batch, &raw).is_err());
+    assert_eq!(
+        r::next(w.connection(), &scoped, report).unwrap().unwrap(),
+        batch
+    );
+    w.connection()
+        .execute_batch("DROP TRIGGER ledger_fail")
+        .unwrap();
+    r::accept(w.connection(), &scoped, report, &batch, &raw).unwrap();
+    r::accept(w.connection(), &scoped, report, &batch, &raw).unwrap();
+    different = value;
+    different["capturedAtMs"] = json!("1791909600001");
+    assert!(r::accept(
+        w.connection(),
+        &scoped,
+        report,
+        &batch,
+        &different.to_string()
+    )
+    .is_err());
+    let result = r::rows(w.connection(), &scoped, report, "movimientos_stock", 0).unwrap();
+    for row in result["rows"].as_array().unwrap() {
+        assert_eq!(row["inventoryEvidence"]["status"], "APPLIED_VERIFIED");
+        assert_eq!(row["effectStatus"], "UNKNOWN_LEGACY");
+    }
+    let status = r::status(w.connection(), &scoped, report).unwrap();
+    assert_eq!(status["inventoryEffectCounts"]["APPLIED_VERIFIED"], 2);
+    assert_eq!(status["canActivate"], false);
+    let after:String=w.connection().query_row("SELECT response_hash FROM legacy_web_observations_v1 JOIN legacy_web_observation_plans_v1 USING(report_id,batch_index) WHERE report_id=?1 AND table_name='movimientos_stock' AND source_kind='LEGACY_ROWS'",[report],|r|r.get(0)).unwrap();
+    assert_eq!(after, previous_rows_hash);
+    let preserved: String = w
+        .connection()
+        .query_row(
+            "SELECT body FROM legacy_web_packages_v1 WHERE export_id=?1",
+            [export],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(preserved, original);
+    assert_eq!(
+        w.connection()
+            .query_row("SELECT count(*) FROM operation_journal", [], |r| r
+                .get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+}
+#[test]
 fn return_scope_requires_exact_separate_sale_evidence_without_fabricating_row_fields() {
     use sha2::{Digest, Sha256};
     let dir = Dir::new();

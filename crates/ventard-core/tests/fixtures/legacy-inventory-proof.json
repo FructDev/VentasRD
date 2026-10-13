@@ -1,0 +1,40 @@
+{
+  "tenant": "96000000-0000-4000-8000-000000000001",
+  "branch": "96400000-0000-4000-8000-000000000002",
+  "fixtures": [
+    {
+      "local": {
+        "id": "96400000-0000-4000-8000-000000000010",
+        "negocio_id": "96000000-0000-4000-8000-000000000001",
+        "sucursal_id": "96400000-0000-4000-8000-000000000002",
+        "producto_id": "96400000-0000-4000-8000-000000000003",
+        "delta": -2,
+        "tipo": "venta",
+        "referencia_id": "96400000-0000-4000-8000-000000000020",
+        "fecha_creacion": 1791914400123,
+        "estado_sincronizacion": 0,
+        "sync_protocol_version": 2,
+        "payload_hash": "cbf9669407c65d95965c671359aca8f7557e65d9a1b465ce4fa6006f450d1e52"
+      },
+      "canonical": "{\"version\":2,\"operationId\":\"96400000-0000-4000-8000-000000000010\",\"negocioId\":\"96000000-0000-4000-8000-000000000001\",\"sucursalId\":\"96400000-0000-4000-8000-000000000002\",\"productoId\":\"96400000-0000-4000-8000-000000000003\",\"effect\":{\"kind\":\"DELTA\",\"value\":\"-2\"},\"tipo\":\"venta\",\"referenciaId\":\"96400000-0000-4000-8000-000000000020\",\"fechaOrigen\":1791914400123,\"expectedRemoteSequence\":null}"
+    },
+    {
+      "local": {
+        "id": "96400000-0000-4000-8000-000000000011",
+        "negocio_id": "96000000-0000-4000-8000-000000000001",
+        "sucursal_id": "96400000-0000-4000-8000-000000000002",
+        "producto_id": "96400000-0000-4000-8000-000000000003",
+        "delta": 0,
+        "valor_absoluto": 5,
+        "expected_remote_sequence": "9007199254740993",
+        "tipo": "conteo",
+        "fecha_creacion": 1791914400123,
+        "estado_sincronizacion": 0,
+        "sync_protocol_version": 2,
+        "payload_hash": "d8552f05c48355afb424ca2a1d397aedb4ca99864191ad819b2393b0217a4bb8"
+      },
+      "canonical": "{\"version\":2,\"operationId\":\"96400000-0000-4000-8000-000000000011\",\"negocioId\":\"96000000-0000-4000-8000-000000000001\",\"sucursalId\":\"96400000-0000-4000-8000-000000000002\",\"productoId\":\"96400000-0000-4000-8000-000000000003\",\"effect\":{\"kind\":\"ABSOLUTE\",\"value\":\"5\"},\"tipo\":\"conteo\",\"referenciaId\":null,\"fechaOrigen\":1791914400123,\"expectedRemoteSequence\":\"9007199254740993\"}"
+    }
+  ],
+  "rawLedgerRows": "[{\"tipo\": \"venta\", \"applied_at\": \"2026-10-13T20:10:40.462+00:00\", \"applied_by\": \"96400000-0000-4000-8000-000000000001\", \"negocio_id\": \"96000000-0000-4000-8000-000000000001\", \"effect_kind\": \"DELTA\", \"producto_id\": \"96400000-0000-4000-8000-000000000003\", \"stock_after\": 8, \"sucursal_id\": \"96400000-0000-4000-8000-000000000002\", \"effect_value\": -2, \"fecha_origen\": 1791914400123, \"operacion_id\": \"96400000-0000-4000-8000-000000000010\", \"payload_hash\": \"cbf9669407c65d95965c671359aca8f7557e65d9a1b465ce4fa6006f450d1e52\", \"stock_before\": 10, \"referencia_id\": \"96400000-0000-4000-8000-000000000020\", \"warning_codes\": [], \"authority_kind\": \"BRANCH\", \"payload_version\": 2, \"remote_sequence\": 9007199254740993, \"expected_remote_sequence\": null}, {\"tipo\": \"conteo\", \"applied_at\": \"2026-10-13T20:10:40.465+00:00\", \"applied_by\": \"96400000-0000-4000-8000-000000000001\", \"negocio_id\": \"96000000-0000-4000-8000-000000000001\", \"effect_kind\": \"ABSOLUTE\", \"producto_id\": \"96400000-0000-4000-8000-000000000003\", \"stock_after\": 5, \"sucursal_id\": \"96400000-0000-4000-8000-000000000002\", \"effect_value\": 5, \"fecha_origen\": 1791914400123, \"operacion_id\": \"96400000-0000-4000-8000-000000000011\", \"payload_hash\": \"d8552f05c48355afb424ca2a1d397aedb4ca99864191ad819b2393b0217a4bb8\", \"stock_before\": 8, \"referencia_id\": null, \"warning_codes\": [], \"authority_kind\": \"BRANCH\", \"payload_version\": 2, \"remote_sequence\": 9007199254740994, \"expected_remote_sequence\": 9007199254740993}]"
+}

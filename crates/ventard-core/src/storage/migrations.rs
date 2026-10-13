@@ -187,6 +187,13 @@ pub fn get_embedded_migrations() -> Vec<Migration> {
         sql: sql_0023,
         checksum: Migration::compute_checksum(sql_0023),
     });
+    let sql_0024 = include_str!("../../migrations/0024_legacy_inventory_evidence.sql");
+    migrations.push(Migration {
+        version: 24,
+        name: "0024_legacy_inventory_evidence",
+        sql: sql_0024,
+        checksum: Migration::compute_checksum(sql_0024),
+    });
     migrations
 }
 

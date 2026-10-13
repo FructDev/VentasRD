@@ -7,6 +7,8 @@ pub mod cipher;
 #[cfg(feature = "encrypted-storage")]
 pub mod legacy_reconciliation;
 #[cfg(feature = "encrypted-storage")]
+pub mod legacy_inventory_proof;
+#[cfg(feature = "encrypted-storage")]
 pub mod legacy_web;
 pub mod migrations;
 pub mod vault_lock;
