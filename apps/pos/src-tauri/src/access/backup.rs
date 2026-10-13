@@ -19,6 +19,13 @@ pub(super) struct RecoveryState {
 )]
 pub enum Action {
     Status {},
+    WebStatus {},
+    WebImport {},
+    WebRows {
+        export_id: String,
+        table: String,
+        page: u32,
+    },
     Create {
         operation_id: String,
     },
@@ -264,6 +271,89 @@ v["mode"] = json!("recovery-readonly");
         }
         let mut r = self.recovery.lock().map_err(|_| error("ACCESS_BUSY"))?;
         match action {
+            Action::WebStatus {} | Action::WebRows { .. } | Action::WebImport {} => {
+                if r.active.is_some() {
+                    return Err(error("BACKUP_ARCHIVE_READ_ONLY"));
+                }
+                drop(r);
+                let (selected, writer) = self.backup_owner()?;
+                let tenant = selected.identity.tenant_id.clone();
+                let convert = |e: ventard_core::storage::legacy_web::ImportError| error(e.code());
+                let _read_guard = if !matches!(&action, Action::WebImport {}) {
+                    let inner = self.inner.lock().map_err(|_| error("ACCESS_BUSY"))?;
+                    let latest = inner
+                        .selected
+                        .as_ref()
+                        .ok_or(error("ACCESS_LOGIN_REQUIRED"))?;
+                    if !inner.unlocked || !source(latest)?.same_identity(&source(&selected)?) {
+                        return Err(error("WEB_IMPORT_CONTEXT_CHANGED"));
+                    }
+                    self.deny_archive()?;
+                    Some(inner)
+                } else {
+                    None
+                };
+                match action {
+                    Action::WebStatus {} => writer
+                        .call(move |c| Ok(ventard_core::storage::legacy_web::list(c, &tenant)))
+                        .map_err(|_| error("WEB_IMPORT_STORAGE"))?
+                        .map_err(convert),
+                    Action::WebRows {
+                        export_id,
+                        table,
+                        page,
+                    } => writer
+                        .call(move |c| {
+                            Ok(ventard_core::storage::legacy_web::rows(
+                                c, &tenant, &export_id, &table, page,
+                            ))
+                        })
+                        .map_err(|_| error("WEB_IMPORT_STORAGE"))?
+                        .map_err(convert),
+                    Action::WebImport {} => {
+                        let Some(file) = rfd::FileDialog::new()
+                            .set_title("Elegir traslado cifrado del navegador VentaRD")
+                            .add_filter("Traslado VentaRD", &["vrweb"])
+                            .pick_file()
+                        else {
+                            return Ok(json!({"state":"CANCELLED"}));
+                        };
+                        let Some(key) = rfd::FileDialog::new()
+                            .set_title("Elegir la llave del traslado del navegador")
+                            .add_filter("Llave VentaRD", &["vrwebkey"])
+                            .pick_file()
+                        else {
+                            return Ok(json!({"state":"CANCELLED"}));
+                        };
+                        let package = ventard_core::storage::legacy_web::read_files(&file, &key)
+                            .map_err(convert)?;
+                        // Choosers/decryption may outlive the selected account. Reauthorize
+                        // and hold selection stable across the atomic isolated insert.
+                        let (current, writer) = self.backup_owner()?;
+                        if !source(&selected)?.same_identity(&source(&current)?) {
+                            return Err(error("WEB_IMPORT_CONTEXT_CHANGED"));
+                        }
+                        let inner = self.inner.lock().map_err(|_| error("ACCESS_BUSY"))?;
+                        let latest = inner
+                            .selected
+                            .as_ref()
+                            .ok_or(error("ACCESS_LOGIN_REQUIRED"))?;
+                        if !inner.unlocked || !source(latest)?.same_identity(&source(&current)?) {
+                            return Err(error("WEB_IMPORT_CONTEXT_CHANGED"));
+                        }
+                        self.deny_archive()?;
+                        writer
+                            .call(move |c| {
+                                Ok(ventard_core::storage::legacy_web::store(
+                                    c, &tenant, &package,
+                                ))
+                            })
+                            .map_err(|_| error("WEB_IMPORT_STORAGE"))?
+                            .map_err(convert)
+                    }
+                    _ => Err(error("WEB_IMPORT_INVALID")),
+                }
+            }
             Action::Abandon { operation_id } => {
                 if r.active.is_some() {
                     return Err(error("BACKUP_ARCHIVE_READ_ONLY"));
@@ -662,8 +752,29 @@ mod tests {
             json!({"action":"INSPECT","sql":"SELECT secret"}),
             json!({"action":"DELETE"}),
             json!({"action":"RECOVER_KEY","handle":"fixture","pin":"0000","tenantId":"forged"}),
+            json!({"action":"WEB_IMPORT","path":"C:/private","key":"forged"}),
+            json!({"action":"WEB_ROWS","exportId":"fixture","table":"ventas","page":0,"tenantId":"forged"}),
         ] {
             assert!(serde_json::from_value::<Action>(v).is_err())
+        }
+    }
+    #[test]
+    fn browser_migration_requires_owner_pin_before_any_chooser_or_data_read() {
+        let state =
+            AccessState::new(std::env::temp_dir().join("unused-web-migration-admission-fixture"));
+        for action in [
+            Action::WebImport {},
+            Action::WebStatus {},
+            Action::WebRows {
+                export_id: "fixture".into(),
+                table: "ventas".into(),
+                page: 0,
+            },
+        ] {
+            assert_eq!(
+                state.backup_action(action).unwrap_err().code,
+                "ACCESS_PIN_REQUIRED"
+            );
         }
     }
 }

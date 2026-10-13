@@ -10,6 +10,7 @@ test('Ajustes originales: logo, banco, marca, recuperación, permisos y preferen
  const fixtureId=n=>'96000000-0000-4000-8000-'+String(n).padStart(12,'0'),product={id:fixtureId(700),name:'Artículo autoimpresión · FIXTURE',code:'QA-AUTO',priceCents:'10000',stock:'1',revision:'1',kind:'venta',serialRequired:false};
  let activeCart=null,saleResult=null,saleTicket=null,saleCommits=0;const attempts=new Map();let profile={mode:'DIALOG',connection:'USB',queue:null,host:null,dots:576,cut:true,drawer:false},probeId=null,probeCount=0,loseProbe=true;const rasters=[];
  await page.exposeFunction('__settingsInvoke',async(command,args)=>{
+   if(command==='native_backup'&&args.command.action==='WEB_STATUS')return{rows:[]};
    const snapshot=()=>({status:'ready',mode:'staging-operational',scopeRevision:state.revision,business:{...state.definition},products:[product],customers:[],confirmedSales:String(saleCommits),cashCents:'0',pendingOperations:'0',carts:{active:activeCart,paused:[]},lastResult:saleResult,pendingAttempt:null});
    if(command==='native_history_ticket')return saleTicket;
    if(command==='native_access_status')return{status:'PREPARATION_REQUIRED',configured:true,actorId:'96000000-0000-4000-8000-000000000002',tenantId:'96000000-0000-4000-8000-000000000001',role:'owner',pinEnrolled:true,catalogueReady:true,operationalReady:true,tenants:[]};

@@ -12,7 +12,7 @@ default = []
 qa-spike = ["encrypted-storage"]
 # Sólo fixtures sintéticos. El shell comercial debe usar encrypted-storage.
 fixture-storage = ["dep:rusqlite", "rusqlite/bundled", "dep:fs2"]
-encrypted-storage = ["dep:rusqlite", "rusqlite/bundled-sqlcipher-vendored-openssl", "rusqlite/backup", "dep:fs2", "dep:zeroize", "dep:getrandom", "dep:chacha20poly1305", "dep:subtle", "dep:ed25519-dalek", "dep:argon2"]
+encrypted-storage = ["dep:rusqlite", "rusqlite/bundled-sqlcipher-vendored-openssl", "rusqlite/backup", "dep:fs2", "dep:zeroize", "dep:getrandom", "dep:chacha20poly1305", "dep:subtle", "dep:ed25519-dalek", "dep:argon2", "dep:openssl"]
 
 [dependencies]
 num-bigint = "0.4"
@@ -31,3 +31,4 @@ chacha20poly1305 = { version = "=0.11.0", optional = true, default-features = fa
 subtle = { version = "=2.6.1", optional = true }
 ed25519-dalek = {version="=2.2.0",optional=true,default-features=false,features=["std","zeroize"]}
 argon2 = {version="=0.5.3",optional=true,default-features=false,features=["alloc","zeroize"]}
+openssl = {version="=0.10.76",optional=true}

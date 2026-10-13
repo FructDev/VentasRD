@@ -1,6 +1,7 @@
 import {applyBrand} from '../features/settings/brand';
 import {BusinessSettings} from '../features/settings/business-settings';
 import {BackupSettings} from '../features/settings/backup-settings';
+import {WebMigrationSettings} from '../features/settings/web-migration-settings';
 import {FiscalSettings} from '../features/settings/fiscal-settings';
 import {nativeArchivePort} from '../platform/archive';
 import {PrintingSettings} from '../features/services/printing-settings';
@@ -79,6 +80,7 @@ function SettingsPage() {
         <PrintingSettings/>
         <FiscalSettings/>
         <BackupSettings/>
+        {s.snapshot?.mode!=='recovery-readonly'&&<WebMigrationSettings/>}
         <div className="bg-navy-2 rounded-xl p-5 border border-navy-3">
           <h3 className="text-lg font-bold text-vr-gray mb-1 border-b border-navy-3 pb-2">🩺 Estado del Sistema</h3>
           <p className="text-xs text-vr-gray mb-4">Datos de este dispositivo para soporte. No envía ventas ni datos de clientes.</p>

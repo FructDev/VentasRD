@@ -30,6 +30,7 @@ fn main() {
             "native_fiscal_read",
             "native_fiscal_prepare",
             "native_sales",
+            "native_backup",
         ]),
     ))
     .expect("NATIVE_ACL_BUILD_FAILED");

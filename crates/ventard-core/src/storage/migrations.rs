@@ -173,6 +173,13 @@ pub fn get_embedded_migrations() -> Vec<Migration> {
         sql: sql_0021,
         checksum: Migration::compute_checksum(sql_0021),
     });
+    let sql_0022 = include_str!("../../migrations/0022_legacy_web_preservation.sql");
+    migrations.push(Migration {
+        version: 22,
+        name: "0022_legacy_web_preservation",
+        sql: sql_0022,
+        checksum: Migration::compute_checksum(sql_0022),
+    });
     migrations
 }
 

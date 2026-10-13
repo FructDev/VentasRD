@@ -26,6 +26,7 @@ test('Respaldo en Ajustes: replay, archivo rechazado y consulta histórica sin c
    if(command==='native_access_status')return{status:archive?'RECOVERY_ARCHIVE':'PREPARATION_REQUIRED',configured:true,actorId:id(2),tenantId:id(1),role:archive?null:'owner',pinEnrolled:true,operationalReady:!archive,catalogueReady:true,tenants:[]};
    const c=args.command;
    if(command==='native_backup'){
+    if(c.action==='WEB_STATUS')return{rows:[]};
     if(c.action==='STATUS')return{rows,canCreate:!archive,archive:archive?summary:undefined};
     if(c.action==='CREATE'){created.push(c.operationId);if(!rows.length)rows.push({...summary,backupId:c.operationId,handle:undefined});if(lose){lose=false;throw{code:'IPC_RESPONSE_LOST'}}return rows[0]}
     if(c.action==='INSPECT'){if(invalid){invalid=false;throw{code:'BACKUP_INVALID'}}return summary}

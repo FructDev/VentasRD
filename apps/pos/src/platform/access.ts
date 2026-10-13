@@ -206,6 +206,14 @@ const messages: Record<string, string> = {
     "Este equipo es nuevo. Un dueño o administrador debe prepararlo primero; después podrás iniciar sesión con tu cuenta de vendedor. Usa «Usar otra cuenta» sin borrar la instalación.",
   ACCESS_INSTALLATION_SCOPE_LOCKED:
     "Esta instalación ya está vinculada a otro ámbito; no se cambia automáticamente.",
+  WEB_IMPORT_INVALID:'El archivo del navegador está incompleto o usa un formato incompatible. Los datos activos se conservaron.',
+  WEB_IMPORT_KEY_INVALID:'La llave no corresponde al archivo o éste fue modificado. Los datos activos se conservaron.',
+  WEB_IMPORT_IO:'No se pudo leer el archivo o su llave. Comprueba que ambos estén disponibles en este equipo.',
+  WEB_IMPORT_TOO_LARGE:'Este traslado supera el límite de 32 MB; requiere preparar una copia de mayor tamaño.',
+  WEB_IMPORT_STORAGE:'No se pudo guardar la copia. El mismo archivo puede recibirse de nuevo sin repetir ventas.',
+  WEB_IMPORT_TENANT_MISMATCH:'La copia pertenece a otro negocio. Selecciona su cuenta antes de recibirla.',
+  WEB_IMPORT_CONTEXT_CHANGED:'Cambió la cuenta durante la recepción. Vuelve a elegir el archivo desde la cuenta correcta.',
+  WEB_IMPORT_ID_CONFLICT:'Ya se recibió una copia diferente con esta identidad. Se conservó la copia anterior.',
   BACKUP_JOB_ABANDONED:'Este intento fue descartado. Sus archivos se conservan; inicia un respaldo nuevo.',
   BACKUP_ALREADY_VERIFIED:'Este respaldo ya está verificado. Puedes comprobarlo de nuevo sin cambiar su identidad.',
   BACKUP_IO:'No se pudo completar el archivo. Conserva el intento y verifica el espacio o la unidad.',
@@ -275,7 +283,11 @@ export function accessMessage(e: unknown) {
 
 export interface BackupSummary {backupId:string;state:string;capturedAtMs?:string;databaseBytes?:string;counts?:Record<string,string>;handle?:string}
 export interface BackupView {rows:BackupSummary[];canCreate:boolean;archive?:BackupSummary}
+export interface WebMigrationSummary {exportId:string;tenantId:string;origin:string;profileAlias:string;capturedAtMs:string;state:'PRESERVED_REVIEW_REQUIRED';writersStopped:false;counts:Record<string,number>;pendingRows:number;remoteUnverifiedRows:number;unknownScopeRows:number;foreignTenantRows:number;unknownTenantRows:number;missingReferences:number;externalImageReferences:number;canActivate:false}
 export const backupPort={
+ webStatus:()=>call<{rows:WebMigrationSummary[]}>('native_backup',{command:{action:'WEB_STATUS'}}),
+ webImport:()=>call<WebMigrationSummary|{state:'CANCELLED'}>('native_backup',{command:{action:'WEB_IMPORT'}}),
+ webRows:(exportId:string,table:string,page:number)=>call<{rows:Record<string,unknown>[];total:number;page:number}>('native_backup',{command:{action:'WEB_ROWS',exportId,table,page}}),
  settingsRead:()=>call<import('./management').BusinessSettingsView>('native_backup',{command:{action:'SETTINGS_READ'}}),
  printLayoutRead:()=>call<{layout:import('./management').PrintLayout;canWrite:boolean;coverage:string}>('native_backup',{command:{action:'PRINT_LAYOUT_READ'}}),
  repairsRead:()=>call<import('./management').RepairsView>('native_backup',{command:{action:'REPAIRS_READ'}}),

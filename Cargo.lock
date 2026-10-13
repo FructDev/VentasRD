@@ -4283,6 +4283,7 @@ dependencies = [
  "num-bigint",
  "num-integer",
  "num-traits",
+ "openssl",
  "rusqlite",
  "serde",
  "serde_json",

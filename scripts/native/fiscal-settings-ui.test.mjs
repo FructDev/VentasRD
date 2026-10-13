@@ -12,6 +12,7 @@ test('Ajustes fiscal original: cursor, respuesta perdida, recuperación, conflic
   if(command==='native_access_status')return{status:'PREPARATION_REQUIRED',configured:true,actorId:'96000000-0000-4000-8000-000000000002',tenantId:'96000000-0000-4000-8000-000000000001',role:canManage?'owner':'seller',pinEnrolled:true,catalogueReady:true,operationalReady:true,tenants:[]};
   if(command==='native_cash_read')return{scope:'BRANCH',branchId:'96000000-0000-4000-8000-000000000005',turn:null,canOpen:false};
   if(command==='native_fiscal_read')return{pending:[],availableB01:'0',availableB02:'20',lastStatus:null,lastReason:null};
+  if(command==='native_backup'&&args.command.action==='WEB_STATUS')return{rows:[]};
   if(command==='native_backup'&&args.command.action==='STATUS')return{rows:[],canCreate:canManage};
   if(command==='native_sales'){const c=args.command;
    if(['READ','SYNCHRONIZE'].includes(c.action))return{status:'ready',mode:'staging-operational',business:definition,products:[],customers:[],confirmedSales:'0',cashCents:'0',pendingOperations:'0',scopeRevision:'1',supportsDrafts:false,carts:{active:null,paused:[]},lastResult:null,pendingAttempt:null};

@@ -88,10 +88,10 @@ export function qaError(error: unknown): string {
 // Sólo presentación/parse de entrada, sin impuesto/precio/stock/negocio en JS.
 export function showCents(value: string): string {
   const cents = BigInt(value);
-  return `RD$ ${(cents / 100n).toLocaleString("es-DO")}.${String(cents % 100n).padStart(2, "0")}`;
+  return `RD$ ${(cents / BigInt(100)).toLocaleString("es-DO")}.${String(cents % BigInt(100)).padStart(2, "0")}`;
 }
 export function inputCents(value: string): string {
   const m = /^(0|[1-9][0-9]*)(?:\.([0-9]{1,2}))?$/.exec(value);
   if (!m) throw { code: "QA_AMOUNT_INVALID" };
-  return (BigInt(m[1]) * 100n + BigInt((m[2] ?? "").padEnd(2, "0"))).toString();
+  return (BigInt(m[1]) * BigInt(100) + BigInt((m[2] ?? "").padEnd(2, "0"))).toString();
 }

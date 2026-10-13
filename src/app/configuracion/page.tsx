@@ -5,6 +5,7 @@ import { supabase } from '@/lib/supabase/client';
 import { useConfigStore } from '@/store/useConfigStore';
 import TopBar from '@/components/shared/TopBar';
 import PinGuard from '@/components/ui/PinGuard';
+import WebMigrationExport from '@/components/settings/WebMigrationExport';
 import EstadoSistema from '@/components/shared/EstadoSistema';
 import { AlertTriangle } from 'lucide-react';
 
@@ -186,7 +187,8 @@ export default function ConfiguracionPage() {
                             <p className="text-vr-gray mt-2">Personaliza la información que aparece en los tickets y reportes.</p>
                         </div>
 
-                        <div className="bg-navy-2 rounded-2xl border border-navy-3 overflow-hidden shadow-2xl">
+                        <WebMigrationExport />
+                        <div className="bg-navy-2 rounded-2xl border border-navy-3 overflow-hidden shadow-2xl mt-6">
                             <form onSubmit={handleSave} className="p-4 sm:p-8 space-y-6">
                                 
                                 {/* Información Básica */}
