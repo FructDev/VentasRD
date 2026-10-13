@@ -39,7 +39,7 @@ test('Respaldo en Ajustes: replay, archivo rechazado y consulta histórica sin c
    if(command==='native_sales'||command==='native_backup'){
     if(['READ','SYNCHRONIZE'].includes(c.action))return snapshot();
     if(c.action==='QUOTE')return{subtotalCents:null,itbisCents:null,totalCents:null,changeCents:null,payable:false,lineTotals:[]};
-    if(c.action==='FISCAL_SETTINGS_READ')return{configuration:null,capturedAtMs:null,pending:null,lastStatus:null,canWrite:false,remoteError:'FISCAL_SETTINGS_MIGRATION_REQUIRED'};if(c.action==='MANAGEMENT_READ')return management();
+    if(c.action==='PRINTER_READ')return{profile:{mode:'DIALOG',connection:'USB',queue:null,host:null,dots:576,cut:true,drawer:false},queues:[],canWrite:false};if(c.action==='FISCAL_SETTINGS_READ')return{configuration:null,capturedAtMs:null,pending:null,lastStatus:null,canWrite:false,remoteError:'FISCAL_SETTINGS_MIGRATION_REQUIRED'};if(c.action==='MANAGEMENT_READ')return management();
     if(c.action==='SETTINGS_READ')return{supported:true,revision:'1',definition,canWrite:!archive,canLoadRemote:false,coverage:'EXPLICIT_IPC_FIXTURE'};
     if(c.action==='PRINT_LAYOUT_READ')return{layout,canWrite:!archive,coverage:'EXPLICIT_IPC_FIXTURE'};
    }

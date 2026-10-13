@@ -19,7 +19,7 @@ test('Ajustes fiscal original: cursor, respuesta perdida, recuperación, conflic
    if(c.action==='MANAGEMENT_READ')return{canManage,planTier:'basico',customers:[],movements:[],pending:[],turn:null,coverage:'EXPLICIT_IPC_FIXTURE'};
    if(c.action==='SETTINGS_READ')return{supported:true,revision:'1',definition,canWrite:canManage,canLoadRemote:false,coverage:'EXPLICIT_IPC_FIXTURE'};
    if(c.action==='PRINT_LAYOUT_READ')return{layout,canWrite:canManage,coverage:'EXPLICIT_IPC_FIXTURE'};
-   if(c.action==='FISCAL_SETTINGS_READ')return structuredClone(view());
+   if(c.action==='PRINTER_READ')return{profile:{mode:'DIALOG',connection:'USB',queue:null,host:null,dots:576,cut:true,drawer:false},queues:[],canWrite:false};if(c.action==='FISCAL_SETTINGS_READ')return structuredClone(view());
    if(c.action==='FISCAL_SETTINGS_SAVE'){saves.push(c.request);assert.equal(c.request.first,'1');pending={...c.request,requestId:c.request.operationId};lastStatus='UNKNOWN';if(c.request.expectedRevision!==cfg.revision)throw{code:'FISCAL_SETTINGS_VERSION_CONFLICT'};effects++;cfg={...cfg,last:c.request.last,enabled:c.request.enabled,revision:'b'.repeat(64)};if(lose){lose=false;throw{code:'IPC_RESPONSE_LOST'}}pending=null;lastStatus='RECEIVED';return structuredClone(view())}
    if(c.action==='FISCAL_SETTINGS_RECOVER'){assert.equal(c.operationId,pending.requestId);recoveries.push(c.operationId);pending=null;lastStatus='RECEIVED';return structuredClone(view())}
    if(c.action==='FISCAL_SETTINGS_ABANDON'){assert.equal(c.operationId,pending.requestId);abandoned.push(c.operationId);pending=null;lastStatus='ABANDONED';return structuredClone(view())}

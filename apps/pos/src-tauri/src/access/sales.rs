@@ -13,6 +13,14 @@ use ventard_core::application::{
     deny_unknown_fields
 )]
 pub enum SalesAction {
+    PrinterRead {},
+    PrinterTest {
+        #[serde(rename = "attemptId")]
+        attempt_id: String,
+    },
+    PrinterSave {
+        profile: ventard_core::application::printing::transport::Profile,
+    },
     FiscalSettingsRead {},
     FiscalSettingsSave {
         request: ventard_core::fiscal::settings::Input,
@@ -69,6 +77,8 @@ pub enum SalesAction {
         operation_id: String,
     },
     PrintRepair {
+        #[serde(default)]
+        raster: Option<ventard_core::application::printing::transport::Raster>,
         #[serde(rename = "operationId")]
         operation_id: String,
         #[serde(rename = "snapshotHash")]
@@ -91,6 +101,8 @@ pub enum SalesAction {
         operation_id: String,
     },
     PrintCut {
+        #[serde(default)]
+        raster: Option<ventard_core::application::printing::transport::Raster>,
         #[serde(rename = "operationId")]
         operation_id: String,
         #[serde(rename = "snapshotHash")]
@@ -126,6 +138,8 @@ pub enum SalesAction {
         to_ms: String,
     },
     Print {
+        #[serde(default)]
+        raster: Option<ventard_core::application::printing::transport::Raster>,
         #[serde(rename = "operationId")]
         operation_id: String,
         #[serde(rename = "snapshotHash")]
@@ -563,6 +577,50 @@ impl AccessState {
     }
     fn sales_action(&self, action: SalesAction) -> Result<Value, AccessError> {
         match action {
+            SalesAction::PrinterTest { attempt_id } => {
+                let now = time()?;
+                let a = attempt_id.clone();
+                let (job, ctx) = self.sales_local(move |c, ctx, g, high, opens| {
+                    Ok((
+                        ventard_core::application::printing::transport::probe(
+                            c, &ctx, &g, now, high, opens, &a,
+                        )?,
+                        ctx,
+                    ))
+                })?;
+                if job.fresh {
+                    let inner = self.inner.lock().map_err(|_| error("ACCESS_BUSY"))?;
+                    if !inner.unlocked
+                        || inner
+                            .selected
+                            .as_ref()
+                            .is_none_or(|s| s.catalogue_context() != ctx)
+                    {
+                        return Err(error("ACCESS_CONTEXT_CHANGED"));
+                    }
+                    let receipt = super::printers::send(&job.profile, &job.bytes)?;
+                    let writer = Arc::clone(
+                        inner
+                            .writer
+                            .as_ref()
+                            .ok_or(error("ACCESS_PREPARATION_REQUIRED"))?,
+                    );
+                    drop(inner);
+                    let hash = job.wire_hash;
+                    writer
+                        .call(move |c| {
+                            ventard_core::application::printing::transport::acknowledge(
+                                c,
+                                &ctx,
+                                &attempt_id,
+                                &hash,
+                                &receipt,
+                            )
+                        })
+                        .map_err(|e| error(e.code()))?;
+                }
+                Ok(json!({"status":"UNKNOWN","submitted":job.fresh}))
+            }
             SalesAction::FiscalSettingsRead {} => self.fiscal_settings_read(),
             SalesAction::FiscalSettingsSave { request } => {
                 self.fiscal_settings_send(Some(request), None, false)
@@ -592,6 +650,8 @@ impl AccessState {
             a => {
                 let now = time()?;
                 self.sales_local(move |c, ctx, g, high, opens| match a {
+                    SalesAction::PrinterRead {}=>Ok(json!({"profile":ventard_core::application::printing::transport::profile(c,&ctx)?,"canWrite":g.evaluate(now,high,opens).map_err(|_|AppError::Auth(ventard_core::application::errors::AuthError::InvalidSignature))?.allows("MANAGE"),"queues":super::printers::queues(),"probeAttempt":ventard_core::application::printing::transport::last_probe(c,&ctx)?})),
+                    SalesAction::PrinterSave {profile}=>{super::printers::validate_queue(&profile).map_err(|_|AppError::Business(ventard_core::application::errors::BusinessError::SaleGuard{code:"PRINT_QUEUE_MISSING".into()}))?;Ok(json!(ventard_core::application::printing::transport::save(c,&g,now,high,opens,profile)?))},
                     SalesAction::ImportList {}=>ventard_core::application::inventory_import::list(c,&g,now,high,opens),
                     SalesAction::ImportPrepare {batch}=>ventard_core::application::inventory_import::prepare(c,&g,now,high,opens,batch),
                     SalesAction::ImportRun {operation_id}=>ventard_core::application::inventory_import::run(c,&g,now,high,opens,&operation_id),
@@ -608,7 +668,7 @@ impl AccessState {
                         }
                         Ok(view)
                     }
-                    SalesAction::Print { .. }|SalesAction::PrintCut{..}|SalesAction::PrintRepair{..} => Err(AppError::Protocol(
+                    SalesAction::PrinterTest {..}|SalesAction::Print { .. }|SalesAction::PrintCut{..}|SalesAction::PrintRepair{..} => Err(AppError::Protocol(
                         ventard_core::application::errors::ProtocolError::MalformedPayload,
                     )),
                     SalesAction::ManagementRead => {
@@ -954,68 +1014,116 @@ pub async fn native_sales(
             operation_id,
             snapshot_hash,
             attempt_id,
+            raster,
         }
         | SalesAction::PrintCut {
             operation_id,
             snapshot_hash,
             attempt_id,
+            raster,
         }
         | SalesAction::PrintRepair {
             operation_id,
             snapshot_hash,
             attempt_id,
+            raster,
         } = command
         {
             let op = operation_id.clone();
             let id = attempt_id.clone();
             let now = time()?;
-            let fresh = s.sales_local(move |c, ctx, g, high, opens| {
-                if cut {
-                    if !g
-                        .evaluate(now, high, opens)
-                        .map_err(|_| {
-                            AppError::Protocol(
-                                ventard_core::application::errors::ProtocolError::MalformedPayload,
-                            )
-                        })?
-                        .allows("MANAGE")
-                    {
-                        return Err(AppError::Auth(
-                            ventard_core::application::errors::AuthError::PermissionDenied {
-                                required: "MANAGE".into(),
-                            },
-                        ));
-                    }
-                    ventard_core::application::printing::request_cut(
-                        c,
-                        &ctx,
-                        &op,
-                        &snapshot_hash,
-                        &id,
-                    )
-                } else {
-                    ventard_core::application::printing::request(c, &ctx, &op, &snapshot_hash, &id)
+            let (job, prepared_ctx) = s.sales_local(move |c, ctx, g, high, opens| {
+                let capability = if cut { "MANAGE" } else { "SELL" };
+                if !g
+                    .evaluate(now, high, opens)
+                    .map_err(|_| {
+                        AppError::Auth(
+                            ventard_core::application::errors::AuthError::InvalidSignature,
+                        )
+                    })?
+                    .allows(capability)
+                {
+                    return Err(AppError::Auth(
+                        ventard_core::application::errors::AuthError::PermissionDenied {
+                            required: capability.into(),
+                        },
+                    ));
                 }
+                let job = ventard_core::application::printing::transport::prepare(
+                    c,
+                    &ctx,
+                    &op,
+                    &snapshot_hash,
+                    &id,
+                    cut,
+                    raster,
+                )?;
+                Ok((job, ctx))
             })?;
-            if fresh && window.print().is_err() {
-                s.sales_local(move |c, ctx, _, _, _| {
-                    if cut {
-                        ventard_core::application::printing::failed_cut(
-                            c,
-                            &ctx,
-                            &operation_id,
-                            &attempt_id,
-                        )
-                    } else {
-                        ventard_core::application::printing::failed(
-                            c,
-                            &ctx,
-                            &operation_id,
-                            &attempt_id,
-                        )
+            if job.fresh {
+                // Hold selection across the OS boundary: a lock/archive/actor switch
+                // cannot turn this into a send authorized by another context.
+                let inner = s.inner.lock().map_err(|_| error("ACCESS_BUSY"))?;
+                if !inner.unlocked
+                    || inner
+                        .selected
+                        .as_ref()
+                        .is_none_or(|selected| selected.catalogue_context() != prepared_ctx)
+                {
+                    return Err(error("ACCESS_CONTEXT_CHANGED"));
+                }
+                let result = if job.profile.mode == "DIALOG" {
+                    window
+                        .print()
+                        .map(|_| json!({"transport":"WINDOWS_DIALOG","paper":"UNKNOWN"}))
+                        .map_err(|_| error("PRINT_FAILED"))
+                } else {
+                    super::printers::send(&job.profile, &job.bytes)
+                };
+                let writer = Arc::clone(
+                    inner
+                        .writer
+                        .as_ref()
+                        .ok_or(error("ACCESS_PREPARATION_REQUIRED"))?,
+                );
+                drop(inner);
+                match result {
+                    Ok(receipt) => {
+                        let ctx = prepared_ctx.clone();
+                        let attempt = attempt_id.clone();
+                        let hash = job.wire_hash;
+                        writer
+                            .call(move |c| {
+                                ventard_core::application::printing::transport::acknowledge(
+                                    c, &ctx, &attempt, &hash, &receipt,
+                                )
+                            })
+                            .map_err(|e| error(e.code()))?;
                     }
-                })?;
-                return Err(error("PRINT_FAILED"));
+                    Err(e) => {
+                        // A direct partial send can have produced paper. UNKNOWN
+                        // survives every transport error; never fall back/retry it.
+                        if job.profile.mode == "DIALOG" {
+                            let ctx = prepared_ctx.clone();
+                            let op = operation_id.clone();
+                            let attempt = attempt_id.clone();
+                            writer
+                                .call(move |c| {
+                                    if cut {
+                                        ventard_core::application::printing::failed_cut(
+                                            c, &ctx, &op, &attempt,
+                                        )
+                                    } else {
+                                        ventard_core::application::printing::failed(
+                                            c, &ctx, &op, &attempt,
+                                        )
+                                    }
+                                })
+                                .map_err(|e| error(e.code()))?;
+                        }
+                        return Err(e);
+                    }
+                }
             }
             let status = s.sales_local(move |c, ctx, _, _, _| {
                 if cut {
@@ -1029,7 +1137,7 @@ pub async fn native_sales(
                     ventard_core::application::printing::status(c, &ctx, &operation_id, &attempt_id)
                 }
             })?;
-            Ok(json!({"status":status,"submitted":fresh}))
+            Ok(json!({"status":status,"submitted":job.fresh}))
         } else {
             s.sales_action(command)
         }

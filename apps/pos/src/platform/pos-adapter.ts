@@ -192,7 +192,7 @@ export interface PosCashView {
   limitation: "COMMERCIAL_BOOTSTRAP_REQUIRED"|"STAGING_NATIVE_SHARED_TURN";
 }
 export interface PosPort {
-  printTicket?(operationId:string,snapshotHash:string,attemptId:string):Promise<{status:string;submitted?:boolean}>;
+  printTicket?(operationId:string,snapshotHash:string,attemptId:string,raster?:import("./management").PrintRaster):Promise<{status:string;submitted?:boolean}>;
   management?: import('./management').ManagementPort;
   retry?(operationId:string):Promise<PosSnapshot>;
   synchronize?():Promise<PosSnapshot>;
@@ -269,6 +269,14 @@ export const nativePosPort: PosPort = {
   },
 };
 const errors: Record<string, string> = {
+  PRINT_QUEUE_MISSING:'La cola de impresora ya no está instalada. Revisa la conexión en Ajustes.',
+  PRINT_TARGET_CHANGED:'La conexión de impresión cambió. Vuelve a abrir el ticket para usar el destino actual.',
+  PRINT_TARGET_INVALID:'Selecciona una conexión de impresora válida en Ajustes.',
+  PRINT_WIDTH_CONFLICT:'El ancho en puntos de la impresora no coincide con 58/80mm. Ajusta la conexión en Ajustes.',
+  PRINT_RASTER_INVALID:'No se pudo preparar la imagen completa del ticket. No se envió una nueva impresión.',
+  PRINT_RASTER_REQUIRED:'Se requiere la imagen original del ticket para imprimir directamente.',
+  PRINT_DIRECT_REQUIRED:'La página de prueba requiere seleccionar impresión directa.',
+  PRINT_TRANSPORT_UNCERTAIN:'No se pudo confirmar el envío a la impresora. Comprueba el papel y recupera el intento; no se reenviará automáticamente.',
   FISCAL_SETTINGS_MIGRATION_REQUIRED:'La configuración fiscal nativa aún no está instalada en Staging. La secuencia y las reservas existentes se conservan.',
   FISCAL_SETTINGS_PENDING:'Recupera o abandona la solicitud fiscal pendiente antes de editar otra secuencia.',
   FISCAL_SETTINGS_EVIDENCE_INVALID:'La respuesta de configuración fiscal no pasó la verificación. No se cambiaron las reservas locales.',
@@ -441,7 +449,7 @@ export function posError(error: unknown): string {
   );
 }
 export interface PosTicket {autoPrintJob?:{attemptId:string;state:string};actorName?:string|null;
-  printLayout?:import("./management").PrintLayout;
+  printTarget?:import("./management").PrinterProfile;printLayout?:import("./management").PrintLayout;
   printAttempt?:{attemptId:string;state:string};
   printSnapshotHash?: string;
   business?:import("./management").BusinessHeader;

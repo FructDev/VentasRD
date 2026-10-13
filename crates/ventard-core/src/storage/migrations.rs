@@ -166,6 +166,13 @@ pub fn get_embedded_migrations() -> Vec<Migration> {
         sql: sql_0020,
         checksum: Migration::compute_checksum(sql_0020),
     });
+    let sql_0021 = include_str!("../../migrations/0021_native_printer_transport.sql");
+    migrations.push(Migration {
+        version: 21,
+        name: "0021_native_printer_transport",
+        sql: sql_0021,
+        checksum: Migration::compute_checksum(sql_0021),
+    });
     migrations
 }
 

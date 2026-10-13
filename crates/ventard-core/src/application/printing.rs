@@ -1,5 +1,6 @@
 //! A print request never repeats the sale. Crossing the OS boundary is durable
 //! UNKNOWN before sending: neither the dialog nor its return proves paper output.
+pub mod transport;
 use super::{
     errors::{AppError, ProtocolError},
     history, sales,
@@ -113,6 +114,7 @@ pub fn repair_ticket(c: &Connection, ctx: &CatalogueContext, op: &str) -> Result
     .map_err(|_| invalid())?;
     ticket["printSnapshotHash"] = json!(hash);
     ticket["printLayout"] = json!(layout(c, ctx)?);
+    ticket["printTarget"] = json!(transport::profile(c, ctx)?);
     if let Some(attempt) = last_attempt(c, op)? {
         ticket["printAttempt"] = attempt;
     }
@@ -140,6 +142,7 @@ pub fn layaway_ticket(c: &Connection, ctx: &CatalogueContext, op: &str) -> Resul
     .map_err(|_| invalid())?;
     ticket["printSnapshotHash"] = json!(hash);
     ticket["printLayout"] = json!(layout(c, ctx)?);
+    ticket["printTarget"] = json!(transport::profile(c, ctx)?);
     if let Some(attempt) = last_attempt(c, op)? {
         ticket["printAttempt"] = attempt;
     }
@@ -171,12 +174,17 @@ pub fn warranty_ticket(
     .map_err(|_| invalid())?;
     ticket["printSnapshotHash"] = json!(hash);
     ticket["printLayout"] = json!(layout(c, ctx)?);
+    ticket["printTarget"] = json!(transport::profile(c, ctx)?);
     if let Some(attempt) = last_attempt(c, op)? {
         ticket["printAttempt"] = attempt;
     }
     Ok(ticket)
 }
-fn management_ticket(c: &Connection, ctx: &CatalogueContext, op: &str) -> Result<Value, AppError> {
+pub(crate) fn management_ticket(
+    c: &Connection,
+    ctx: &CatalogueContext,
+    op: &str,
+) -> Result<Value, AppError> {
     let kind:String=c.query_row("SELECT kind FROM native_management_records_v1 WHERE operation_id=?1 AND tenant_id=?2 AND scope_key=?3",(op,&ctx.tenant_id,sales::scope_key(ctx)?),|r|r.get(0))?;
     if kind == "WARRANTY_PATCH" {
         warranty_ticket(c, ctx, op)
@@ -236,6 +244,7 @@ pub fn cut_ticket(c: &Connection, ctx: &CatalogueContext, op: &str) -> Result<Va
     .map_err(|_| invalid())?;
     ticket["printSnapshotHash"] = json!(snapshot_hash);
     ticket["printLayout"] = json!(layout(c, ctx)?);
+    ticket["printTarget"] = json!(transport::profile(c, ctx)?);
     if let Some(attempt) = last_attempt(c, op)? {
         ticket["printAttempt"] = attempt;
     }
@@ -254,6 +263,16 @@ pub fn request_cut(
         return Err(invalid());
     }
     let tx = c.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let fresh = request_document_in_transaction(&tx, op, hash, attempt)?;
+    tx.commit()?;
+    Ok(fresh)
+}
+pub(crate) fn request_document_in_transaction(
+    tx: &Connection,
+    op: &str,
+    hash: &str,
+    attempt: &str,
+) -> Result<bool, AppError> {
     let old:Option<(String,String)>=tx.query_row("SELECT operation_id,snapshot_hash FROM native_document_print_attempts_v1 WHERE attempt_id=?1",[attempt],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
     if let Some((stored, h)) = old {
         if stored != op || h != hash {
@@ -265,7 +284,6 @@ pub fn request_cut(
         "INSERT INTO native_document_print_attempts_v1 VALUES(?1,?2,?3,'UNKNOWN')",
         (attempt, op, hash),
     )?;
-    tx.commit()?;
     Ok(true)
 }
 pub fn failed_cut(
@@ -297,6 +315,16 @@ pub fn request(
     EntityId::parse(attempt).map_err(|_| invalid())?;
     history::ticket(c, ctx, op)?;
     let tx = c.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let fresh = request_sale_in_transaction(&tx, op, hash, attempt)?;
+    tx.commit()?;
+    Ok(fresh)
+}
+pub(crate) fn request_sale_in_transaction(
+    tx: &Connection,
+    op: &str,
+    hash: &str,
+    attempt: &str,
+) -> Result<bool, AppError> {
     let original: String = tx.query_row(
         "SELECT snapshot_hash FROM sale_ticket_snapshots_v1 WHERE operation_id=?1",
         [op],
@@ -326,7 +354,6 @@ pub fn request(
         "UPDATE sale_print_jobs_v1 SET state='UNKNOWN' WHERE operation_id=?1",
         [op],
     )?;
-    tx.commit()?;
     Ok(true)
 }
 pub fn failed(
@@ -352,6 +379,7 @@ pub fn ticket(
     )?;
     v["printSnapshotHash"] = serde_json::json!(hash);
     v["printLayout"] = json!(layout(c, ctx)?);
+    v["printTarget"] = json!(transport::profile(c, ctx)?);
     let job: Option<Value> = c
         .query_row(
             "SELECT job_id,state FROM sale_print_jobs_v1 WHERE operation_id=?1",

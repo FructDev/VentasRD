@@ -24,6 +24,121 @@ use ventard_core::{
     storage::{catalogue_preview::CatalogueContext, migrations},
 };
 #[test]
+fn direct_raster_copies_and_drawer_use_original_cash_auto_job_and_never_pulse_on_reprint() {
+    use base64::{engine::general_purpose::STANDARD, Engine};
+    use ventard_core::application::printing::{self, transport as p};
+    for cash in [true, false] {
+        let mut c = sales_db();
+        let context = ctx(2);
+        let profile = p::Profile {
+            mode: "QUEUE".into(),
+            connection: "USB".into(),
+            queue: Some("QA thermal fixture".into()),
+            host: None,
+            dots: 576,
+            cut: true,
+            drawer: true,
+        };
+        c.execute(
+            "INSERT INTO native_printer_targets_v1 VALUES(?1,?2,?3)",
+            (id(1), id(4), serde_json::to_string(&profile).unwrap()),
+        )
+        .unwrap();
+        let layout = printing::Layout {
+            copies: 2,
+            auto_print: true,
+            ..Default::default()
+        };
+        c.execute(
+            "INSERT INTO native_print_layout_v1 VALUES(?1,?2,?3)",
+            (id(1), id(4), serde_json::to_string(&layout).unwrap()),
+        )
+        .unwrap();
+        c.execute(
+            "INSERT INTO sale_print_settings_v1 VALUES(?1,?2,1,'QA_THERMAL')",
+            (id(1), id(4)),
+        )
+        .unwrap();
+        let options = options(if cash {
+            SalePayment::Cash {
+                tender_cents: "20000".into(),
+            }
+        } else {
+            SalePayment::Card
+        });
+        let request = native_request(&c, options);
+        let result = sales::confirm(&mut c, &grant(2, true), 1000, 0, 0, request).unwrap();
+        let ticket = printing::ticket(&c, &context, &result.operation_id).unwrap();
+        let attempt = ticket["autoPrintJob"]["attemptId"].as_str().unwrap();
+        let hash = ticket["printSnapshotHash"].as_str().unwrap();
+        let raster = p::Raster {
+            width: 576,
+            height: 1,
+            data: STANDARD.encode(vec![0xaa; 72]),
+        };
+        let before = c
+            .query_row::<i64, _, _>("SELECT count(*) FROM operation_journal", [], |r| r.get(0))
+            .unwrap();
+        let job = p::prepare(
+            &mut c,
+            &context,
+            &result.operation_id,
+            hash,
+            attempt,
+            false,
+            Some(raster.clone()),
+        )
+        .unwrap();
+        assert!(job.fresh);
+        assert_eq!(
+            job.bytes
+                .windows(5)
+                .filter(|b| *b == [0x1b, 0x70, 0, 0x19, 0xfa])
+                .count(),
+            usize::from(cash)
+        );
+        assert_eq!(
+            job.bytes
+                .windows(4)
+                .filter(|b| *b == [0x1d, 0x76, 0x30, 0])
+                .count(),
+            2
+        );
+        assert!(
+            !p::prepare(
+                &mut c,
+                &context,
+                &result.operation_id,
+                hash,
+                attempt,
+                false,
+                None
+            )
+            .unwrap()
+            .fresh
+        );
+        let again = p::prepare(
+            &mut c,
+            &context,
+            &result.operation_id,
+            hash,
+            &id(993),
+            false,
+            Some(raster),
+        )
+        .unwrap();
+        assert!(!again
+            .bytes
+            .windows(5)
+            .any(|b| b == [0x1b, 0x70, 0, 0x19, 0xfa]));
+        assert_eq!(
+            c.query_row::<i64, _, _>("SELECT count(*) FROM operation_journal", [], |r| r.get(0))
+                .unwrap(),
+            before
+        );
+    }
+}
+#[test]
 fn automatic_print_job_is_visible_durable_and_recovery_never_repeats_sale_or_os_attempt() {
     use ventard_core::application::printing;
     let mut c = sales_db();
@@ -1059,7 +1174,7 @@ fn complete_sales_upgrade_preserves_v10_sales_payments_and_foreign_keys() {
     migrations::apply(&mut c).unwrap();
     let after: String = c.query_row("SELECT json_array(s.ticket,s.turn_id,s.total_cents,l.nombre,l.costo_cents,l.serial,p.amount_cents,p.change_cents,p.turn_id) FROM sales s JOIN sale_lines l ON l.sale_id=s.sale_id JOIN payments p ON p.sale_id=s.sale_id",[],|r|r.get(0)).unwrap();
     assert_eq!(before, after);
-    assert_eq!(migrations::validate_history(&c).unwrap(), 20);
+    assert_eq!(migrations::validate_history(&c).unwrap(), 21);
     assert_eq!(
         c.query_row::<u32, _, _>("SELECT count(*) FROM pragma_foreign_key_check", [], |r| r
             .get(0))
@@ -1645,7 +1760,7 @@ fn local_encrypted_reopen_recovers_preparation_and_v7_upgrade_preserves_pin_and_
     {
         let mut w = VaultWriter::open_encrypted(&path, &key).unwrap();
         let c = w.connection();
-        assert_eq!(migrations::validate_history(c).unwrap(), 20);
+        assert_eq!(migrations::validate_history(c).unwrap(), 21);
         assert!(unlock_pin(c, &g, &pin, 2100).unwrap().allows("READ"));
         assert_eq!(drafts::read(c, &ctx(2)).unwrap().active.unwrap().id, id(21));
         original = prepare_checkout(c, &g, 2100, 2100, 1, request(30, &p), &p).unwrap();

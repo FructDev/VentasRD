@@ -1,6 +1,7 @@
 //! DEBUG staging access on definitive pages. No commercial activation until
 //! consistent snapshot/recovery/fiscal are ready. Credentials never leave Rust.
 pub mod backup;
+mod printers;
 pub mod sales;
 use crate::platform::keys::windows::WindowsKeyStore;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};

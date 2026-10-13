@@ -5,6 +5,179 @@ fn business_save(op: u32, revision: &str, name: &str) -> management::Command {
     serde_json::from_value(json!({"kind":"BUSINESS_SAVE","operationId":id(op),"expectedRevision":revision,"definition":{"name":name,"whatsapp":"8095550100","phone":"8095550101","rnc":"131000001","address":"Calle QA","footer":"Gracias por su compra","logo":null,"color":"dorado","font":"syne","bank":{"name":"Banco QA","account":"001-123","holder":"Tienda QA"}}})).unwrap()
 }
 #[test]
+fn native_direct_printing_freezes_pixels_destination_and_unknown_atomically_without_financial_effects(
+) {
+    use base64::{engine::general_purpose::STANDARD, Engine};
+    use ventard_core::application::printing::{self, transport as p};
+    let mut c = db();
+    repair_fixture(&mut c);
+    run_pro(&mut c, repair_save(701, "0")).unwrap();
+    let ticket = printing::repair_ticket(&c, &ctx(), &id(701)).unwrap();
+    let h = ticket["printSnapshotHash"].as_str().unwrap();
+    let target = p::Profile {
+        mode: "NETWORK".into(),
+        connection: "NETWORK".into(),
+        queue: None,
+        host: Some("192.168.1.20".into()),
+        dots: 512,
+        cut: true,
+        drawer: true,
+    };
+    assert!(p::save(&c, &grant(9, 5, false), 2000, 2000, 1, target.clone()).is_err());
+    p::save(&c, &grant(2, 5, true), 2000, 2000, 1, target.clone()).unwrap();
+    for host in [
+        "127.0.0.1",
+        "8.8.8.8",
+        "192.168.1.255",
+        "https://192.168.1.20",
+        "metadata.local",
+    ] {
+        let mut t = target.clone();
+        t.host = Some(host.into());
+        assert!(p::valid(&t).is_err());
+    }
+    let raster = p::Raster {
+        width: 512,
+        height: 2,
+        data: STANDARD.encode(vec![0x55; 128]),
+    };
+    assert!(p::prepare(&mut c, &ctx(), &id(701), h, &id(990), true, None).is_err());
+    c.execute_batch("CREATE TRIGGER dispatch_fault BEFORE INSERT ON native_printer_dispatch_v1 BEGIN SELECT RAISE(ABORT,'owned print fault');END;").unwrap();
+    assert!(p::prepare(
+        &mut c,
+        &ctx(),
+        &id(701),
+        h,
+        &id(990),
+        true,
+        Some(raster.clone())
+    )
+    .is_err());
+    assert_eq!(
+        c.query_row::<i64, _, _>(
+            "SELECT count(*) FROM native_document_print_attempts_v1 WHERE attempt_id=?1",
+            [id(990)],
+            |r| r.get(0)
+        )
+        .unwrap(),
+        0
+    );
+    c.execute_batch("DROP TRIGGER dispatch_fault").unwrap();
+    let job = p::prepare(&mut c, &ctx(), &id(701), h, &id(990), true, Some(raster)).unwrap();
+    assert!(job.fresh);
+    assert_eq!(job.profile, target);
+    assert_eq!(&job.bytes[..4], &[0x1b, 0x40, 0x1b, 0x61]);
+    assert!(!job
+        .bytes
+        .windows(5)
+        .any(|w| w == [0x1b, 0x70, 0, 0x19, 0xfa]));
+    p::save(&c, &grant(2, 5, true), 2000, 2000, 1, p::Profile::default()).unwrap();
+    let replay = p::prepare(&mut c, &ctx(), &id(701), h, &id(990), true, None).unwrap();
+    assert!(!replay.fresh);
+    assert_eq!(replay.bytes, job.bytes);
+    assert_eq!(replay.profile, target);
+    let receipt =
+        json!({"transport":"TCP","acceptedBytes":job.bytes.len().to_string(),"paper":"UNKNOWN"});
+    p::acknowledge(&c, &ctx(), &id(990), &job.wire_hash, &receipt).unwrap();
+    p::acknowledge(&c, &ctx(), &id(990), &job.wire_hash, &receipt).unwrap();
+    assert_eq!(
+        printing::cut_status(&c, &ctx(), &id(701), &id(990)).unwrap(),
+        "UNKNOWN"
+    );
+    let mut wrong = ctx();
+    wrong.installation_id = id(991);
+    assert!(p::prepare(&mut c, &wrong, &id(701), h, &id(990), true, None).is_err());
+    assert!(p::acknowledge(&c, &wrong, &id(990), &job.wire_hash, &receipt).is_err());
+    assert_eq!(inventory_product(&c)["stock"], "2");
+    assert_eq!(
+        management::drawer(&c, &ctx(), &id(90)).unwrap()["expectedCents"],
+        "50100"
+    );
+    assert_eq!(
+        printing::repair_ticket(&c, &ctx(), &id(701)).unwrap()["printSnapshotHash"],
+        h
+    );
+}
+#[test]
+fn native_printer_probe_is_durable_cipher_only_and_never_creates_a_financial_journal() {
+    use ventard_core::{
+        application::printing::transport as p,
+        storage::{cipher::CipherKey, writer::VaultWriter},
+    };
+    let root =
+        std::env::temp_dir().join(format!("ventard-printer-fixture-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir(&root).unwrap();
+    let key = CipherKey::new([0x6b; 32]);
+    let original;
+    {
+        let mut w = VaultWriter::create_encrypted(&root, &key).unwrap();
+        let c = w.connection();
+        let g = grant(2, 5, true);
+        let target = p::Profile {
+            mode: "QUEUE".into(),
+            connection: "BLUETOOTH".into(),
+            queue: Some("QA Bluetooth synthetic".into()),
+            host: None,
+            dots: 384,
+            cut: true,
+            drawer: true,
+        };
+        p::save(c, &g, 2000, 2000, 1, target).unwrap();
+        assert!(p::probe(c, &ctx(), &grant(9, 5, false), 2000, 2000, 1, &id(992)).is_err());
+        original = p::probe(c, &ctx(), &g, 2000, 2000, 1, &id(992)).unwrap();
+        assert!(original.fresh);
+        assert!(!original
+            .bytes
+            .windows(5)
+            .any(|b| b == [0x1b, 0x70, 0, 0x19, 0xfa]));
+    }
+    {
+        let mut w = VaultWriter::open_encrypted(&root, &key).unwrap();
+        let c = w.connection();
+        assert_eq!(
+            p::last_probe(c, &ctx()).unwrap().unwrap()["attemptId"],
+            id(992)
+        );
+        p::save(c, &grant(2, 5, true), 3000, 3000, 1, p::Profile::default()).unwrap();
+        let recovered = p::probe(c, &ctx(), &grant(2, 5, true), 3000, 3000, 1, &id(992)).unwrap();
+        assert!(!recovered.fresh);
+        assert_eq!(recovered.bytes, original.bytes);
+        assert_eq!(recovered.profile, original.profile);
+        p::acknowledge(
+            c,
+            &ctx(),
+            &id(992),
+            &original.wire_hash,
+            &json!({"transport":"WINDOWS_QUEUE","jobId":"1","paper":"UNKNOWN"}),
+        )
+        .unwrap();
+        for table in [
+            "operation_journal",
+            "native_document_print_attempts_v1",
+            "sales",
+            "payments",
+            "outbox",
+        ] {
+            assert_eq!(
+                c.query_row::<i64, _, _>(&format!("SELECT count(*) FROM {table}"), [], |r| r
+                    .get(0))
+                    .unwrap(),
+                0
+            );
+        }
+    }
+    let real = root.canonicalize().unwrap();
+    assert!(
+        real.starts_with(std::env::temp_dir().canonicalize().unwrap())
+            && real
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("ventard-printer-fixture-")
+    );
+    std::fs::remove_dir_all(real).unwrap();
+}
+#[test]
 fn fiscal_settings_are_durable_exact_contextual_and_do_not_create_or_reset_ncf_blocks() {
     use ventard_core::fiscal::settings as f;
     let mut c = db();

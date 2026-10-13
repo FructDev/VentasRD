@@ -116,7 +116,7 @@ export const accountDraftPort = {
 };
 export const cashPort = { read: () => call<PosCashView>("native_cash_read") };
 export const salesAccountPort={
- print:(operationId:string,snapshotHash:string,attemptId:string)=>call<{status:string;submitted?:boolean}>('native_sales',{command:{action:'PRINT',operationId,snapshotHash,attemptId}}),
+ print:(operationId:string,snapshotHash:string,attemptId:string,raster?:import("./management").PrintRaster)=>call<{status:string;submitted?:boolean}>('native_sales',{command:{action:'PRINT',operationId,snapshotHash,attemptId,...(raster?{raster}:{})}}),
  read:()=>call<PosSnapshot|null>("native_sales",{command:{action:"READ"}}),
  bootstrap:()=>call<PosSnapshot>("native_sales",{command:{action:"BOOTSTRAP"}}),
  activate:(confirmation:string,freeTax:string)=>call<PosSnapshot>("native_sales",{command:{action:"ACTIVATE",confirmation,freeTax}}),
@@ -144,7 +144,7 @@ export const managementAccountPort = {
  settingsLoadRemote:()=>call<import('./management').BusinessSettingsView>('native_sales',{command:{action:'SETTINGS_LOAD_REMOTE'}}),
  repairPrivateRead:(repairId:string)=>call<import('./management').RepairPrivateView>('native_sales',{command:{action:'REPAIR_PRIVATE_READ',repairId}}),
  repairTicket:(operationId:string)=>call<import('./management').RepairTicket>('native_sales',{command:{action:'REPAIR_TICKET',operationId}}),
- printRepair:(operationId:string,snapshotHash:string,attemptId:string)=>call<{status:string;submitted?:boolean}>('native_sales',{command:{action:'PRINT_REPAIR',operationId,snapshotHash,attemptId}}),
+ printRepair:(operationId:string,snapshotHash:string,attemptId:string,raster?:import("./management").PrintRaster)=>call<{status:string;submitted?:boolean}>('native_sales',{command:{action:'PRINT_REPAIR',operationId,snapshotHash,attemptId,...(raster?{raster}:{})}}),
  contactNotice:(family:'REPAIR'|'LAYAWAY'|'CREDIT',id:string)=>call<{status:'DRAFT_REQUESTED'}>('native_sales',{command:{action:'CONTACT_NOTICE',family,id}}),
  printLayoutRead:()=>call<{layout:import('./management').PrintLayout;canWrite:boolean;coverage:string}>('native_sales',{command:{action:'PRINT_LAYOUT_READ'}}),
  printLayoutSave:(layout:import('./management').PrintLayout)=>call<import('./management').PrintLayout>('native_sales',{command:{action:'PRINT_LAYOUT_SAVE',layout}}),
@@ -157,7 +157,7 @@ export const managementAccountPort = {
  returnRead:(saleId:string)=>call<import('./management').ReturnView>('native_sales',{command:{action:'RETURN_READ',saleId}}),
  returnPreview:(saleId:string,items:import('./management').ReturnItem[],serials:string[])=>call<import('./management').ReturnPreview>('native_sales',{command:{action:'RETURN_PREVIEW',saleId,items,serials}}),
  cutTicket:(operationId:string)=>call<import('./management').CutTicket>('native_sales',{command:{action:'CUT_TICKET',operationId}}),
- printCut:(operationId:string,snapshotHash:string,attemptId:string)=>call<{status:string;submitted?:boolean}>('native_sales',{command:{action:'PRINT_CUT',operationId,snapshotHash,attemptId}}),
+ printCut:(operationId:string,snapshotHash:string,attemptId:string,raster?:import("./management").PrintRaster)=>call<{status:string;submitted?:boolean}>('native_sales',{command:{action:'PRINT_CUT',operationId,snapshotHash,attemptId,...(raster?{raster}:{})}}),
  abandon: (operationId:string)=>call('native_sales',{command:{action:'MANAGEMENT_ABANDON',operationId}}),
  inventoryHistory:(productId:string,page:number)=>call<import('./management').InventoryHistory>('native_sales',{command:{action:'INVENTORY_HISTORY',productId,page}}),
  read: () => call<import('./management').ManagementView>('native_sales', {command:{action:'MANAGEMENT_READ'}}),
@@ -313,4 +313,10 @@ export const fiscalSettingsPort={
  save:(request:FiscalSettingsInput)=>call<FiscalSettingsView>('native_sales',{command:{action:'FISCAL_SETTINGS_SAVE',request}}),
  recover:(operationId:string)=>call<FiscalSettingsView>('native_sales',{command:{action:'FISCAL_SETTINGS_RECOVER',operationId}}),
  abandon:(operationId:string)=>call<FiscalSettingsView>('native_sales',{command:{action:'FISCAL_SETTINGS_ABANDON',operationId}}),
+};
+
+export const printerPort={
+ read:()=>call<{probeAttempt?:{attemptId:string;state:string}|null;profile:import('./management').PrinterProfile;canWrite:boolean;queues:import('./management').PrinterQueue[]}>('native_sales',{command:{action:'PRINTER_READ'}}),
+ save:(profile:import('./management').PrinterProfile)=>call<import('./management').PrinterProfile>('native_sales',{command:{action:'PRINTER_SAVE',profile}}),
+ test:(attemptId:string)=>call<{status:string;submitted:boolean}>('native_sales',{command:{action:'PRINTER_TEST',attemptId}}),
 };
