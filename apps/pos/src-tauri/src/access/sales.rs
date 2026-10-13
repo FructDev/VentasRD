@@ -13,6 +13,18 @@ use ventard_core::application::{
     deny_unknown_fields
 )]
 pub enum SalesAction {
+    FiscalSettingsRead {},
+    FiscalSettingsSave {
+        request: ventard_core::fiscal::settings::Input,
+    },
+    FiscalSettingsRecover {
+        #[serde(rename = "operationId")]
+        operation_id: String,
+    },
+    FiscalSettingsAbandon {
+        #[serde(rename = "operationId")]
+        operation_id: String,
+    },
     ImportList {},
     ImportPrepare {
         batch: ventard_core::application::inventory_import::Batch,
@@ -167,6 +179,13 @@ type SalesHttpFailure = (u16, u64, Option<&'static str>);
 fn safe_sales_rejection(bytes: &[u8]) -> Option<&'static str> {
     let value: Value = serde_json::from_slice(bytes).ok()?;
     match value["message"].as_str() {
+        Some("FISCAL_SETTINGS_VERSION_CONFLICT") => Some("FISCAL_SETTINGS_VERSION_CONFLICT"),
+        Some("FISCAL_SETTINGS_KIND_TRANSITION_REQUIRED") => {
+            Some("FISCAL_SETTINGS_KIND_TRANSITION_REQUIRED")
+        }
+        Some("FISCAL_SETTINGS_ALLOCATED_RANGE_CONFLICT") => {
+            Some("FISCAL_SETTINGS_ALLOCATED_RANGE_CONFLICT")
+        }
         Some("NATIVE_PAYMENT_INVALID" | "NATIVE_TURN_CONTEXT_INVALID" | "NATIVE_TURN_REQUIRED") => {
             Some("SALES_PAYMENT_CONTEXT_INVALID")
         }
@@ -265,6 +284,10 @@ impl AccessState {
                 | "native_sales_feed_v1"
                 | "native_repairs_private_submit_v1"
                 | "native_repairs_private_read_v1"
+                | "native_fiscal_settings_read_v1"
+                | "native_fiscal_settings_lookup_v1"
+                | "native_fiscal_settings_submit_v1"
+                | "native_fiscal_settings_abandon_v1"
         ) {
             return Err((403, 0, None));
         }
@@ -540,6 +563,16 @@ impl AccessState {
     }
     fn sales_action(&self, action: SalesAction) -> Result<Value, AccessError> {
         match action {
+            SalesAction::FiscalSettingsRead {} => self.fiscal_settings_read(),
+            SalesAction::FiscalSettingsSave { request } => {
+                self.fiscal_settings_send(Some(request), None, false)
+            }
+            SalesAction::FiscalSettingsRecover { operation_id } => {
+                self.fiscal_settings_send(None, Some(operation_id), false)
+            }
+            SalesAction::FiscalSettingsAbandon { operation_id } => {
+                self.fiscal_settings_send(None, Some(operation_id), true)
+            }
             SalesAction::Bootstrap => self.sales_bootstrap(),
             SalesAction::Synchronize => self.sales_sync(),
             SalesAction::Activate {
@@ -766,6 +799,126 @@ impl AccessState {
             }
         }
     }
+}
+impl AccessState {
+    fn fiscal_settings_read(&self) -> Result<Value, AccessError> {
+        let _gate = self
+            .fiscal_settings_gate
+            .lock()
+            .map_err(|_| error("ACCESS_BUSY"))?;
+        let now = time()?;
+        let mut cached = self.sales_local(move |c, _, g, high, opens| {
+            let ctx = ventard_core::fiscal::settings::authorize(c, &g, now, high, opens)?;
+            let mut v = ventard_core::fiscal::settings::view(c, &ctx)?;
+            v["canWrite"] = json!(true);
+            Ok(v)
+        })?;
+        let n = match self.sales_network() {
+            Ok(n) => n,
+            Err(e) if e.code == "ACCESS_LOGIN_REQUIRED" => {
+                cached["remoteError"] = json!(e.code);
+                return Ok(cached);
+            }
+            Err(e) => return Err(e),
+        };
+        let capture = match Self::sales_rpc(
+            &n,
+            "native_fiscal_settings_read_v1",
+            body(&n.selected.catalogue_context()),
+        ) {
+            Ok(v) => v,
+            Err(e) => {
+                cached["remoteError"] = json!(fiscal_settings_http(e).code);
+                return Ok(cached);
+            }
+        };
+        self.sales_current(&n)?;
+        let ctx = n.selected.catalogue_context();
+        n.writer
+            .call(move |c| {
+                ventard_core::fiscal::settings::cache(c, &ctx, &capture)?;
+                let mut v = ventard_core::fiscal::settings::view(c, &ctx)?;
+                v["canWrite"] = json!(true);
+                Ok(v)
+            })
+            .map_err(|e| error(e.code()))
+    }
+    fn fiscal_settings_send(
+        &self,
+        input: Option<ventard_core::fiscal::settings::Input>,
+        operation_id: Option<String>,
+        abandon: bool,
+    ) -> Result<Value, AccessError> {
+        let _gate = self
+            .fiscal_settings_gate
+            .lock()
+            .map_err(|_| error("ACCESS_BUSY"))?;
+        let now = time()?;
+        let request = self.sales_local(move |c, _, g, high, opens| {
+            if let Some(input) = input {
+                ventard_core::fiscal::settings::prepare(c, &g, now, high, opens, input)
+            } else {
+                let ctx = ventard_core::fiscal::settings::authorize(c, &g, now, high, opens)?;
+                ventard_core::fiscal::settings::get(
+                    c,
+                    &ctx,
+                    operation_id.as_deref().ok_or(AppError::Protocol(
+                        ventard_core::application::errors::ProtocolError::MalformedPayload,
+                    ))?,
+                )
+            }
+        })?;
+        let n = self.sales_network()?;
+        let found = Self::sales_rpc(&n, "native_fiscal_settings_lookup_v1", request.rpc_body())
+            .map_err(fiscal_settings_http)?;
+        let receipt = if found["status"] == "NOT_FOUND" {
+            if found
+                != json!({"status":"NOT_FOUND","requestId":request.id(),"payloadHash":request.hash})
+            {
+                return Err(error("FISCAL_SETTINGS_EVIDENCE_INVALID"));
+            }
+            self.sales_current(&n)?;
+            Self::sales_rpc(
+                &n,
+                if abandon {
+                    "native_fiscal_settings_abandon_v1"
+                } else {
+                    "native_fiscal_settings_submit_v1"
+                },
+                request.rpc_body(),
+            )
+            .map_err(fiscal_settings_http)?
+        } else {
+            found
+        };
+        self.sales_current(&n)?;
+        let ctx = n.selected.catalogue_context();
+        n.writer
+            .call(move |c| {
+                ventard_core::fiscal::settings::accept(c, &ctx, &request, &receipt)?;
+                let mut v = ventard_core::fiscal::settings::view(c, &ctx)?;
+                v["canWrite"] = json!(true);
+                Ok(v)
+            })
+            .map_err(|e| error(e.code()))
+    }
+}
+fn fiscal_settings_http(e: SalesHttpFailure) -> AccessError {
+    error(match e {
+        (_, _, Some("FISCAL_SETTINGS_KIND_TRANSITION_REQUIRED")) => {
+            "FISCAL_SETTINGS_KIND_TRANSITION_REQUIRED"
+        }
+        (_, _, Some("FISCAL_SETTINGS_ALLOCATED_RANGE_CONFLICT")) => {
+            "FISCAL_SETTINGS_ALLOCATED_RANGE_CONFLICT"
+        }
+        (_, _, Some("FISCAL_SETTINGS_VERSION_CONFLICT")) => "FISCAL_SETTINGS_VERSION_CONFLICT",
+        (404, _, _) => "FISCAL_SETTINGS_MIGRATION_REQUIRED",
+        (401, _, _) => "ACCESS_LOGIN_REQUIRED",
+        (403, _, _) => "FISCAL_REMOTE_DENIED",
+        (429, _, _) => "ACCESS_RATE_LIMITED",
+        (400 | 409 | 422, _, _) => "FISCAL_REMOTE_CONFLICT",
+        _ => "FISCAL_REMOTE_UNAVAILABLE",
+    })
 }
 fn sales_http((status, _, reason): SalesHttpFailure) -> AccessError {
     if matches!(status, 400 | 403 | 409 | 422) {

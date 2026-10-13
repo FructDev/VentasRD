@@ -1,0 +1,36 @@
+// Definitive Ajustes with explicit IPC fixtures, not DGII/remote authorization.
+import {test} from 'node:test';import assert from 'node:assert/strict';import {createServer} from 'node:http';import {readFile} from 'node:fs/promises';import {fileURLToPath} from 'node:url';import {chromium} from 'playwright';
+const root=new URL('../../apps/pos/dist/',import.meta.url);
+import {routeDistFixture} from './route-dist-fixture.mjs';
+test('Ajustes fiscal original: cursor, respuesta perdida, recuperación, conflicto y abandono',{timeout:60000},async()=>{
+ const server=createServer(async(req,res)=>{try{const path=new URL(req.url,'http://localhost').pathname,file=new URL(path==='/'?'index.html':'.'+path,root);if(!file.href.startsWith(root.href))throw Error('PATH');res.setHeader('Content-Type',path==='/'?'text/html':path.endsWith('.js')?'text/javascript':path.endsWith('.css')?'text/css':'application/octet-stream');res.end(await readFile(file))}catch{res.writeHead(404).end()}});await new Promise(r=>server.listen(0,'127.0.0.1',r));let browser;
+ try{browser=await chromium.launch({headless:true});const page=await browser.newPage({viewport:{width:1440,height:1000}}),errors=[],remote=[],unknown=[];page.on('pageerror',e=>errors.push(e.message));page.on('request',r=>{if(!/^(http:\/\/127\.0\.0\.1:|data:|blob:)/.test(r.url()))remote.push(r.url())});
+ let cfg={type:'B02',first:'1',last:'1000',next:'21',enabled:true,revision:'a'.repeat(64)},pending=null,lastStatus=null,lose=true,effects=0,canManage=true;const saves=[],recoveries=[],abandoned=[];
+ const definition={name:'FISCAL QA · FIXTURE',whatsapp:'',phone:'',rnc:'',address:'',footer:'',logo:null,color:'dorado',font:'syne',bank:null},layout={paperWidth:'80mm',fontSize:'normal',density:'normal',copies:1,showLogo:true,autoPrint:false};
+ const view=()=>({configuration:cfg,capturedAtMs:'1791854400000',pending,lastStatus,canWrite:canManage});
+ await page.exposeFunction('__fiscalSettingsInvoke',async(command,args)=>{
+  if(command==='native_access_status')return{status:'PREPARATION_REQUIRED',configured:true,actorId:'96000000-0000-4000-8000-000000000002',tenantId:'96000000-0000-4000-8000-000000000001',role:canManage?'owner':'seller',pinEnrolled:true,catalogueReady:true,operationalReady:true,tenants:[]};
+  if(command==='native_cash_read')return{scope:'BRANCH',branchId:'96000000-0000-4000-8000-000000000005',turn:null,canOpen:false};
+  if(command==='native_fiscal_read')return{pending:[],availableB01:'0',availableB02:'20',lastStatus:null,lastReason:null};
+  if(command==='native_backup'&&args.command.action==='STATUS')return{rows:[],canCreate:canManage};
+  if(command==='native_sales'){const c=args.command;
+   if(['READ','SYNCHRONIZE'].includes(c.action))return{status:'ready',mode:'staging-operational',business:definition,products:[],customers:[],confirmedSales:'0',cashCents:'0',pendingOperations:'0',scopeRevision:'1',supportsDrafts:false,carts:{active:null,paused:[]},lastResult:null,pendingAttempt:null};
+   if(c.action==='QUOTE')return{subtotalCents:null,itbisCents:null,totalCents:null,changeCents:null,payable:false,lineTotals:[]};
+   if(c.action==='MANAGEMENT_READ')return{canManage,planTier:'basico',customers:[],movements:[],pending:[],turn:null,coverage:'EXPLICIT_IPC_FIXTURE'};
+   if(c.action==='SETTINGS_READ')return{supported:true,revision:'1',definition,canWrite:canManage,canLoadRemote:false,coverage:'EXPLICIT_IPC_FIXTURE'};
+   if(c.action==='PRINT_LAYOUT_READ')return{layout,canWrite:canManage,coverage:'EXPLICIT_IPC_FIXTURE'};
+   if(c.action==='FISCAL_SETTINGS_READ')return structuredClone(view());
+   if(c.action==='FISCAL_SETTINGS_SAVE'){saves.push(c.request);assert.equal(c.request.first,'1');pending={...c.request,requestId:c.request.operationId};lastStatus='UNKNOWN';if(c.request.expectedRevision!==cfg.revision)throw{code:'FISCAL_SETTINGS_VERSION_CONFLICT'};effects++;cfg={...cfg,last:c.request.last,enabled:c.request.enabled,revision:'b'.repeat(64)};if(lose){lose=false;throw{code:'IPC_RESPONSE_LOST'}}pending=null;lastStatus='RECEIVED';return structuredClone(view())}
+   if(c.action==='FISCAL_SETTINGS_RECOVER'){assert.equal(c.operationId,pending.requestId);recoveries.push(c.operationId);pending=null;lastStatus='RECEIVED';return structuredClone(view())}
+   if(c.action==='FISCAL_SETTINGS_ABANDON'){assert.equal(c.operationId,pending.requestId);abandoned.push(c.operationId);pending=null;lastStatus='ABANDONED';return structuredClone(view())}
+  }unknown.push(command+':'+args.command?.action);throw{code:'FIXTURE_UNKNOWN_COMMAND'};
+ });
+ await page.addInitScript(()=>{window.isTauri=true;window.__TAURI_INTERNALS__={invoke:(command,args)=>window.__fiscalSettingsInvoke(command,args)}});
+ const url='http://127.0.0.1:'+server.address().port;await routeDistFixture(page,url,root);await page.goto(url+'/#/configuracion');await page.getByLabel('Secuencia Hasta',{exact:true}).fill('2000');await page.getByRole('button',{name:'Habilitar nuevas reservas NCF',exact:true}).click();await page.getByRole('button',{name:'Guardar configuración fiscal',exact:true}).click();await page.getByRole('button',{name:'Recuperar la misma configuración fiscal',exact:true}).waitFor();
+ assert.equal(cfg.next,'21');assert.equal(cfg.enabled,false);assert.equal(await page.getByLabel('Secuencia Hasta',{exact:true}).isDisabled(),true);await page.reload();await page.getByRole('button',{name:'Recuperar la misma configuración fiscal',exact:true}).click();await page.getByRole('button',{name:'Guardar configuración fiscal',exact:true}).waitFor();assert.equal(effects,1);assert.equal(saves.length,1);assert.equal(recoveries[0],saves[0].operationId);
+ cfg={...cfg,next:'41',revision:'c'.repeat(64)};await page.getByRole('button',{name:'Actualizar secuencia central',exact:true}).click();await page.getByText('B0200000041',{exact:true}).waitFor();await page.getByRole('heading',{name:'Comprobantes Fiscales (NCF)',exact:true}).scrollIntoViewIfNeeded();await page.evaluate(()=>document.fonts.ready);await page.screenshot({path:fileURLToPath(new URL('../../docs/native/evidence/native-fiscal-settings-original.png',import.meta.url)),fullPage:true});
+ await page.getByLabel('Secuencia Hasta',{exact:true}).fill('3000');cfg={...cfg,next:'81',revision:'d'.repeat(64)};await page.getByRole('button',{name:'Guardar configuración fiscal',exact:true}).click();await page.getByText('La secuencia central cambió.',{exact:false}).waitFor();await page.getByRole('button',{name:'Abandonar solicitud sin efectos',exact:true}).click();await page.getByRole('button',{name:'Guardar configuración fiscal',exact:true}).waitFor();assert.equal(abandoned.length,1);assert.equal(effects,1);assert.equal(cfg.next,'81');assert.equal(cfg.last,'2000');
+ for(const width of [1440,390]){await page.setViewportSize({width,height:1000});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true)}
+ canManage=false;await page.reload();await page.getByText('La edición de secuencias requiere',{exact:false}).waitFor();assert.equal(await page.getByRole('button',{name:'Guardar configuración fiscal',exact:true}).count(),0);assert.deepEqual(unknown,[]);assert.deepEqual(errors,[]);assert.deepEqual(remote,[]);
+ }finally{await browser?.close();await new Promise(r=>server.close(r))}
+});

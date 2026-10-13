@@ -36,6 +36,26 @@ test('inventory: native import wire is accepted unchanged and replayed without d
  const pid=importIdentity.payload.request.productId;const row=(await admin(db,`select stock_actual,precio_venta,codigo_barras from productos where id='${pid}'`))[0];assert.equal(row.stock_actual,7);assert.equal(Number(row.precio_venta),1500.01);assert.equal(row.codigo_barras,'000000000000001');
  const manifest=await rpc(db,'native_sales_bootstrap_v1',[...context,id(999)]),page=await rpc(db,'native_sales_bootstrap_page_v1',[...context,manifest.snapshotId,'0']);const found=JSON.parse(page.payload).find(p=>p.id===pid);assert.equal(found.stock.quantity,'7');assert.equal(found.priceTiers.retailCents,'150001');assert.equal(receipts[1].stock[0].after,'7');
 }finally{await db.close()}});
+test('fiscal settings: central CAS, retained cursor, exact replay and abandonment tombstone',async()=>{const db=await inventorySetup();try{
+ await db.exec('reset role');const sql=await readFile(new URL('../../supabase/migrations/20261013041548_native_fiscal_settings_staging_v1.sql',import.meta.url),'utf8');await db.exec(sql);await db.exec(sql);await db.exec('set role authenticated');
+ const read=()=>rpc(db,'native_fiscal_settings_read_v1',context);const current=await read();
+ const request={protocol:'ventard.fiscal.settings.request.1',version:'1',requestId:id(970),actorId:actor,tenantId:tenant,installationId:installation,deviceId:device,writerEpoch:'1',scopeType:'BRANCH',branchId:branch,permissionGrantId:grant,expectedRevision:current.configuration.revision,type:'B02',first:'1',last:'2000',enabled:true};
+ const submit=v=>rpc(db,'native_fiscal_settings_submit_v1',[canon(v),hash(v)]),lookup=v=>rpc(db,'native_fiscal_settings_lookup_v1',[canon(v),hash(v)]),abandon=v=>rpc(db,'native_fiscal_settings_abandon_v1',[canon(v),hash(v)]);
+ assert.equal((await lookup(request)).status,'NOT_FOUND');const applied=await submit(request);assert.equal(applied.status,'APPLIED');assert.equal(applied.configuration.next,'1');assert.deepEqual(await submit(request),applied);
+ await admin(db,`insert into native_sales_write_context_v1 values(txid_current(),'${tenant}');update ncf_secuencias set proximo=21 where negocio_id='${tenant}';delete from native_sales_write_context_v1 where transaction_id=txid_current();`);
+ const fresh=await read();const second={...request,requestId:id(971),expectedRevision:fresh.configuration.revision,enabled:false};const disabled=await submit(second);assert.equal(disabled.configuration.next,'21');assert.equal(disabled.configuration.enabled,false);
+ await assert.rejects(submit({...second,requestId:id(972),last:'10'}),/FISCAL_SETTINGS_VERSION_CONFLICT/);
+ const third={...second,requestId:id(973),expectedRevision:(await read()).configuration.revision,enabled:true};const cancelled=await abandon(third);assert.equal(cancelled.status,'ABANDONED');assert.deepEqual(await submit(third),cancelled);assert.equal((await read()).configuration.enabled,false);assert.deepEqual(await abandon(request),applied);
+ await assert.rejects(submit({...third,requestId:id(975),last:'10'}),/FISCAL_SETTINGS_ALLOCATED_RANGE_CONFLICT/);
+ await assert.rejects(submit({...third,requestId:id(976),url:'https://invalid.test'}),/FISCAL_SETTINGS_REQUEST_INVALID/);
+ await assert.rejects(submit({...request,last:'3000'}),/FISCAL_SETTINGS_ID_CONFLICT/);
+ const wrong={...third,requestId:id(974),type:'B01'};await assert.rejects(submit(wrong),/FISCAL_SETTINGS_KIND_TRANSITION_REQUIRED/);
+ assert.equal((await admin(db,`select proximo from ncf_secuencias where negocio_id='${tenant}'`))[0].proximo,21);
+ await assert.rejects(submit({...third,actorId:id(7)}),/FISCAL_SETTINGS_CONTEXT_DENIED/);
+ await assert.rejects(db.query('select * from native_fiscal_settings_ledger_v1'),/permission denied/);
+ await admin(db,`insert into native_sales_write_context_v1 values(txid_current(),'${tenant}');update ncf_secuencias set tipo=null where negocio_id='${tenant}';delete from native_sales_write_context_v1 where transaction_id=txid_current();`);await assert.rejects(read(),/FISCAL_SETTINGS_SOURCE_UNVERIFIABLE/);
+ await admin(db,`update native_staging_licenses_v1 set access_until_ms=1 where negocio_id='${tenant}'`);await assert.rejects(read(),/NATIVE_LICENSE_DENIED|FISCAL_SETTINGS_CONTEXT_DENIED/);
+}finally{await db.close()}});
 test('inventory: versioned creation, metadata patch, exact pending stock coverage and count conflict',async()=>{const db=await inventorySetup();try{
  const create=productCommand(500),r=await submitManagement(db,create);assert.equal(r.stock[0].after,'0');assert.deepEqual(await submitManagement(db,create),r);
  const createPending=[{operationId:id(500),effectId:r.effects[1].id,delta:'0'}],entry=stockCommand(501,{pending:createPending});const sr=await submitManagement(db,entry);assert.equal(sr.stock[0].after,'7');assert.deepEqual(await submitManagement(db,entry),sr);

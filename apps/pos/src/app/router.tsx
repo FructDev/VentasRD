@@ -1,6 +1,7 @@
 import {applyBrand} from '../features/settings/brand';
 import {BusinessSettings} from '../features/settings/business-settings';
 import {BackupSettings} from '../features/settings/backup-settings';
+import {FiscalSettings} from '../features/settings/fiscal-settings';
 import {nativeArchivePort} from '../platform/archive';
 import {PrintingSettings} from '../features/services/printing-settings';
 import { lazy, Suspense, useEffect, useState } from "react";
@@ -76,6 +77,7 @@ function SettingsPage() {
       <div className="max-w-3xl mx-auto mb-6"><h1 className="text-2xl sm:text-3xl font-display font-black text-white">Configuración del Negocio</h1><p className="text-vr-gray mt-2">Personaliza la información que aparece en los tickets y reportes.</p></div>
       <div className="grid gap-4 max-w-3xl mx-auto"><BusinessSettings/>
         <PrintingSettings/>
+        <FiscalSettings/>
         <BackupSettings/>
         <div className="bg-navy-2 rounded-xl p-5 border border-navy-3">
           <h3 className="text-lg font-bold text-vr-gray mb-1 border-b border-navy-3 pb-2">🩺 Estado del Sistema</h3>

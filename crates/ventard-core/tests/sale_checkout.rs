@@ -1059,7 +1059,7 @@ fn complete_sales_upgrade_preserves_v10_sales_payments_and_foreign_keys() {
     migrations::apply(&mut c).unwrap();
     let after: String = c.query_row("SELECT json_array(s.ticket,s.turn_id,s.total_cents,l.nombre,l.costo_cents,l.serial,p.amount_cents,p.change_cents,p.turn_id) FROM sales s JOIN sale_lines l ON l.sale_id=s.sale_id JOIN payments p ON p.sale_id=s.sale_id",[],|r|r.get(0)).unwrap();
     assert_eq!(before, after);
-    assert_eq!(migrations::validate_history(&c).unwrap(), 19);
+    assert_eq!(migrations::validate_history(&c).unwrap(), 20);
     assert_eq!(
         c.query_row::<u32, _, _>("SELECT count(*) FROM pragma_foreign_key_check", [], |r| r
             .get(0))
@@ -1645,7 +1645,7 @@ fn local_encrypted_reopen_recovers_preparation_and_v7_upgrade_preserves_pin_and_
     {
         let mut w = VaultWriter::open_encrypted(&path, &key).unwrap();
         let c = w.connection();
-        assert_eq!(migrations::validate_history(c).unwrap(), 19);
+        assert_eq!(migrations::validate_history(c).unwrap(), 20);
         assert!(unlock_pin(c, &g, &pin, 2100).unwrap().allows("READ"));
         assert_eq!(drafts::read(c, &ctx(2)).unwrap().active.unwrap().id, id(21));
         original = prepare_checkout(c, &g, 2100, 2100, 1, request(30, &p), &p).unwrap();

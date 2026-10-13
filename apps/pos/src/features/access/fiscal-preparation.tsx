@@ -11,7 +11,7 @@ const reasons: Record<string, string> = {
   DISABLED: "La secuencia fiscal está deshabilitada.",
   EXHAUSTED: "El rango fiscal del negocio está agotado.",
 };
-export function FiscalPreparation() {
+export function FiscalPreparation({canPrepare=true}:{canPrepare?:boolean}={}) {
   const [view, setView] = useState<FiscalView | null>(null),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
@@ -93,7 +93,7 @@ export function FiscalPreparation() {
             {(["B02", "B01"] as const).map((kind) => (
               <button
                 key={kind}
-                disabled={busy}
+                disabled={busy||!canPrepare}
                 className="border border-gold/40 text-gold rounded-xl py-3 text-sm disabled:opacity-40"
                 onClick={() => void prepare(kind)}
               >

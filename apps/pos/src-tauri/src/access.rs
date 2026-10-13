@@ -238,6 +238,7 @@ struct Inner {
     unlocked: bool,
 }
 pub struct AccessState {
+    fiscal_settings_gate: Mutex<()>,
     archive_selection: Mutex<Option<AccessView>>,
     recovery: Mutex<backup::RecoveryState>,
     root: PathBuf,
@@ -314,6 +315,7 @@ fn fiscal_recover(
 impl AccessState {
     pub fn new(root: PathBuf) -> Self {
         Self {
+            fiscal_settings_gate: Mutex::new(()),
             recovery: Mutex::new(backup::RecoveryState::default()),
             archive_selection: Mutex::new(None),
             root,

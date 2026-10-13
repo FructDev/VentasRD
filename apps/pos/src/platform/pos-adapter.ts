@@ -269,6 +269,12 @@ export const nativePosPort: PosPort = {
   },
 };
 const errors: Record<string, string> = {
+  FISCAL_SETTINGS_MIGRATION_REQUIRED:'La configuración fiscal nativa aún no está instalada en Staging. La secuencia y las reservas existentes se conservan.',
+  FISCAL_SETTINGS_PENDING:'Recupera o abandona la solicitud fiscal pendiente antes de editar otra secuencia.',
+  FISCAL_SETTINGS_EVIDENCE_INVALID:'La respuesta de configuración fiscal no pasó la verificación. No se cambiaron las reservas locales.',
+  FISCAL_SETTINGS_KIND_TRANSITION_REQUIRED:'Cambiar entre B01 y B02 requiere conciliar los rangos anteriores. No se reemplazó su cursor.',
+  FISCAL_SETTINGS_ALLOCATED_RANGE_CONFLICT:'El rango termina antes de números ya asignados. No se pueden reutilizar.',
+  FISCAL_SETTINGS_VERSION_CONFLICT:'La secuencia central cambió. Abandona el intento sin efectos y actualiza antes de editarla.',
   IMPORT_FILE_LIMIT:'El archivo supera 500 filas, 100 columnas u 8 MB. Divide el archivo y conserva sus códigos como texto.',
   IMPORT_EMPTY_FILE:'El archivo no contiene encabezados y productos.',
   IMPORT_FORMULA_UNSUPPORTED:'El archivo contiene fórmulas. Exporta valores fijos antes de importar.',

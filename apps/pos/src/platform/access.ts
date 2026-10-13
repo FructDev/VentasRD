@@ -306,3 +306,11 @@ export const inventoryImportPort={
  run:(operationId:string)=>call<ImportResult>('native_sales',{command:{action:'IMPORT_RUN',operationId}}),
  stop:(operationId:string)=>call<ImportResult>('native_sales',{command:{action:'IMPORT_STOP',operationId}}),
 };
+export interface FiscalSettingsInput {operationId:string;expectedRevision:string;type:'B01'|'B02';first:string;last:string;enabled:boolean}
+export interface FiscalSettingsView {configuration:{type:'B01'|'B02';first:string;last:string;next:string;enabled:boolean;revision:string}|null;capturedAtMs:string|null;pending:({requestId:string}&Omit<FiscalSettingsInput,'operationId'>)|null;lastStatus:'UNKNOWN'|'RECEIVED'|'ABANDONED'|null;canWrite:boolean;remoteError?:string}
+export const fiscalSettingsPort={
+ read:()=>call<FiscalSettingsView>('native_sales',{command:{action:'FISCAL_SETTINGS_READ'}}),
+ save:(request:FiscalSettingsInput)=>call<FiscalSettingsView>('native_sales',{command:{action:'FISCAL_SETTINGS_SAVE',request}}),
+ recover:(operationId:string)=>call<FiscalSettingsView>('native_sales',{command:{action:'FISCAL_SETTINGS_RECOVER',operationId}}),
+ abandon:(operationId:string)=>call<FiscalSettingsView>('native_sales',{command:{action:'FISCAL_SETTINGS_ABANDON',operationId}}),
+};

@@ -5,6 +5,141 @@ fn business_save(op: u32, revision: &str, name: &str) -> management::Command {
     serde_json::from_value(json!({"kind":"BUSINESS_SAVE","operationId":id(op),"expectedRevision":revision,"definition":{"name":name,"whatsapp":"8095550100","phone":"8095550101","rnc":"131000001","address":"Calle QA","footer":"Gracias por su compra","logo":null,"color":"dorado","font":"syne","bank":{"name":"Banco QA","account":"001-123","holder":"Tienda QA"}}})).unwrap()
 }
 #[test]
+fn fiscal_settings_are_durable_exact_contextual_and_do_not_create_or_reset_ncf_blocks() {
+    use ventard_core::fiscal::settings as f;
+    let mut c = db();
+    let owner = grant(2, 5, true);
+    let input:f::Input=serde_json::from_value(json!({"operationId":id(980),"expectedRevision":"0","type":"B02","first":"1","last":"200","enabled":true})).unwrap();
+    let request = f::prepare(&mut c, &owner, 2000, 2000, 1, input.clone()).unwrap();
+    assert_eq!(
+        f::prepare(&mut c, &owner, 3000, 3000, 1, input.clone())
+            .unwrap()
+            .bytes,
+        request.bytes
+    );
+    let mut changed = input.clone();
+    changed.last = "300".into();
+    assert!(f::prepare(&mut c, &owner, 3000, 3000, 1, changed).is_err());
+    let mut cfg = json!({"type":"B02","first":"1","last":"200","next":"21","enabled":true});
+    let (_, h) = canonicalize(&serde_json::to_vec(&cfg).unwrap()).unwrap();
+    cfg["revision"] = json!(h);
+    let receipt = json!({"protocol":"ventard.fiscal.settings.receipt.1","status":"APPLIED","request":request.payload,"payloadHash":request.hash,"configuration":cfg,"capturedAtMs":"3000"});
+    let mut forged = receipt.clone();
+    forged["configuration"]["next"] = json!("1");
+    assert!(f::accept(&mut c, &ctx(), &request, &forged).is_err());
+    assert!(f::view(&c, &ctx()).unwrap()["pending"].is_object());
+    f::accept(&mut c, &ctx(), &request, &receipt).unwrap();
+    f::accept(&mut c, &ctx(), &request, &receipt).unwrap();
+    assert_eq!(f::view(&c, &ctx()).unwrap()["configuration"]["next"], "21");
+    assert_eq!(
+        f::view(&c, &ctx()).unwrap()["pending"],
+        serde_json::Value::Null
+    );
+    assert!(f::prepare(&mut c, &grant(9, 5, false), 2000, 2000, 1, input).is_err());
+    for table in ["fiscal_blocks", "sales", "payments", "outbox"] {
+        assert_eq!(
+            c.query_row::<i64, _, _>(&format!("SELECT count(*) FROM {table}"), [], |r| r.get(0))
+                .unwrap(),
+            0
+        );
+    }
+}
+#[test]
+fn fiscal_settings_survive_cipher_reopen_and_receipt_storage_failure_without_losing_pending() {
+    use ventard_core::{
+        fiscal::settings as f,
+        storage::{cipher::CipherKey, writer::VaultWriter},
+    };
+    let root = std::env::temp_dir().join(format!(
+        "ventard-fiscal-settings-fixture-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir(&root).unwrap();
+    let key = CipherKey::new([0x69; 32]);
+    let input:f::Input=serde_json::from_value(json!({"operationId":id(981),"expectedRevision":"0","type":"B02","first":"1","last":"200","enabled":true})).unwrap();
+    let request;
+    {
+        let mut writer = VaultWriter::create_encrypted(&root, &key).unwrap();
+        let c = writer.connection();
+        c.execute(
+            "INSERT INTO scopes VALUES(?1,'BRANCH',?2,?3)",
+            (sales_key(), id(5), id(1)),
+        )
+        .unwrap();
+        c.execute(
+            "INSERT INTO native_sales_cursor_v1 VALUES(?1,?2,'NATIVE1',0)",
+            (id(1), sales_key()),
+        )
+        .unwrap();
+        request = f::prepare(c, &grant(2, 5, true), 2000, 2000, 1, input.clone()).unwrap();
+    }
+    let mut cfg = json!({"type":"B02","first":"1","last":"200","next":"21","enabled":true});
+    cfg["revision"] = json!(canonicalize(&serde_json::to_vec(&cfg).unwrap()).unwrap().1);
+    let receipt = json!({"protocol":"ventard.fiscal.settings.receipt.1","status":"APPLIED","request":request.payload,"payloadHash":request.hash,"configuration":cfg,"capturedAtMs":"3000"});
+    {
+        let mut writer = VaultWriter::open_encrypted(&root, &key).unwrap();
+        let c = writer.connection();
+        assert_eq!(f::get(c, &ctx(), &id(981)).unwrap().bytes, request.bytes);
+        c.execute_batch("CREATE TRIGGER fiscal_settings_fault BEFORE UPDATE ON native_fiscal_settings_requests_v1 BEGIN SELECT RAISE(ABORT,'owned fiscal settings rollback');END;").unwrap();
+        assert!(f::accept(c, &ctx(), &request, &receipt).is_err());
+        let v = f::view(c, &ctx()).unwrap();
+        assert!(v["pending"].is_object());
+        assert!(v["configuration"].is_null());
+        c.execute_batch("DROP TRIGGER fiscal_settings_fault")
+            .unwrap();
+        // A torn/corrupt terminal state must not silently accept/cache another receipt.
+        c.execute(
+            "UPDATE native_fiscal_settings_requests_v1 SET state='RECEIVED' WHERE request_id=?1",
+            [id(981)],
+        )
+        .unwrap();
+        assert!(f::accept(c, &ctx(), &request, &receipt).is_err());
+        assert!(f::view(c, &ctx()).unwrap()["configuration"].is_null());
+        c.execute(
+            "UPDATE native_fiscal_settings_requests_v1 SET state='UNKNOWN' WHERE request_id=?1",
+            [id(981)],
+        )
+        .unwrap();
+    }
+    {
+        let mut writer = VaultWriter::open_encrypted(&root, &key).unwrap();
+        let c = writer.connection();
+        assert_eq!(
+            f::prepare(c, &grant(2, 5, true), 4000, 4000, 1, input)
+                .unwrap()
+                .bytes,
+            request.bytes
+        );
+        f::accept(c, &ctx(), &request, &receipt).unwrap();
+    }
+    {
+        let mut writer = VaultWriter::open_encrypted(&root, &key).unwrap();
+        let c = writer.connection();
+        f::accept(c, &ctx(), &request, &receipt).unwrap();
+        let v = f::view(c, &ctx()).unwrap();
+        assert!(v["pending"].is_null());
+        assert_eq!(v["configuration"]["next"], "21");
+        for table in ["fiscal_blocks", "sales", "payments", "outbox"] {
+            assert_eq!(
+                c.query_row::<i64, _, _>(&format!("SELECT count(*) FROM {table}"), [], |r| r
+                    .get(0))
+                    .unwrap(),
+                0
+            );
+        }
+    }
+    let real = root.canonicalize().unwrap();
+    assert!(
+        real.starts_with(std::env::temp_dir().canonicalize().unwrap())
+            && real
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("ventard-fiscal-settings-fixture-")
+    );
+    std::fs::remove_dir_all(real).unwrap();
+}
+#[test]
 fn inventory_import_is_owner_scoped_exact_atomic_per_row_and_recovers_same_frozen_plan() {
     use ventard_core::application::inventory_import as imp;
     let mut c = db();

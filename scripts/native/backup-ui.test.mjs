@@ -6,6 +6,7 @@ import {createServer} from 'node:http';
 import {readFile} from 'node:fs/promises';
 import {fileURLToPath} from 'node:url';
 import {chromium} from 'playwright';
+import {routeDistFixture} from './route-dist-fixture.mjs';
 const root=new URL('../../apps/pos/dist/',import.meta.url);
 const id=n=>'96000000-0000-4000-8000-'+String(n).padStart(12,'0');
 test('Respaldo en Ajustes: replay, archivo rechazado y consulta histórica sin comandos de cuenta activa',{timeout:60000},async()=>{
@@ -38,7 +39,7 @@ test('Respaldo en Ajustes: replay, archivo rechazado y consulta histórica sin c
    if(command==='native_sales'||command==='native_backup'){
     if(['READ','SYNCHRONIZE'].includes(c.action))return snapshot();
     if(c.action==='QUOTE')return{subtotalCents:null,itbisCents:null,totalCents:null,changeCents:null,payable:false,lineTotals:[]};
-    if(c.action==='MANAGEMENT_READ')return management();
+    if(c.action==='FISCAL_SETTINGS_READ')return{configuration:null,capturedAtMs:null,pending:null,lastStatus:null,canWrite:false,remoteError:'FISCAL_SETTINGS_MIGRATION_REQUIRED'};if(c.action==='MANAGEMENT_READ')return management();
     if(c.action==='SETTINGS_READ')return{supported:true,revision:'1',definition,canWrite:!archive,canLoadRemote:false,coverage:'EXPLICIT_IPC_FIXTURE'};
     if(c.action==='PRINT_LAYOUT_READ')return{layout,canWrite:!archive,coverage:'EXPLICIT_IPC_FIXTURE'};
    }
@@ -46,6 +47,7 @@ test('Respaldo en Ajustes: replay, archivo rechazado y consulta histórica sin c
   });
   await page.addInitScript(()=>{window.isTauri=true;window.__TAURI_INTERNALS__={invoke:(command,args)=>window.__backupInvoke(command,args)}});
   const url='http://127.0.0.1:'+server.address().port;
+  await routeDistFixture(page,url,root);
   await page.goto(url+'/#/configuracion');
   await page.getByRole('button',{name:'Crear respaldo cifrado',exact:true}).click();
   await page.getByRole('button',{name:'Recuperar el mismo respaldo',exact:true}).click();
