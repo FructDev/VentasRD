@@ -206,6 +206,18 @@ const messages: Record<string, string> = {
     "Este equipo es nuevo. Un dueño o administrador debe prepararlo primero; después podrás iniciar sesión con tu cuenta de vendedor. Usa «Usar otra cuenta» sin borrar la instalación.",
   ACCESS_INSTALLATION_SCOPE_LOCKED:
     "Esta instalación ya está vinculada a otro ámbito; no se cambia automáticamente.",
+  TRANSITION_INVALID:'Los datos de la transición no pudieron verificarse. Se conservó el estado anterior.',
+  TRANSITION_CONTEXT:'Cambió la cuenta o el equipo. Regresa al contexto del informe para continuar.',
+  TRANSITION_STORAGE:'No se pudo guardar el informe. Actualiza para recuperar el resultado anterior.',
+  TRANSITION_SOURCE_CONFLICT:'La fuente o la identidad del informe cambió. No se sustituyeron los datos conservados.',
+  TRANSITION_TOO_LARGE:'La captura admite 32 MB y 200.000 filas; la combinación, hasta 600.000 filas de fuentes. Se superó un límite y no se omitieron datos silenciosamente.',
+  TRANSITION_REVISION:'El informe cambió o ya se incorporó. Actualiza antes de elegir otra versión.',
+  TRANSITION_REVIEW_REQUIRED:'Resuelve las versiones en conflicto antes de incorporar el historial.',
+  TRANSITION_DOCUMENT_REQUIRED:'Esta fila pertenece a una venta con versiones diferentes. Elige la venta completa desde la tabla ventas.',
+  TRANSITION_DOCUMENT_OWNERSHIP:'Una identidad de efecto aparece vinculada a ventas o negocios distintos. Se conservó todo y requiere revisar esa identidad antes de elegir.',
+  TRANSITION_HISTORY_EXISTS:'El nuevo informe debe conservar las fuentes y datos del historial ya incorporado.',
+  TRANSITION_MONEY_OVERFLOW:'La suma supera el rango de dinero permitido. Requiere revisar los importes.',
+  MIGRATION_REQUIRED:'La captura completa requiere habilitar su migración en Staging. Las copias recibidas se conservaron.',
   WEB_RECONCILE_INVALID:'La observación no pudo verificarse. La copia y los resultados anteriores se conservan.',
   WEB_RECONCILE_PENDING:'Esta copia ya tiene una lectura pendiente. Continúa el mismo informe para conservar su progreso.',
   WEB_RECONCILE_CONTEXT:'Cambió la cuenta, la caja o el equipo. Vuelve a la cuenta del informe para continuar.',
@@ -296,6 +308,15 @@ export interface WebReconcileReport {reportId:string;exportId:string;state:'PEND
 export interface WebInventoryEvidence {status:'PENDING_LOOKUP'|'APPLIED_VERIFIED'|'UNKNOWN_LEGACY'|'CONFLICT';code:string;receipt?:{operationId:string;payloadHash:string;authority:'GLOBAL'|'BRANCH';sucursalId:string|null;stockBefore:string;stockAfter:string;remoteSequence:string;appliedAt:string}}
 export interface WebComparisonRow {id:string;table:string;status:string;effectStatus:'UNKNOWN_LEGACY';matchedFields?:string[];differentFields?:string[];unverifiableFields?:string[];reviewFields?:{field:string;local:string;remote:string}[];limitations:string[];observedAtMs?:string;inventoryEvidence?:WebInventoryEvidence;inventoryReceivedAtMs?:string}
 export const backupPort={
+ transitionView:()=>call<{report:TransitionReport|null;capture:{captureId:string;capturedAtMs:string}|null}>('native_backup',{command:{action:'TRANSITION_VIEW'}}),
+ transitionCapture:(captureId:string)=>call<{captureId:string;capturedAtMs:string;counts:Record<string,number>}>('native_backup',{command:{action:'TRANSITION_CAPTURE',captureId}}),
+ transitionPrepare:(runId:string,exportIds:string[],captureId:string|null)=>call<TransitionReport>('native_backup',{command:{action:'TRANSITION_PREPARE',runId,exportIds,captureId}}),
+ transitionRows:(runId:string,table:string,page:number)=>call<{rows:TransitionRow[];total:number;page:number}>('native_backup',{command:{action:'TRANSITION_ROWS',runId,table,page}}),
+ transitionResolve:(runId:string,table:string,rowId:string,variantId:string,revision:number,reason:string)=>call<TransitionReport>('native_backup',{command:{action:'TRANSITION_RESOLVE',runId,table,rowId,variantId,revision,reason}}),
+ transitionResolveDocument:(runId:string,saleId:string,sourceId:string,revision:number,reason:string)=>call<TransitionReport>('native_backup',{command:{action:'TRANSITION_RESOLVE_DOCUMENT',runId,saleId,sourceId,revision,reason}}),
+ transitionPublish:(runId:string,revision:number)=>call<TransitionReport>('native_backup',{command:{action:'TRANSITION_PUBLISH',runId,revision}}),
+ legacyHistory:(filter:PosHistoryFilter)=>call<LegacyHistoryPage>('native_backup',{command:{action:'LEGACY_HISTORY',filter}}),
+ legacyTicket:(saleId:string)=>call<LegacyTicket>('native_backup',{command:{action:'LEGACY_TICKET',saleId}}),
  webReport:(exportId:string)=>call<{report:WebReconcileReport|null}>('native_backup',{command:{action:'WEB_RECONCILE_VIEW',exportId}}),
  webReportPrepare:(exportId:string,reportId:string)=>call<WebReconcileReport>('native_backup',{command:{action:'WEB_RECONCILE_PREPARE',exportId,reportId}}),
  webReportStep:(reportId:string)=>call<WebReconcileReport>('native_backup',{command:{action:'WEB_RECONCILE_STEP',reportId}}),
@@ -324,6 +345,11 @@ export const backupPort={
  managementRead:()=>call<import('./management').ManagementView>('native_backup',{command:{action:'MANAGEMENT_READ'}}),
  reportExport:(kind:import('./management').ExportKind,fromMs:string,toMs:string)=>call<import('./management').ReportBundle>('native_backup',{command:{action:'REPORT_EXPORT',kind,fromMs,toMs}}),
 };
+export interface TransitionReport {runId:string;revision:number;historyPublished:boolean;createdAtMs:string;sources:{id:string;kind:'BROWSER'|'CLOUD';sha256:string}[];counts:Record<string,number>;conflicts:number;issues:{code:string;table:string;id:string;field:string}[];sales:{totalCents:string|null;byMethodCents:Record<string,string>};debts:{customerId:string;name:string|null;balanceCents:string|null;observedBalanceCents:string;coverage:string}[];cash:{id:string;state:string|null;openingCents:string|null;movementsCents:string;expectedCents:string|null;observedExpectedCents:string|null;coverage:string}[];payments:{id:string;table:string;documentId:string;montoCents:string;method:string|null;cajaId:string|null}[];cloudCoverage:string;effectStatus:'UNKNOWN_LEGACY';canActivate:false}
+export interface TransitionRow {id:string;variants:{variantId:string;sourceIds:string[];row:Record<string,unknown>}[];selected:Record<string,unknown>|null;selectedVariant:string|null;excluded?:boolean;document?:{state:'CONFLICT'|'CONSENSUS'|'CHOSEN';chosenSource:string|null;variants:{sourceId:string;sale:Record<string,unknown>;details:Record<string,unknown>[];charges:Record<string,unknown>[];inventory:Record<string,unknown>[];journals:Record<string,unknown>[]}[]}}
+export interface LegacyHistoryRow {id:string;ticket:string;dateMs:string|null;method:string|null;totalCents:string|null;ncf:string|null;customerName:string|null;effectStatus:'UNKNOWN_LEGACY'}
+export interface LegacyHistoryPage {rows:LegacyHistoryRow[];total:string;page:number;pageSize:number;coverage:'PUBLISHED_LEGACY_HISTORY'}
+export interface LegacyTicket {id:string;ticket:string;ncf:string|null;dateMs:string|null;customerName:string|null;actorName:string|null;method:string|null;totalCents:string|null;subtotalCents:string|null;itbisCents:string|null;discountCents:string|null;receivedCents?:string|null;changeCents?:string|null;business?:import('./management').BusinessHeader|null;lines:{id:string;name:string|null;quantity:string|null;unitPriceCents:string|null;subtotalCents:string|null;serial?:string|null;location?:string|null}[];coverage:'PRESERVED_LEGACY_FIELDS'|'HASH_MATCHED_LOCAL_CHECKOUT';effectStatus:'UNKNOWN_LEGACY'}
 export interface ImportRow {row:number;name:string;code?:string|null;price?:string|null;cost?:string|null;stock?:string|null;minimum?:string|null;location?:string|null}
 export interface ImportBatch {operationId:string;fileName:string;duplicatePolicy:'SKIP'|'UPDATE';newTaxPercent:'0'|'18';rows:ImportRow[]}
 export interface ImportResult {operationId:string;fileName:string;state:'PREPARED'|'FINISHED';ready:string;remaining:string;created:string;updated:string;invalid:string;skipped:string;rows:{row:number;name:string;state:'READY'|'DONE'|'INVALID'|'SKIPPED'|'ERROR';error:string|null;created:boolean;definition:import('./management').ProductDefinition|null;stock:string|null}[]}

@@ -1,0 +1,18 @@
+// Isolated PostgreSQL; no project/credentials/network. Shared existing reader
+// fixture exercises the same registered identities and original scope rules.
+import {test} from 'node:test';import assert from 'node:assert/strict';
+import {readFile,writeFile} from 'node:fs/promises';
+import {setup} from './web-reconciliation-server.test.mjs';
+const id=n=>'96300000-0000-4000-8000-'+String(n).padStart(12,'0');
+const tenant='96000000-0000-4000-8000-000000000001',installation=id(2),device=id(3),branch=id(4),capture=id(200);
+const sql=new URL('../../supabase/migrations/20261013211219_native_web_full_capture_staging_v1.sql',import.meta.url);
+const call=(db,extra={})=>{const p={tenant,installation,device,epoch:1,kind:'BRANCH',branch,capture,...extra};return db.query('select public.native_web_capture_v1($1,$2,$3,$4,$5,$6,$7) value',[p.tenant,p.installation,p.device,p.epoch,p.kind,p.branch,p.capture]).then(v=>v.rows[0].value)};
+async function complete(db){await db.exec('reset role');for(const t of ['apartados','cajas','clientes','composiciones','cortes_caja','devoluciones','gastos','movimientos_stock','productos','seriales','venta_detalles'])await db.exec(`create table ${t}(id uuid primary key,negocio_id uuid,sucursal_id uuid)`);await db.exec(await readFile(sql,'utf8'));await db.exec(await readFile(sql,'utf8'));await db.exec('set role authenticated');}
+test('capture: every legacy table, more than one ID batch, exact decimals/time, scope and no business writes',async()=>{const db=await setup();try{
+ await complete(db);await db.exec('reset role');for(let n=300;n<435;n++)await db.query('insert into ventas values($1,$2,$3,$4,$5,$6,null,$7)',[id(n),tenant,branch,'0.01','efectivo',n,'1791909600000']);
+ const before=(await db.query('select count(*) n from ventas')).rows[0].n;await db.exec(await readFile(new URL('./staging-transition-capture-verify.sql',import.meta.url),'utf8'));await db.exec('set role authenticated');const value=await call(db);
+ assert.equal(value.tables.length,15);assert.equal(value.coverage,'SCOPE_COMPLETE_SINGLE_SNAPSHOT');const sales=value.tables.find(t=>t.name==='ventas');assert.equal(sales.count,136);assert.equal(sales.rows.length,136);assert.equal(sales.rows[0].total.$number,'12.3400');assert.equal(sales.rows.some(r=>r.negocio_id!==tenant),false);assert.equal(sales.rows.some(r=>r.sucursal_id!==branch),false);assert.equal(value.context.writerEpoch,'1');
+ const debt=value.tables.find(t=>t.name==='transacciones_fiado');assert.equal(debt.rows[0].fecha_creacion.$milliseconds,'1791907200123.000000');await db.exec('reset role');assert.equal((await db.query('select count(*) n from ventas')).rows[0].n,before);assert.equal((await db.query("select has_function_privilege('anon','public.native_web_capture_v1(uuid,uuid,uuid,bigint,text,uuid,uuid)','EXECUTE') allowed")).rows[0].allowed,false);
+ if(process.env.VENTARD_TRANSITION_CAPTURE_FIXTURE)await writeFile(process.env.VENTARD_TRANSITION_CAPTURE_FIXTURE,JSON.stringify(value));
+ }finally{await db.close();}});
+test('capture: missing table fails instead of empty data; epoch/role denied; transaction remains read-only',async()=>{const db=await setup();try{await complete(db);await assert.rejects(call(db,{epoch:2}),/CONTEXT_DENIED/);await db.exec('reset role;drop table gastos;set role authenticated');await assert.rejects(call(db),/WEB_OBSERVATION_UNAVAILABLE/);await db.exec('reset role;create table gastos(id uuid primary key,negocio_id uuid,sucursal_id uuid);set role authenticated;begin read only');assert.equal((await call(db)).tables.length,15);await db.exec('rollback;reset role;set role anon');await assert.rejects(call(db),/permission denied/);}finally{await db.close();}});

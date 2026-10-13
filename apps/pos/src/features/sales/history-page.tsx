@@ -13,6 +13,7 @@ import {ReturnDialog} from './return-dialog';
 import type {ReturnView} from '../../platform/management';
 import {useManagement} from '../management/workspace';
 import {MovementHistory} from './movement-history';
+import {LegacyHistory} from './legacy-history';
 const returnFamilies=['SALE_RETURN'] as const;
 const methods = [
   [null, "Todos"],
@@ -40,7 +41,7 @@ export function HistoryPage() {
     [page, setPage] = useState(1),
     [revision, setRevision] = useState(0);
   const m=useManagement(returnFamilies),[returnData,setReturnData]=useState<ReturnView|null>(null),[returnNotice,setReturnNotice]=useState('');
-  const [tab,setTab]=useState<'sales'|'movements'>('sales');
+  const [tab,setTab]=useState<'sales'|'movements'|'legacy'>('sales');
   const [response, setResponse] = useState<{
       key: string;
       data: PosHistoryPage | null;
@@ -108,13 +109,14 @@ export function HistoryPage() {
               Historial
             </h1>
             <p className="text-vr-gray text-sm mt-1">
-              Ventas nativas guardadas en este dispositivo
+              Ventas e historia conservada en este dispositivo
             </p>
           </div>
           <div className="flex bg-navy-2 border border-navy-3 rounded-xl p-1 gap-1">
             <button onClick={()=>setTab('sales')} className={`font-bold text-sm px-3 py-2 rounded-lg ${tab==='sales'?'bg-gold text-navy':'text-vr-gray'}`}>
               Ventas
             </button>
+            <button onClick={()=>setTab('legacy')} className={`font-bold text-sm px-3 py-2 rounded-lg ${tab==='legacy'?'bg-gold text-navy':'text-vr-gray'}`}>Historia trasladada</button>
             <button
               disabled={!s.management}
               onClick={()=>setTab('movements')}
@@ -308,6 +310,7 @@ export function HistoryPage() {
             />
           </>
         )}
+        {tab==='legacy'&&<LegacyHistory filter={{search,method,fromMs:boundary(from),toMs:boundary(to,true),page:1}} revision={revision}/>}
         {tab==='movements'&&m.view&&<MovementHistory rows={m.view.movements} search={search} method={method} from={from} to={to} limit={m.view.movementLimit}/>}</div>{returnData&&<ReturnDialog data={returnData} onClose={()=>setReturnData(null)} onSaved={()=>{setReturnData(null);setReturnNotice('Devolución guardada localmente · sincronización pendiente.');setRevision(n=>n+1);void m.reload();}}/>}
         {ticket && (
           <TicketDialog

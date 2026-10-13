@@ -1,0 +1,53 @@
+// Definitive pages, explicit IPC fixture. Core and PostgreSQL are tested in
+// separate real engines; this test asserts presentation and command recovery.
+import {test} from 'node:test';import assert from 'node:assert/strict';
+import {chromium} from 'playwright';import {fileURLToPath} from 'node:url';
+import {routeDistFixture} from './route-dist-fixture.mjs';
+const root=new URL('../../apps/pos/dist/',import.meta.url);
+const id=n=>'96000012-0000-4000-8000-'+String(n).padStart(12,'0');
+test('transition: both copies + cloud, same attempt after lost response, audited choice, history/ticket and restart',{timeout:60000},async()=>{
+ const browser=await chromium.launch({headless:true});try{
+ const page=await browser.newPage({viewport:{width:1440,height:1050}}),errors=[],calls=[],remote=[];page.on('pageerror',e=>errors.push(e.message));page.on('request',r=>{if(!r.url().startsWith('http://127.0.0.1:1421/')&&!r.url().startsWith('data:')&&!r.url().startsWith('blob:'))remote.push(r.url())});
+ const definition={name:'NEGOCIO QA · FIXTURE',whatsapp:'',phone:'',rnc:'',address:'',footer:'',logo:null,color:'dorado',font:'syne',bank:null};
+ const packages=[1,2].map(n=>({exportId:id(n),tenantId:id(50),origin:'https://qa.ventard.invalid',profileAlias:`Navegador ${n} · FIXTURE`,capturedAtMs:'1791909500000',state:'PRESERVED_REVIEW_REQUIRED',writersStopped:false,counts:{ventas:1},pendingRows:1,remoteUnverifiedRows:1,unknownScopeRows:0,foreignTenantRows:0,unknownTenantRows:0,missingReferences:0,externalImageReferences:0,canActivate:false}));
+ let report=null,capture=null,lost=true,prepared=[];
+ await page.exposeFunction('__transitionInvoke',async(command,args)=>{calls.push({command,args});const c=args.command;
+ if(command==='native_access_status')return{status:'PREPARATION_REQUIRED',configured:true,actorId:id(51),tenantId:id(50),role:'owner',pinEnrolled:true,catalogueReady:true,operationalReady:true,tenants:[]};
+ if(command==='native_history_read')return{rows:[],total:'0',page:1,pageSize:10,scope:'GLOBAL',branchId:null,coverage:'LOCAL_NATIVE_ONLY'};
+ if(command==='native_backup'){
+ if(c.action==='STATUS')return{rows:[],canCreate:false};if(c.action==='WEB_STATUS')return{rows:packages};if(c.action==='WEB_ROWS')return{rows:[{id:'legacy-sale',total:12.34}],total:1,page:0};if(c.action==='WEB_RECONCILE_VIEW')return{report:null};
+ if(c.action==='TRANSITION_VIEW')return{report,capture};
+ if(c.action==='TRANSITION_CAPTURE'){capture={captureId:c.captureId,capturedAtMs:'1791909600000',counts:{ventas:1}};return capture;}
+ if(c.action==='TRANSITION_PREPARE'){
+  prepared.push(c.runId);assert.deepEqual(c.exportIds,[id(1),id(2)]);assert.equal(c.captureId,capture.captureId);
+  report??={runId:c.runId,revision:0,historyPublished:false,createdAtMs:'1791909600000',sources:[{id:id(1),kind:'BROWSER',sha256:'a'.repeat(64)},{id:id(2),kind:'BROWSER',sha256:'b'.repeat(64)},{id:capture.captureId,kind:'CLOUD',sha256:'c'.repeat(64)}],counts:{ventas:2},conflicts:1,issues:[{code:'CASH_LINK_UNKNOWN',table:'ventas',id:'legacy-sale',field:'caja_id'}],sales:{totalCents:null,byMethodCents:{}},debts:[{customerId:'old-client',name:'Cliente anterior',balanceCents:'2501',observedBalanceCents:'2501',coverage:'SELECTED_SCOPED_LEDGER'}],cash:[{id:'caja-legacy',state:'abierta',openingCents:'10000',movementsCents:'0',expectedCents:null,observedExpectedCents:'10000',coverage:'LINKED_FACTS_ONLY'}],payments:[],cloudCoverage:'SCOPE_COMPLETE_SINGLE_SNAPSHOT',effectStatus:'UNKNOWN_LEGACY',canActivate:false};
+  if(lost){lost=false;throw{code:'IPC_RESPONSE_LOST'}}return report;
+ }
+ if(c.action==='TRANSITION_ROWS')return{rows:c.table==='ventas'?[{id:'legacy-sale',selected:report.conflicts?null:{id:'legacy-sale'},selectedVariant:report.conflicts?null:'b'.repeat(64),document:{state:report.conflicts?'CONFLICT':'CHOSEN',chosenSource:report.conflicts?null:id(2),variants:[{sourceId:id(1),sale:{id:'legacy-sale',total:12.33},details:[],charges:[],inventory:[],journals:[]},{sourceId:id(2),sale:{id:'legacy-sale',total:12.34},details:[{id:'line-b'}],charges:[],inventory:[],journals:[]}]},variants:[{variantId:'a'.repeat(64),sourceIds:[id(1)],row:{id:'legacy-sale',total:12.33}},{variantId:'b'.repeat(64),sourceIds:[id(2)],row:{id:'legacy-sale',total:12.34}}]}]:[],total:c.table==='ventas'?1:0,page:c.page};
+ if(c.action==='TRANSITION_RESOLVE_DOCUMENT'){assert.equal(c.sourceId,id(2));assert.equal(c.revision,0);assert.ok(c.reason.length>10);report={...report,revision:1,conflicts:0,sales:{totalCents:'4235',byMethodCents:{efectivo:'1234',fiado:'2501',tarjeta:'500'}}};return report;}
+ if(c.action==='TRANSITION_PUBLISH'){assert.equal(c.revision,1);report={...report,historyPublished:true};return report;}
+ if(c.action==='LEGACY_HISTORY')return{rows:report?.historyPublished?[{id:'legacy-sale',ticket:'C7K-000007',dateMs:'1791909600000',method:'efectivo',totalCents:'1234',ncf:'B0200000007',customerName:'Cliente histórico',effectStatus:'UNKNOWN_LEGACY'}]:[],total:report?.historyPublished?'1':'0',page:1,pageSize:10,coverage:'PUBLISHED_LEGACY_HISTORY'};
+ if(c.action==='LEGACY_TICKET')return{id:'legacy-sale',ticket:'C7K-000007',ncf:'B0200000007',dateMs:'1791909600000',customerName:'Cliente histórico',actorName:'Vendedor histórico',method:'efectivo',totalCents:'1234',subtotalCents:null,itbisCents:null,discountCents:null,lines:[{id:'old-line',name:'Cable original',quantity:'1',unitPriceCents:'1234',subtotalCents:'1234'}],coverage:'PRESERVED_LEGACY_FIELDS',effectStatus:'UNKNOWN_LEGACY'};
+ }
+ if(command==='native_sales'){
+ if(['READ','SYNCHRONIZE'].includes(c.action))return{status:'ready',mode:'staging-operational',business:definition,scopeRevision:'fixture',products:[],customers:[],confirmedSales:'0',cashCents:'0',pendingOperations:'0',carts:{active:null,paused:[]},lastResult:null,pendingAttempt:null};
+ if(c.action==='MANAGEMENT_READ')return{canManage:true,planTier:'basico',customers:[],movements:[],pending:[],turn:null,coverage:'EXPLICIT_IPC_FIXTURE'};
+ if(c.action==='SETTINGS_READ')return{supported:true,revision:'0',definition,canWrite:false,canLoadRemote:false,coverage:'EXPLICIT_IPC_FIXTURE'};
+ if(c.action==='PRINT_LAYOUT_READ')return{layout:{paperWidth:'80mm',fontSize:'normal',density:'normal',copies:1,showLogo:true,autoPrint:false},canWrite:false};
+ if(c.action==='PRINTER_READ')return{profile:{mode:'DIALOG',connection:'USB',queue:null,host:null,dots:576,cut:true,drawer:false},queues:[],canWrite:false};
+ if(c.action==='FISCAL_SETTINGS_READ')return{configuration:null,capturedAtMs:null,pending:null,lastStatus:null,canWrite:false};
+ if(c.action==='QUOTE')return{payable:false,lineTotals:[],totalCents:null,subtotalCents:null,itbisCents:null,changeCents:null};
+ }throw Error('Unknown fixture '+command+':'+c?.action);
+ });
+ await page.addInitScript(()=>{window.isTauri=true;window.__TAURI_INTERNALS__={invoke:(c,a)=>window.__transitionInvoke(c,a)}});await routeDistFixture(page,'http://127.0.0.1:1421',root);await page.goto('http://127.0.0.1:1421/#/configuracion');
+ await page.getByRole('button',{name:'Capturar historial completo de nube',exact:true}).click();await page.getByText('Captura completa guardada con su fecha y ámbito.',{exact:true}).waitFor();
+ await page.getByRole('button',{name:'Combinar copias seleccionadas',exact:true}).click();await page.getByText('1 conflictos',{exact:false}).waitFor();assert.equal(await page.getByRole('button',{name:'Incorporar historial para consulta',exact:true}).isDisabled(),true);
+ await page.getByRole('button',{name:'Recuperar combinación',exact:true}).click();assert.equal(prepared.length,2);assert.equal(prepared[0],prepared[1]);
+ await page.getByText('legacy-sale · Conflicto de venta completa',{exact:true}).click();await page.locator('input[type=radio][value="'+id(2)+'"]').check();await page.getByLabel('Motivo para legacy-sale').fill('Copia B contiene el importe original revisado');await page.getByRole('button',{name:'Conservar venta completa elegida',exact:true}).click();await page.getByText('0 conflictos',{exact:false}).waitFor();await page.getByText('RD$ 42.35',{exact:true}).waitFor();
+ await page.getByText('Caja (1)',{exact:true}).click();await page.getByText('Esperado según vínculos: No verificable',{exact:true}).waitFor();
+ await page.getByRole('button',{name:'Incorporar historial para consulta',exact:true}).click();await page.getByText('Historia incorporada para consulta, sin repetir cobros ni stock.',{exact:true}).waitFor();
+ const card=page.getByRole('heading',{name:'Conciliar todas las copias y el historial',exact:true}).locator('..');await card.evaluate(el=>{const p=document.createElement('p');p.textContent='PRUEBA CON IPC SINTÉTICO · no es una sesión remota';p.style.cssText='color:#fbbf24;font-size:12px;margin-bottom:12px';el.append(p)});await card.screenshot({path:fileURLToPath(new URL('../../docs/native/evidence/native-transition-merged-original.png',import.meta.url))});
+ await page.getByRole('link',{name:'Historial',exact:true}).click();await page.getByRole('button',{name:'Historia trasladada',exact:true}).click();await page.getByRole('button',{name:'Ver ticket histórico C7K-000007',exact:true}).click();const ticket=page.getByRole('dialog',{name:'Ticket histórico C7K-000007',exact:true});await ticket.getByText('Cable original',{exact:true}).waitFor();await ticket.getByText('B0200000007',{exact:true}).waitFor();assert.ok(await ticket.getByText('No guardado',{exact:true}).count()>=3);assert.equal(await ticket.getByRole('button',{name:/Imprimir/}).count(),0);await ticket.evaluate(el=>{const p=document.createElement('p');p.textContent='PRUEBA CON IPC SINTÉTICO · no es una sesión remota';p.style.cssText='color:#92400e;font-size:12px;margin-top:12px';el.append(p)});await ticket.screenshot({path:fileURLToPath(new URL('../../docs/native/evidence/native-transition-historical-ticket.png',import.meta.url))});await page.getByRole('button',{name:'Cerrar ticket histórico',exact:true}).click();
+ await page.reload();await page.getByRole('button',{name:'Historia trasladada',exact:true}).click();await page.getByRole('button',{name:'Ver ticket histórico C7K-000007',exact:true}).waitFor();assert.equal(await page.locator('[data-legacy-history-sale]').count(),1);await page.setViewportSize({width:390,height:844});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);assert.deepEqual(errors,[]);assert.deepEqual(remote,[]);assert.ok(!calls.some(c=>['CONFIRM','EXECUTE','PRINT','SYNCHRONIZE_LEGACY','ACTIVATE'].includes(c.args.command?.action)));
+ }finally{await browser.close();}
+});

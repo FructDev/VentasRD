@@ -1,15 +1,17 @@
 // Markup from VentaRD's TicketVenta; immutable native snapshot as its only source.
 import type {PosTicket} from '../../platform/pos-adapter';
-const fmt=(cents:string)=>{const n=BigInt(cents);return `${n<0n?'-':''}${(n<0n?-n:n)/100n}.${((n<0n?-n:n)%100n).toString().padStart(2,'0')}`;};
+import type {LegacyTicket} from '../../platform/access';
+const fmt=(cents:string|null)=>{if(cents===null)return 'No guardado';const n=BigInt(cents);return `${n<0n?'-':''}${(n<0n?-n:n)/100n}.${((n<0n?-n:n)%100n).toString().padStart(2,'0')}`;};
+const money=(cents:string|null)=>cents===null?'No guardado':'RD$ '+fmt(cents);
 function quantity(n:bigint,d:bigint){let remaining=d,twos=0,fives=0;while(remaining%2n===0n){remaining/=2n;twos++;}while(remaining%5n===0n){remaining/=5n;fives++;}if(remaining!==1n)return`${n}/${d}`;const places=Math.max(twos,fives);if(!places)return n.toString();const power=10n**BigInt(places),scaled=n*power/d;const tail=(scaled%power).toString().padStart(places,'0').replace(/0+$/,'');return tail?`${scaled/power}.${tail}`:(scaled/power).toString();}
-export function NativeTicketVenta({ticket}:{ticket:PosTicket}){
- const business=ticket.business,nombreNegocio=business?.name??'Datos del negocio no guardados',rnc=business?.rnc,direccion=business?.address,telefono=business?.phone,mensajePie=business?.footer;
- const logoUrl=business?.logo?.startsWith("data:image/png;base64,")?business.logo:undefined,impresion={mostrarLogo:ticket.printLayout?.showLogo!==false},es58=ticket.printLayout?.paperWidth==="58mm",vendedor=ticket.actorName??undefined;
- const fechaActual=new Date(Number(ticket.originAtUtcMs)).toLocaleString('es-DO'),ticketNum=ticket.ticket,ncf=ticket.ncf,clienteNombre=ticket.customerName;
- const {subtotalCents:subtotal,itbisCents:itbis,discountCents:descuento,totalCents:total}=ticket.sale.totals;
- const metodoPago=ticket.sale.payment.method.toLowerCase(),devuelta=ticket.sale.payment.changeCents;
- const montoRecibido=ticket.sale.payment.tenderCents??ticket.sale.payment.paidCents;
- const items=ticket.sale.lines.map((l,i)=>{const num=BigInt(l.quantity.numerator),den=BigInt(l.quantity.denominator),raw=BigInt(l.unitPriceCents)*num;const rounded=(raw*2n+den)/(2n*den);return{id:String(i),nombre:l.name,cantidad:quantity(num,den),multiple:num>den,precio_venta:fmt(l.unitPriceCents),importe:fmt(rounded.toString()),serial_numero:l.serial,ubicacion:null};});
+export function NativeTicketVenta({ticket,legacy}:{ticket:PosTicket;legacy?:never}|{ticket?:never;legacy:LegacyTicket}){
+ const business=ticket?.business??legacy?.business,nombreNegocio=business?.name??'Datos del negocio no guardados',rnc=business?.rnc,direccion=business?.address,telefono=business?.phone,mensajePie=business?.footer;
+ const logoUrl=business?.logo?.startsWith("data:image/png;base64,")?business.logo:undefined,impresion={mostrarLogo:ticket?.printLayout?.showLogo!==false},es58=ticket?.printLayout?.paperWidth==="58mm",vendedor=ticket?.actorName??legacy?.actorName??undefined;
+ const date=ticket?.originAtUtcMs??legacy?.dateMs,fechaActual=date?new Date(Number(date)).toLocaleString('es-DO'):'No guardada',ticketNum=ticket?.ticket??legacy!.ticket,ncf=ticket?.ncf??legacy?.ncf,clienteNombre=ticket?.customerName??legacy?.customerName;
+ const subtotal=ticket?.sale.totals.subtotalCents??legacy?.subtotalCents??null,itbis=ticket?.sale.totals.itbisCents??legacy?.itbisCents??null,descuento=ticket?.sale.totals.discountCents??legacy?.discountCents??null,total=ticket?.sale.totals.totalCents??legacy?.totalCents??null;
+ const metodoPago=(ticket?.sale.payment.method??legacy?.method??'No guardado').toLowerCase(),devuelta=ticket?.sale.payment.changeCents??legacy?.changeCents??null;
+ const montoRecibido=ticket?.sale.payment.tenderCents??ticket?.sale.payment.paidCents??legacy?.receivedCents??null;
+ const items=ticket?ticket.sale.lines.map((l,i)=>{const num=BigInt(l.quantity.numerator),den=BigInt(l.quantity.denominator),raw=BigInt(l.unitPriceCents)*num;const rounded=(raw*2n+den)/(2n*den);return{id:String(i),nombre:l.name,cantidad:quantity(num,den),multiple:num>den,precio_venta:fmt(l.unitPriceCents),importe:fmt(rounded.toString()),serial_numero:l.serial,ubicacion:null};}):legacy!.lines.map(l=>({id:l.id,nombre:l.name??'Descripción no guardada',cantidad:l.quantity??'—',multiple:false,precio_venta:fmt(l.unitPriceCents),importe:fmt(l.subtotalCents),serial_numero:l.serial??null,ubicacion:l.location??null}));
     return (
         <>
             {/* Cabecera del Negocio */}
@@ -77,27 +79,28 @@ export function NativeTicketVenta({ticket}:{ticket:PosTicket}){
 
             {/* Totales */}
             <div className="flex flex-col items-end text-xs mb-4">
-                <div className="flex justify-between w-full"><span>Subtotal:</span> <span>RD$ {fmt(subtotal)}</span></div>
-                <div className="flex justify-between w-full"><span>ITBIS:</span> <span>RD$ {fmt(itbis)}</span></div>
-                {BigInt(descuento) > 0n && (
+                <div className="flex justify-between w-full"><span>Subtotal:</span> <span>{money(subtotal)}</span></div>
+                <div className="flex justify-between w-full"><span>ITBIS:</span> <span>{money(itbis)}</span></div>
+                {descuento!==null&&BigInt(descuento) > 0n && (
                     <div className="flex justify-between w-full"><span>Descuento:</span> <span>- RD$ {fmt(descuento)}</span></div>
                 )}
-                <div className="flex justify-between w-full font-bold text-sm mt-1 border-t border-dashed border-black pt-1"><span>TOTAL:</span> <span>RD$ {fmt(total)}</span></div>
+                {descuento===null&&<div className="flex justify-between w-full"><span>Descuento:</span><span>No guardado</span></div>}
+                <div className="flex justify-between w-full font-bold text-sm mt-1 border-t border-dashed border-black pt-1"><span>TOTAL:</span> <span>{money(total)}</span></div>
             </div>
 
             <div className="border-b border-dashed border-black mb-2"></div>
 
             {/* Info de Pago */}
             <div className="text-xs mb-4">
-                <div className="flex justify-between"><span>Pago ({metodoPago}):</span> <span>RD$ {fmt(montoRecibido)}</span></div>
+                <div className="flex justify-between"><span>Pago ({metodoPago}):</span> <span>{money(montoRecibido)}</span></div>
                 {(metodoPago === 'efectivo' || metodoPago === 'mixto') && (
-                    <div className="flex justify-between font-bold mt-1"><span>DEVUELTA:</span> <span>RD$ {fmt(devuelta)}</span></div>
+                    <div className="flex justify-between font-bold mt-1"><span>DEVUELTA:</span> <span>{money(devuelta)}</span></div>
                 )}
             </div>
 
             {/* Pie de página */}
             <div className="text-center mt-6 text-xs">
-                <p>{mensajePie || '¡Gracias por su compra!'}</p>
+                <p>{mensajePie || (legacy?'Pie del ticket no guardado':'¡Gracias por su compra!')}</p>
                 <p className="mt-1 text-[10px] text-gray-500">VentaRD POS</p>
             </div>
         </>

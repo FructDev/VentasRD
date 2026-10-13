@@ -194,6 +194,13 @@ pub fn get_embedded_migrations() -> Vec<Migration> {
         sql: sql_0024,
         checksum: Migration::compute_checksum(sql_0024),
     });
+    let sql_0025 = include_str!("../../migrations/0025_legacy_transition.sql");
+    migrations.push(Migration {
+        version: 25,
+        name: "0025_legacy_transition",
+        sql: sql_0025,
+        checksum: Migration::compute_checksum(sql_0025),
+    });
     migrations
 }
 

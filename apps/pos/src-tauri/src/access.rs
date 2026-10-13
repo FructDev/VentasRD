@@ -3,6 +3,7 @@
 pub mod backup;
 mod printers;
 pub mod sales;
+mod transition;
 mod web_reconciliation;
 use crate::platform::keys::windows::WindowsKeyStore;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};

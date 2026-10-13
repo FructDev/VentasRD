@@ -21,6 +21,45 @@ pub enum Action {
     Status {},
     WebStatus {},
     WebImport {},
+    TransitionView {},
+    TransitionCapture {
+        capture_id: String,
+    },
+    TransitionPrepare {
+        run_id: String,
+        export_ids: Vec<String>,
+        capture_id: Option<String>,
+    },
+    TransitionRows {
+        run_id: String,
+        table: String,
+        page: u32,
+    },
+    TransitionResolve {
+        run_id: String,
+        table: String,
+        row_id: String,
+        variant_id: String,
+        revision: u32,
+        reason: String,
+    },
+    TransitionResolveDocument {
+        run_id: String,
+        sale_id: String,
+        source_id: String,
+        revision: u32,
+        reason: String,
+    },
+    TransitionPublish {
+        run_id: String,
+        revision: u32,
+    },
+    LegacyHistory {
+        filter: ventard_core::application::history::HistoryFilter,
+    },
+    LegacyTicket {
+        sale_id: String,
+    },
     WebReconcileView {
         export_id: String,
     },
@@ -202,6 +241,8 @@ impl AccessState {
             let ctx = context(source);
             let result = (|| -> Result<Value, AppError> {
                 match action {
+                    Action::LegacyHistory { filter } => ventard_core::storage::legacy_transition::history(c,&ctx,&filter.search,filter.method.as_deref(),filter.from_ms.as_deref(),filter.to_ms.as_deref(),filter.page).map_err(|e|AppError::Storage(e.code().into())),
+                    Action::LegacyTicket { sale_id } => ventard_core::storage::legacy_transition::ticket(c,&ctx,&sale_id).map_err(|e|AppError::Storage(e.code().into())),
                     Action::Read {} => {
                         let mut v=ventard_core::application::sales_sync::read(c,&ctx)?;
 if v.is_null(){
@@ -266,6 +307,27 @@ v["mode"] = json!("recovery-readonly");
         })
     }
     pub(super) fn backup_action(&self, action: Action) -> Result<Value, AccessError> {
+        if matches!(
+            &action,
+            Action::LegacyHistory { .. } | Action::LegacyTicket { .. }
+        ) && self.archive_view()?.is_some()
+        {
+            return self.archive_read(action);
+        }
+        if matches!(
+            &action,
+            Action::TransitionView {}
+                | Action::TransitionCapture { .. }
+                | Action::TransitionPrepare { .. }
+                | Action::TransitionRows { .. }
+                | Action::TransitionResolve { .. }
+                | Action::TransitionResolveDocument { .. }
+                | Action::TransitionPublish { .. }
+                | Action::LegacyHistory { .. }
+                | Action::LegacyTicket { .. }
+        ) {
+            return self.transition_action(action);
+        }
         if matches!(
             &action,
             Action::WebReconcileView { .. }

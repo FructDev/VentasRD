@@ -75,7 +75,7 @@ fn authorize(c: &Connection, ctx: &CatalogueContext, report: &str) -> Result<(),
     Ok(())
 }
 // Exact bounded decimal normalization: no f64 arithmetic and no rounding.
-fn decimal(raw: &str) -> Option<(BigInt, u32)> {
+pub(crate) fn decimal(raw: &str) -> Option<(BigInt, u32)> {
     if raw.len() > 180 || raw.trim() != raw {
         return None;
     }
@@ -121,7 +121,7 @@ fn decimal(raw: &str) -> Option<(BigInt, u32)> {
     }
     Some((integer, scale as u32))
 }
-fn number(v: &Value) -> Option<String> {
+pub(crate) fn number(v: &Value) -> Option<String> {
     match v {
         Value::Number(n) => Some(n.to_string()),
         Value::Object(o) if o.len() == 1 => o

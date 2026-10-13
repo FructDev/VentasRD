@@ -35,7 +35,9 @@ test('Historial definitivo: cliente de contado, ticket congelado, filtros, reado
   await page.getByRole('button',{name:'Ver ticket QAN-000002',exact:true}).click();await page.getByText('Cliente: Cliente sin registro QA',{exact:true}).waitFor();await page.getByRole('button',{name:'Cerrar ticket',exact:true}).click();
   await page.getByRole('button',{name:'Todos',exact:true}).click();await page.getByRole('textbox',{name:'Buscar venta',exact:true}).fill('%');await page.getByText('No hay coincidencias en el historial nativo local.',{exact:true}).waitFor();
   await page.getByRole('textbox',{name:'Buscar venta',exact:true}).fill('Cliente sin registro QA');await page.getByRole('button',{name:'Ver ticket QAN-000002',exact:true}).waitFor();assert.equal(await page.locator('[data-history-sale]').count(),1);
-  assert.equal(await page.getByRole('button',{name:'Devolución',exact:true}).isDisabled(),true);
+  // This synthetic checkout adapter has no commercial management port.
+  // Consultation must preserve the balances/stock checked below.
+  assert.equal(await page.getByRole('button',{name:'Devolver ticket QAN-000002',exact:true}).count(),0);
   await page.getByRole('textbox',{name:'Buscar venta',exact:true}).fill('');await page.locator('[data-history-sale]').first().waitFor();
   await page.screenshot({path:join(root,'docs/native/evidence/native-sales-history.png'),fullPage:true});
   const after=await page.evaluate(()=>window.__TAURI_INTERNALS__.invoke('qa_read',{ipcVersion:'ventard.qa.ipc.1',requestId:crypto.randomUUID()}));assert.equal(after.catalogue.confirmedSales,before.catalogue.confirmedSales);assert.equal(after.catalogue.cashCents,before.catalogue.cashCents);assert.deepEqual(after.catalogue.products,before.catalogue.products);
