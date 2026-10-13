@@ -59,6 +59,108 @@ fn number(s: &str) -> Value {
     json!({"$number":s})
 }
 #[test]
+fn return_scope_requires_exact_separate_sale_evidence_without_fabricating_row_fields() {
+    use sha2::{Digest, Sha256};
+    let dir = Dir::new();
+    let mut w = VaultWriter::create_encrypted(&dir.0, &CipherKey::new([93; 32])).unwrap();
+    let p = legacy_web::decrypt(
+        include_bytes!("fixtures/legacy-web-v1.vrweb"),
+        include_bytes!("fixtures/legacy-web-v1.vrwebkey"),
+    )
+    .unwrap();
+    let mut body: Value = serde_json::from_str(p.raw_body()).unwrap();
+    let source = json!({"id":"old-return","negocio_id":TENANT,"venta_id":"old-sale","monto":1.23});
+    let table = body["tables"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|t| t["name"] == "devoluciones")
+        .unwrap();
+    let raw_rows = json!([source]).to_string();
+    table["count"] = json!(1);
+    table["rowsJson"] = json!(raw_rows);
+    table["sha256"] = json!(format!("{:x}", Sha256::digest(raw_rows.as_bytes())));
+    let p = legacy_web::parse(body.to_string()).unwrap();
+    let export = p.export_id().to_owned();
+    legacy_web::store(w.connection(), TENANT, &p).unwrap();
+    let mut scoped = ctx();
+    scoped.scope_type = "BRANCH".into();
+    scoped.branch_id = Some("96000004-0000-4000-8000-000000000001".into());
+    let report = "98000001-0000-4000-8000-000000000003";
+    r::prepare(w.connection(), &scoped, &export, report, "1791909500000").unwrap();
+    let batch = loop {
+        let b = r::next(w.connection(), &scoped, report).unwrap().unwrap();
+        if b.table == "devoluciones" {
+            break b;
+        }
+        let mut empty: Value = serde_json::from_str(&snapshot(&b, json!([]))).unwrap();
+        empty["scope"] = json!({"type":"BRANCH","branchId":scoped.branch_id});
+        r::accept(w.connection(), &scoped, report, &b, &empty.to_string()).unwrap();
+    };
+    let mut raw:Value=serde_json::from_str(&snapshot(&batch,json!([{"id":"old-return","negocio_id":TENANT,"venta_id":"old-sale","monto":number("1.2300")}]))).unwrap();
+    raw["scope"] = json!({"type":"BRANCH","branchId":scoped.branch_id});
+    assert!(r::accept(w.connection(), &scoped, report, &batch, &raw.to_string()).is_err());
+    raw["scopeEvidence"] = json!([{"rowId":"old-return","sourceTable":"ventas","sourceId":"old-sale","tenantId":TENANT,"branchId":scoped.branch_id}]);
+    for key in ["rowId", "sourceTable", "sourceId", "tenantId", "branchId"] {
+        let mut changed = raw.clone();
+        changed["scopeEvidence"][0][key] = json!("different");
+        assert!(
+            r::accept(
+                w.connection(),
+                &scoped,
+                report,
+                &batch,
+                &changed.to_string()
+            )
+            .is_err(),
+            "{key}"
+        );
+    }
+    let mut duplicate = raw.clone();
+    duplicate["scopeEvidence"]
+        .as_array_mut()
+        .unwrap()
+        .push(raw["scopeEvidence"][0].clone());
+    assert!(r::accept(
+        w.connection(),
+        &scoped,
+        report,
+        &batch,
+        &duplicate.to_string()
+    )
+    .is_err());
+    let mut fabricated = raw.clone();
+    fabricated["rows"][0]["sucursal_id"] = json!(scoped.branch_id);
+    assert!(r::accept(
+        w.connection(),
+        &scoped,
+        report,
+        &batch,
+        &fabricated.to_string()
+    )
+    .is_err());
+    r::accept(w.connection(), &scoped, report, &batch, &raw.to_string()).unwrap();
+    let rows = r::rows(w.connection(), &scoped, report, "devoluciones", 0).unwrap();
+    let row = &rows["rows"][0];
+    assert_eq!(row["effectStatus"], "UNKNOWN_LEGACY");
+    assert!(row["limitations"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("REMOTE_SCOPE_FROM_SALE")));
+    assert!(row["limitations"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("LOCAL_SCOPE_UNKNOWN")));
+    assert_eq!(row["status"], "PARTIAL_OBSERVED_FIELDS");
+    assert_eq!(
+        w.connection()
+            .query_row("SELECT count(*) FROM operation_journal", [], |r| r
+                .get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+}
+#[test]
 fn exact_observed_fields_are_not_receipts_and_money_is_never_rounded() {
     let local = json!({"id":"a","negocio_id":TENANT,"total":12.34,"metodo_pago":"fiado","sucursal_id":null,"estado_sincronizacion":1});
     let remote = json!({"id":"a","negocio_id":TENANT,"total":number("12.3400"),"metodo_pago":"fiado","sucursal_id":null});

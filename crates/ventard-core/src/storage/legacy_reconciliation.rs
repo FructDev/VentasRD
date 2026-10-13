@@ -275,7 +275,12 @@ pub fn compare(table: &str, local: &Value, remote: Option<&Value>) -> Result<Val
     let mut limitations = vec!["REMOTE_EFFECTS_UNVERIFIED"];
     if matches!(
         table,
-        "ventas" | "cajas" | "gastos" | "transacciones_fiado" | "movimientos_stock"
+        "ventas"
+            | "cajas"
+            | "gastos"
+            | "transacciones_fiado"
+            | "movimientos_stock"
+            | "devoluciones"
     ) && !o.contains_key("sucursal_id")
     {
         limitations.push("LOCAL_SCOPE_UNKNOWN");
@@ -502,6 +507,17 @@ struct Observation {
     coverage: String,
     decimal_encoding: String,
     rows: Vec<Value>,
+    #[serde(default)]
+    scope_evidence: Vec<ScopeEvidence>,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ScopeEvidence {
+    row_id: String,
+    source_table: String,
+    source_id: String,
+    tenant_id: String,
+    branch_id: String,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -578,6 +594,27 @@ pub fn accept(
     if next(&tx, ctx, id)?.as_ref() != Some(batch) {
         return Err(Error("WEB_RECONCILE_BATCH_CHANGED"));
     }
+    let mut inherited = BTreeMap::new();
+    for evidence in &obs.scope_evidence {
+        if ctx.scope_type != "BRANCH"
+            || batch.table != "devoluciones"
+            || evidence.source_table != "ventas"
+            || evidence.tenant_id != ctx.tenant_id
+            || Some(evidence.branch_id.as_str()) != ctx.branch_id.as_deref()
+            || evidence.source_id.is_empty()
+            || evidence.source_id.len() > 512
+            || !obs.rows.iter().any(|row| {
+                row["id"] == evidence.row_id
+                    && row["venta_id"] == evidence.source_id
+                    && row.get("sucursal_id").is_none()
+            })
+            || inherited
+                .insert(evidence.row_id.as_str(), evidence)
+                .is_some()
+        {
+            return Err(invalid());
+        }
+    }
     let mut remote = BTreeMap::new();
     for row in &obs.rows {
         let row_id = row["id"].as_str().ok_or_else(invalid)?;
@@ -599,7 +636,8 @@ pub fn accept(
                         | "venta_detalles"
                         | "ventas"
                 )
-                && row.get("sucursal_id").and_then(Value::as_str) != ctx.branch_id.as_deref())
+                && row.get("sucursal_id").and_then(Value::as_str) != ctx.branch_id.as_deref()
+                && !inherited.contains_key(row_id))
             || remote.insert(row_id, row).is_some()
         {
             return Err(invalid());
@@ -610,6 +648,12 @@ pub fn accept(
     for row in local {
         let row_id = row["id"].as_str().ok_or_else(invalid)?;
         let mut result = compare(&batch.table, &row, remote.get(row_id).copied())?;
+        if inherited.contains_key(row_id) {
+            result["limitations"]
+                .as_array_mut()
+                .ok_or_else(invalid)?
+                .push(json!("REMOTE_SCOPE_FROM_SALE"));
+        }
         result["observedAtMs"] = json!(obs.captured_at_ms);
         insert_result(&tx, id, &batch.table, &result)?;
     }
