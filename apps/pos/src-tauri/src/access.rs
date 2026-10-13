@@ -3,6 +3,7 @@
 pub mod backup;
 mod printers;
 pub mod sales;
+mod web_reconciliation;
 use crate::platform::keys::windows::WindowsKeyStore;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use reqwest::blocking::{Client, Response};
@@ -239,6 +240,7 @@ struct Inner {
     unlocked: bool,
 }
 pub struct AccessState {
+    web_reconcile_gate: Mutex<()>,
     fiscal_settings_gate: Mutex<()>,
     archive_selection: Mutex<Option<AccessView>>,
     recovery: Mutex<backup::RecoveryState>,
@@ -316,6 +318,7 @@ fn fiscal_recover(
 impl AccessState {
     pub fn new(root: PathBuf) -> Self {
         Self {
+            web_reconcile_gate: Mutex::new(()),
             fiscal_settings_gate: Mutex::new(()),
             recovery: Mutex::new(backup::RecoveryState::default()),
             archive_selection: Mutex::new(None),

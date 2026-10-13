@@ -206,6 +206,14 @@ const messages: Record<string, string> = {
     "Este equipo es nuevo. Un dueño o administrador debe prepararlo primero; después podrás iniciar sesión con tu cuenta de vendedor. Usa «Usar otra cuenta» sin borrar la instalación.",
   ACCESS_INSTALLATION_SCOPE_LOCKED:
     "Esta instalación ya está vinculada a otro ámbito; no se cambia automáticamente.",
+  WEB_RECONCILE_INVALID:'La observación no pudo verificarse. La copia y los resultados anteriores se conservan.',
+  WEB_RECONCILE_PENDING:'Esta copia ya tiene una lectura pendiente. Continúa el mismo informe para conservar su progreso.',
+  WEB_RECONCILE_CONTEXT:'Cambió la cuenta, la caja o el equipo. Vuelve a la cuenta del informe para continuar.',
+  WEB_RECONCILE_STORAGE:'No se pudo guardar el resultado. Consulta el mismo informe para recuperar su progreso.',
+  WEB_RECONCILE_ID_CONFLICT:'Esta identidad de informe corresponde a otra copia. No se sobrescribió.',
+  WEB_RECONCILE_BATCH_CHANGED:'El lote ya cambió. Actualiza el informe y continúa desde su progreso guardado.',
+  WEB_RECONCILE_OBSERVATION_CONFLICT:'Ese lote ya tiene otra observación guardada. Se conservó la primera; actualiza el informe.',
+  WEB_RECONCILE_TOO_LARGE:'La observación supera el tamaño admitido. La copia se conserva y requiere revisión.',
   WEB_IMPORT_INVALID:'El archivo del navegador está incompleto o usa un formato incompatible. Los datos activos se conservaron.',
   WEB_IMPORT_KEY_INVALID:'La llave no corresponde al archivo o éste fue modificado. Los datos activos se conservaron.',
   WEB_IMPORT_IO:'No se pudo leer el archivo o su llave. Comprueba que ambos estén disponibles en este equipo.',
@@ -284,7 +292,13 @@ export function accessMessage(e: unknown) {
 export interface BackupSummary {backupId:string;state:string;capturedAtMs?:string;databaseBytes?:string;counts?:Record<string,string>;handle?:string}
 export interface BackupView {rows:BackupSummary[];canCreate:boolean;archive?:BackupSummary}
 export interface WebMigrationSummary {exportId:string;tenantId:string;origin:string;profileAlias:string;capturedAtMs:string;state:'PRESERVED_REVIEW_REQUIRED';writersStopped:false;counts:Record<string,number>;pendingRows:number;remoteUnverifiedRows:number;unknownScopeRows:number;foreignTenantRows:number;unknownTenantRows:number;missingReferences:number;externalImageReferences:number;canActivate:false}
+export interface WebReconcileReport {reportId:string;exportId:string;state:'PENDING'|'PENDING_ERROR'|'REVIEW_REQUIRED';lastError:string|null;totalBatches:number;completedBatches:number;createdAtMs:string;counts:Record<string,number>;canActivate:false;coverage:'REQUESTED_IDS_ONLY_WINDOWED';effectStatus:'UNKNOWN_LEGACY'}
+export interface WebComparisonRow {id:string;table:string;status:string;effectStatus:'UNKNOWN_LEGACY';matchedFields?:string[];differentFields?:string[];unverifiableFields?:string[];reviewFields?:{field:string;local:string;remote:string}[];limitations:string[];observedAtMs?:string}
 export const backupPort={
+ webReport:(exportId:string)=>call<{report:WebReconcileReport|null}>('native_backup',{command:{action:'WEB_RECONCILE_VIEW',exportId}}),
+ webReportPrepare:(exportId:string,reportId:string)=>call<WebReconcileReport>('native_backup',{command:{action:'WEB_RECONCILE_PREPARE',exportId,reportId}}),
+ webReportStep:(reportId:string)=>call<WebReconcileReport>('native_backup',{command:{action:'WEB_RECONCILE_STEP',reportId}}),
+ webReportRows:(reportId:string,table:string,page:number)=>call<{rows:WebComparisonRow[];total:number;page:number}>('native_backup',{command:{action:'WEB_RECONCILE_ROWS',reportId,table,page}}),
  webStatus:()=>call<{rows:WebMigrationSummary[]}>('native_backup',{command:{action:'WEB_STATUS'}}),
  webImport:()=>call<WebMigrationSummary|{state:'CANCELLED'}>('native_backup',{command:{action:'WEB_IMPORT'}}),
  webRows:(exportId:string,table:string,page:number)=>call<{rows:Record<string,unknown>[];total:number;page:number}>('native_backup',{command:{action:'WEB_ROWS',exportId,table,page}}),

@@ -256,7 +256,7 @@ fn v6_to_current_preserves_pin_catalogue_and_active_account_draft() {
     {
         let mut w = VaultWriter::open_encrypted(&path, &key).unwrap();
         let c = w.connection();
-        assert_eq!(migrations::validate_history(c).unwrap(), 22);
+        assert_eq!(migrations::validate_history(c).unwrap(), 23);
         assert!(unlock_pin(c, &g, &pin, 2100).unwrap().allows("READ"));
         assert_eq!(drafts::read(c, &context).unwrap(), original);
         assert_eq!(

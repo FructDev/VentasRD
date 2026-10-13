@@ -91,7 +91,7 @@ impl Package {
         &self.raw
     }
 }
-fn secrets(v: &Value) -> bool {
+pub(crate) fn secrets(v: &Value) -> bool {
     match v {
         Value::Object(o) => o.iter().any(|(k, v)| {
             matches!(

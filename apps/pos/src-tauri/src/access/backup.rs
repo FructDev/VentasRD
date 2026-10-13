@@ -21,6 +21,21 @@ pub enum Action {
     Status {},
     WebStatus {},
     WebImport {},
+    WebReconcileView {
+        export_id: String,
+    },
+    WebReconcilePrepare {
+        export_id: String,
+        report_id: String,
+    },
+    WebReconcileStep {
+        report_id: String,
+    },
+    WebReconcileRows {
+        report_id: String,
+        table: String,
+        page: u32,
+    },
     WebRows {
         export_id: String,
         table: String,
@@ -140,7 +155,7 @@ impl AccessState {
             .map_err(|_| error("ACCESS_BUSY"))?
             .clone())
     }
-    fn backup_owner(&self) -> Result<(Selection, Arc<WriterActor>), AccessError> {
+    pub(super) fn backup_owner(&self) -> Result<(Selection, Arc<WriterActor>), AccessError> {
         let mut i = self.inner.lock().map_err(|_| error("ACCESS_BUSY"))?;
         if !i.unlocked {
             return Err(error("ACCESS_PIN_REQUIRED"));
@@ -251,6 +266,15 @@ v["mode"] = json!("recovery-readonly");
         })
     }
     pub(super) fn backup_action(&self, action: Action) -> Result<Value, AccessError> {
+        if matches!(
+            &action,
+            Action::WebReconcileView { .. }
+                | Action::WebReconcilePrepare { .. }
+                | Action::WebReconcileStep { .. }
+                | Action::WebReconcileRows { .. }
+        ) {
+            return self.web_reconcile_action(action);
+        }
         if matches!(
             &action,
             Action::Read {}
@@ -753,6 +777,8 @@ mod tests {
             json!({"action":"DELETE"}),
             json!({"action":"RECOVER_KEY","handle":"fixture","pin":"0000","tenantId":"forged"}),
             json!({"action":"WEB_IMPORT","path":"C:/private","key":"forged"}),
+            json!({"action":"WEB_RECONCILE_STEP","reportId":"fixture","url":"https://evil.invalid"}),
+            json!({"action":"WEB_RECONCILE_PREPARE","exportId":"fixture","reportId":"fixture","token":"forged"}),
             json!({"action":"WEB_ROWS","exportId":"fixture","table":"ventas","page":0,"tenantId":"forged"}),
         ] {
             assert!(serde_json::from_value::<Action>(v).is_err())

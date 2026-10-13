@@ -5,6 +5,8 @@ pub mod catalogue_preview;
 #[cfg(feature = "encrypted-storage")]
 pub mod cipher;
 #[cfg(feature = "encrypted-storage")]
+pub mod legacy_reconciliation;
+#[cfg(feature = "encrypted-storage")]
 pub mod legacy_web;
 pub mod migrations;
 pub mod vault_lock;

@@ -19,6 +19,7 @@ test('Traslado en Configuración: recepción perdida, copia conservada, consulta
   const c=args.command;
   if(command==='native_backup'){
    if(c.action==='WEB_STATUS')return{rows:received};
+   if(c.action==='WEB_RECONCILE_VIEW')return{report:null};
    if(c.action==='WEB_IMPORT'){if(invalid){invalid=false;throw{code:'WEB_IMPORT_KEY_INVALID'}}if(!received.length)received.push(summary);if(lost){lost=false;throw{code:'IPC_RESPONSE_LOST'}}return summary;}
    if(c.action==='WEB_ROWS'){assert.equal(c.exportId,summary.exportId);return{rows:c.table==='ventas'?[{id:'sale-qa',total:12.34,numero_ticket:7,ncf:'B0200000007',estado_sincronizacion:0}]:c.table==='productos'?[{id:'product-qa',nombre:'PRODUCTO SINTÉTICO',codigo_barras:'00001',stock_actual:4}]:[],total:1,page:c.page};}
    if(c.action==='STATUS')return{rows:[],canCreate:false};
