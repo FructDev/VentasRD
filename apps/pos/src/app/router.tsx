@@ -13,6 +13,7 @@ import {
   useLocation,
 } from "react-router-dom";
 import { InventoryPage } from "../features/catalog/inventory-page";
+const InventoryImportPage=lazy(()=>import('../features/catalog/inventory-import-page').then(m=>({default:m.InventoryImportPage})));
 import { SalesPage } from "../features/sales/sales-page";
 import { HistoryPage } from "../features/sales/history-page";
 import {CustomersPage} from '../features/management/customers-page';
@@ -162,6 +163,7 @@ function Layout({
           <Route path="/" element={<SalesPage />} />
           <Route path="/historial" element={<HistoryPage />} />
           <Route path="/inventario" element={<InventoryPage />} />
+          <Route path="/inventario/importar" element={<Suspense fallback={<p className="p-6 text-vr-gray">Cargando importación…</p>}><InventoryImportPage/></Suspense>} />
           <Route path="/clientes" element={<CustomersPage />} />
           <Route path="/gastos" element={<ExpensesPage />} />
           <Route path="/reparaciones" element={<Suspense fallback={<p className="p-6 text-vr-gray">Cargando Reparaciones…</p>}><RepairsPage /></Suspense>} />

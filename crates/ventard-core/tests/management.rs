@@ -5,6 +5,225 @@ fn business_save(op: u32, revision: &str, name: &str) -> management::Command {
     serde_json::from_value(json!({"kind":"BUSINESS_SAVE","operationId":id(op),"expectedRevision":revision,"definition":{"name":name,"whatsapp":"8095550100","phone":"8095550101","rnc":"131000001","address":"Calle QA","footer":"Gracias por su compra","logo":null,"color":"dorado","font":"syne","bank":{"name":"Banco QA","account":"001-123","holder":"Tienda QA"}}})).unwrap()
 }
 #[test]
+fn inventory_import_is_owner_scoped_exact_atomic_per_row_and_recovers_same_frozen_plan() {
+    use ventard_core::application::inventory_import as imp;
+    let mut c = db();
+    let owner = grant(2, 5, true);
+    let batch:imp::Batch=serde_json::from_value(json!({"operationId":id(890),"fileName":"inventario-qa.csv","duplicatePolicy":"SKIP","newTaxPercent":"18","rows":[
+      {"row":2,"name":"Importado QA","code":"000000000000001","price":"RD$1,500.01","cost":"1000.00","stock":"7","minimum":"2","location":"Pasillo QA"},
+      {"row":3,"name":"Inválido","price":"1.234","stock":"-2"},
+      {"row":4,"name":"Importado QA","code":"000000000000001","price":"9"}
+    ]})).unwrap();
+    let prepared = imp::prepare(&mut c, &owner, 2000, 2000, 1, batch.clone()).unwrap();
+    assert_eq!(prepared["ready"], "1");
+    assert_eq!(prepared["invalid"], "1");
+    assert_eq!(prepared["skipped"], "1");
+    assert_eq!(
+        c.query_row(
+            "SELECT count(*) FROM products WHERE name='Importado QA'",
+            [],
+            |r| r.get::<_, i64>(0)
+        )
+        .unwrap(),
+        0
+    );
+    c.execute_batch("CREATE TRIGGER import_fault BEFORE INSERT ON inventory_movements BEGIN SELECT RAISE(ABORT,'owned-import-fixture'); END").unwrap();
+    let interrupted = imp::run(&mut c, &owner, 2000, 2000, 1, &id(890)).unwrap();
+    assert_eq!(interrupted["remaining"], "1");
+    assert_eq!(
+        c.query_row(
+            "SELECT count(*) FROM products WHERE name='Importado QA'",
+            [],
+            |r| r.get::<_, i64>(0)
+        )
+        .unwrap(),
+        0
+    );
+    assert_eq!(
+        c.query_row(
+            "SELECT count(*) FROM operation_journal WHERE origin_actor=?1",
+            [id(2)],
+            |r| r.get::<_, i64>(0)
+        )
+        .unwrap(),
+        0
+    );
+    c.execute_batch("DROP TRIGGER import_fault").unwrap();
+    let result = imp::run(&mut c, &owner, 3000, 3000, 1, &id(890)).unwrap();
+    assert_eq!(result["remaining"], "0");
+    assert_eq!(result["created"], "1");
+    let snapshot = ventard_core::application::sales_sync::read(&c, &ctx()).unwrap();
+    let p = snapshot["products"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["name"] == "Importado QA")
+        .unwrap();
+    assert_eq!(p["priceCents"], "150001");
+    assert_eq!(p["stock"], "7");
+    assert_eq!(p["code"], "000000000000001");
+    assert_eq!(
+        imp::run(&mut c, &owner, 4000, 4000, 1, &id(890)).unwrap(),
+        result
+    );
+    assert_eq!(
+        imp::prepare(&mut c, &owner, 4000, 4000, 1, batch.clone()).unwrap(),
+        result
+    );
+    let mut changed = batch;
+    changed.rows[0].price = Some("2".into());
+    assert!(imp::prepare(&mut c, &owner, 4000, 4000, 1, changed).is_err());
+    assert!(imp::run(&mut c, &grant(9, 5, false), 2000, 2000, 1, &id(890)).is_err());
+    assert!(imp::run(&mut c, &grant(2, 6, true), 2000, 2000, 1, &id(890)).is_err());
+    if let Ok(path) = std::env::var("VENTARD_IMPORT_WIRE_FIXTURE") {
+        let mut q = c
+            .prepare("SELECT canonical_bytes,hash FROM operation_journal ORDER BY local_seq")
+            .unwrap();
+        let packets=q.query_map([],|r|Ok(json!({"bytes":String::from_utf8(r.get::<_,Vec<u8>>(0)?).unwrap(),"hash":r.get::<_,String>(1)?}))).unwrap().collect::<Result<Vec<_>,_>>().unwrap();
+        std::fs::write(path, serde_json::to_vec(&packets).unwrap()).unwrap();
+    }
+    assert_eq!(
+        c.query_row("SELECT count(*) FROM outbox", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        2
+    );
+}
+#[test]
+fn inventory_import_update_preserves_unmapped_fields_and_conflict_never_retargets_stock() {
+    use ventard_core::application::inventory_import as imp;
+    let mut c = db();
+    let owner = grant(2, 5, true);
+    let batch = |op: u32, policy: &str, price: &str, stock: Option<&str>| {
+        serde_json::from_value::<imp::Batch>(json!({"operationId":id(op),"fileName":"update-qa.csv","duplicatePolicy":policy,"newTaxPercent":"0","rows":[{"row":2,"name":"Producto QA","code":"000001","price":price,"cost":"10.01","stock":stock,"minimum":"2","location":"Pasillo 1"}]})).unwrap()
+    };
+    imp::prepare(
+        &mut c,
+        &owner,
+        2000,
+        2000,
+        1,
+        batch(900, "SKIP", "20.02", Some("7")),
+    )
+    .unwrap();
+    imp::run(&mut c, &owner, 2000, 2000, 1, &id(900)).unwrap();
+    let mut update = batch(901, "UPDATE", "30.03", None);
+    update.rows[0].cost = None;
+    update.rows[0].minimum = None;
+    update.rows[0].location = None;
+    let prepared = imp::prepare(&mut c, &owner, 2000, 2000, 1, update).unwrap();
+    assert_eq!(prepared["rows"][0]["definition"]["costCents"], "1001");
+    assert_eq!(prepared["rows"][0]["definition"]["location"], "Pasillo 1");
+    assert_eq!(prepared["rows"][0]["stock"], serde_json::Value::Null);
+    let applied = imp::run(&mut c, &owner, 2000, 2000, 1, &id(901)).unwrap();
+    assert_eq!(applied["updated"], "1");
+    let snapshot = ventard_core::application::sales_sync::read(&c, &ctx()).unwrap();
+    let p = &snapshot["products"][0];
+    assert_eq!(p["priceCents"], "3003");
+    assert_eq!(p["stock"], "7");
+    assert_eq!(p["taxRate"], json!({"numerator":"0","denominator":"1"}));
+    imp::prepare(
+        &mut c,
+        &owner,
+        2000,
+        2000,
+        1,
+        batch(902, "UPDATE", "40.04", Some("2")),
+    )
+    .unwrap();
+    let before: i64 = c
+        .query_row("SELECT count(*) FROM outbox", [], |r| r.get(0))
+        .unwrap();
+    c.execute(
+        "UPDATE products SET revision=revision+1 WHERE barcode='000001'",
+        [],
+    )
+    .unwrap();
+    let failed = imp::run(&mut c, &owner, 2000, 2000, 1, &id(902)).unwrap();
+    assert_eq!(failed["remaining"], "1");
+    assert_eq!(failed["rows"][0]["error"], "VERSION_CONFLICT");
+    assert_eq!(
+        c.query_row::<i64, _, _>("SELECT count(*) FROM outbox", [], |r| r.get(0))
+            .unwrap(),
+        before
+    );
+    let stopped = imp::stop(&mut c, &owner, 2000, 2000, 1, &id(902)).unwrap();
+    assert_eq!(stopped["state"], "FINISHED");
+    assert_eq!(stopped["skipped"], "1");
+    assert_eq!(
+        ventard_core::application::sales_sync::read(&c, &ctx()).unwrap()["products"][0]["stock"],
+        "7"
+    );
+}
+#[test]
+fn inventory_import_plan_and_committed_rows_survive_real_cipher_reopening() {
+    use ventard_core::{
+        application::inventory_import as imp,
+        storage::{cipher::CipherKey, writer::VaultWriter},
+    };
+    let root =
+        std::env::temp_dir().join(format!("ventard-import-fixture-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir(&root).unwrap();
+    let key = CipherKey::new([0x67; 32]);
+    let owner = grant(2, 5, true);
+    let batch:imp::Batch=serde_json::from_value(json!({"operationId":id(910),"fileName":"cifrado-qa.csv","duplicatePolicy":"SKIP","newTaxPercent":"18","rows":[{"row":2,"name":"Producto cifrado QA","code":"000000000000001","price":"0.01","cost":"0","stock":"3"}]})).unwrap();
+    let expected;
+    {
+        let mut w = VaultWriter::create_encrypted(&root, &key).unwrap();
+        let c = w.connection();
+        c.execute(
+            "INSERT INTO scopes VALUES(?1,'BRANCH',?2,?3)",
+            (sales_key(), id(5), id(1)),
+        )
+        .unwrap();
+        c.execute(
+            "INSERT INTO native_sales_cursor_v1 VALUES(?1,?2,'NATIVE1',0)",
+            (id(1), sales_key()),
+        )
+        .unwrap();
+        imp::prepare(c, &owner, 2000, 2000, 1, batch.clone()).unwrap();
+    }
+    {
+        let mut w = VaultWriter::open_encrypted(&root, &key).unwrap();
+        let c = w.connection();
+        assert_eq!(
+            imp::list(c, &owner, 2000, 2000, 1).unwrap()["rows"][0]["ready"],
+            "1"
+        );
+        expected = imp::run(c, &owner, 2000, 2000, 1, &id(910)).unwrap();
+        assert_eq!(expected["created"], "1");
+    }
+    {
+        let mut w = VaultWriter::open_encrypted(&root, &key).unwrap();
+        let c = w.connection();
+        assert_eq!(
+            imp::prepare(c, &owner, 4000, 4000, 1, batch).unwrap(),
+            expected
+        );
+        assert_eq!(
+            imp::run(c, &owner, 4000, 4000, 1, &id(910)).unwrap(),
+            expected
+        );
+        assert_eq!(
+            c.query_row::<i64, _, _>("SELECT count(*) FROM outbox", [], |r| r.get(0))
+                .unwrap(),
+            2
+        );
+        let v = ventard_core::application::sales_sync::read(c, &ctx()).unwrap();
+        assert_eq!(v["products"][0]["priceCents"], "1");
+        assert_eq!(v["products"][0]["stock"], "3");
+    }
+    let real = root.canonicalize().unwrap();
+    assert!(
+        real.starts_with(std::env::temp_dir().canonicalize().unwrap())
+            && real
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("ventard-import-fixture-")
+    );
+    std::fs::remove_dir_all(real).unwrap();
+}
+#[test]
 fn portable_backup_preserves_wal_pending_money_and_original_tickets_without_os_key() {
     use ventard_core::{
         security::recovery_enrollment::RecoverySecret,

@@ -35,6 +35,39 @@ pub fn prepare_operation(
     origin_epoch: u32,
     prepared_at: &str,
 ) -> Result<u64, AppError> {
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let sequence = prepare_in_transaction(
+        &tx,
+        operation_id,
+        protocol,
+        kind,
+        version,
+        canonical_bytes,
+        hash,
+        origin_actor,
+        origin_scope,
+        origin_device,
+        origin_epoch,
+        prepared_at,
+    )?;
+    tx.commit()?;
+    Ok(sequence)
+}
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn prepare_in_transaction(
+    tx: &Transaction<'_>,
+    operation_id: &str,
+    protocol: &str,
+    kind: &str,
+    version: u32,
+    canonical_bytes: &[u8],
+    hash: &str,
+    origin_actor: &str,
+    origin_scope: &str,
+    origin_device: &str,
+    origin_epoch: u32,
+    prepared_at: &str,
+) -> Result<u64, AppError> {
     let (canonical, actual_hash) = canonicalize(canonical_bytes).map_err(|_| invalid())?;
     if actual_hash != hash {
         return Err(AppError::Protocol(ProtocolError::HashMismatch));
@@ -58,7 +91,6 @@ pub fn prepare_operation(
     {
         return Err(invalid());
     }
-    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let existing = tx.query_row(
         "SELECT protocol,kind,version,canonical_bytes,hash,origin_actor,origin_scope,origin_device,origin_epoch,prepared_at,local_seq,local_state FROM operation_journal WHERE operation_id=?1",
         [operation_id], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, u32>(2)?,
@@ -97,7 +129,6 @@ pub fn prepare_operation(
         [operation_id],
         |r| r.get(0),
     )?;
-    tx.commit()?;
     Ok(sequence)
 }
 fn supported_kind(kind: &str) -> bool {
@@ -158,7 +189,7 @@ pub fn get_operation_result(
         _ => Err(invalid()),
     }
 }
-fn commit_in_transaction(
+pub(crate) fn commit_in_transaction(
     tx: &Transaction<'_>,
     operation_id: &str,
     result: &Value,

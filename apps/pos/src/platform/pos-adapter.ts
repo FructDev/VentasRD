@@ -269,6 +269,12 @@ export const nativePosPort: PosPort = {
   },
 };
 const errors: Record<string, string> = {
+  IMPORT_FILE_LIMIT:'El archivo supera 500 filas, 100 columnas u 8 MB. Divide el archivo y conserva sus códigos como texto.',
+  IMPORT_EMPTY_FILE:'El archivo no contiene encabezados y productos.',
+  IMPORT_FORMULA_UNSUPPORTED:'El archivo contiene fórmulas. Exporta valores fijos antes de importar.',
+  IMPORT_DUPLICATE_MAPPING:'Cada campo debe usar una columna diferente.',
+  IMPORT_CONTEXT_MISMATCH:'Esta importación corresponde a otra cuenta, actor o sucursal.',
+  IMPORT_NOT_FOUND:'No se encontró el intento de importación en esta instalación.',
   CREDIT_OVERPAY:'El abono supera el saldo pendiente. Comprueba el importe.',
   CREDIT_BALANCE_PENDING:'No puedes borrar un cliente con deuda pendiente. Registra el pago primero.',
   CASH_PENDING:'Sincroniza los movimientos pendientes de esta sucursal antes de cerrar la caja.',

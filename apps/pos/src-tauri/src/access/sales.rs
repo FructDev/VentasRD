@@ -13,6 +13,18 @@ use ventard_core::application::{
     deny_unknown_fields
 )]
 pub enum SalesAction {
+    ImportList {},
+    ImportPrepare {
+        batch: ventard_core::application::inventory_import::Batch,
+    },
+    ImportRun {
+        #[serde(rename = "operationId")]
+        operation_id: String,
+    },
+    ImportStop {
+        #[serde(rename = "operationId")]
+        operation_id: String,
+    },
     Read,
     ManagementRead,
     RepairsRead,
@@ -547,6 +559,10 @@ impl AccessState {
             a => {
                 let now = time()?;
                 self.sales_local(move |c, ctx, g, high, opens| match a {
+                    SalesAction::ImportList {}=>ventard_core::application::inventory_import::list(c,&g,now,high,opens),
+                    SalesAction::ImportPrepare {batch}=>ventard_core::application::inventory_import::prepare(c,&g,now,high,opens,batch),
+                    SalesAction::ImportRun {operation_id}=>ventard_core::application::inventory_import::run(c,&g,now,high,opens,&operation_id),
+                    SalesAction::ImportStop {operation_id}=>ventard_core::application::inventory_import::stop(c,&g,now,high,opens,&operation_id),
                     SalesAction::Read => {
                         let mut view = sync::read(c, &ctx)?;
                         if !view.is_null() {

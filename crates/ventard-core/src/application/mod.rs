@@ -9,6 +9,8 @@ pub mod errors;
 pub mod history;
 #[cfg(feature = "encrypted-storage")]
 pub mod inventory;
+#[cfg(feature = "encrypted-storage")]
+pub mod inventory_import;
 pub mod layaways;
 #[cfg(feature = "encrypted-storage")]
 pub mod management;

@@ -297,3 +297,12 @@ export const backupPort={
  managementRead:()=>call<import('./management').ManagementView>('native_backup',{command:{action:'MANAGEMENT_READ'}}),
  reportExport:(kind:import('./management').ExportKind,fromMs:string,toMs:string)=>call<import('./management').ReportBundle>('native_backup',{command:{action:'REPORT_EXPORT',kind,fromMs,toMs}}),
 };
+export interface ImportRow {row:number;name:string;code?:string|null;price?:string|null;cost?:string|null;stock?:string|null;minimum?:string|null;location?:string|null}
+export interface ImportBatch {operationId:string;fileName:string;duplicatePolicy:'SKIP'|'UPDATE';newTaxPercent:'0'|'18';rows:ImportRow[]}
+export interface ImportResult {operationId:string;fileName:string;state:'PREPARED'|'FINISHED';ready:string;remaining:string;created:string;updated:string;invalid:string;skipped:string;rows:{row:number;name:string;state:'READY'|'DONE'|'INVALID'|'SKIPPED'|'ERROR';error:string|null;created:boolean;definition:import('./management').ProductDefinition|null;stock:string|null}[]}
+export const inventoryImportPort={
+ list:()=>call<{rows:ImportResult[]}>('native_sales',{command:{action:'IMPORT_LIST'}}),
+ prepare:(batch:ImportBatch)=>call<ImportResult>('native_sales',{command:{action:'IMPORT_PREPARE',batch}}),
+ run:(operationId:string)=>call<ImportResult>('native_sales',{command:{action:'IMPORT_RUN',operationId}}),
+ stop:(operationId:string)=>call<ImportResult>('native_sales',{command:{action:'IMPORT_STOP',operationId}}),
+};
