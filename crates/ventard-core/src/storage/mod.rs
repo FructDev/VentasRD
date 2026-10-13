@@ -1,4 +1,6 @@
 #[cfg(feature = "encrypted-storage")]
+pub mod backup;
+#[cfg(feature = "encrypted-storage")]
 pub mod catalogue_preview;
 #[cfg(feature = "encrypted-storage")]
 pub mod cipher;

@@ -108,6 +108,63 @@ pub fn load_vault_key(
 ) -> Result<CipherKey, KeyError> {
     decode(binding, &store.read(&binding.slot())?)
 }
+/// Non-portable OS anchor, independent of the DEK wrapped in a backup. Only
+/// enrolled while an authenticated owner holds the live OS-bound vault key.
+pub fn installation_anchor(
+    store: &impl NativeKeyStore,
+    binding: &KeyBinding,
+    enroll: bool,
+) -> Result<String, KeyError> {
+    if binding.version != 1 {
+        return Err(KeyError::BindingInvalid);
+    }
+    let anchor = KeyBinding {
+        version: 0xA11C0001,
+        ..binding.clone()
+    };
+    let key = match load_vault_key(store, &anchor) {
+        Ok(k) => k,
+        Err(KeyError::Missing) if enroll => {
+            load_vault_key(store, binding)?;
+            create_vault_key(store, &anchor)?
+        }
+        Err(e) => return Err(e),
+    };
+    let mut hash = Sha256::new();
+    hash.update(b"ventard.original.os.anchor.1");
+    hash.update(anchor.aad());
+    hash.update(key.raw_native());
+    Ok(format!("{:x}", hash.finalize()))
+}
+/// Trusted recovery broker calls this only after validating the existing
+/// source database and its owner's signed grant/PIN. Never overwrite a slot.
+pub fn persist_recovered_key(
+    store: &impl NativeKeyStore,
+    binding: &KeyBinding,
+    key: &CipherKey,
+) -> Result<(), KeyError> {
+    let slot = binding.slot();
+    match store.read(&slot) {
+        Err(KeyError::Missing) => (),
+        Ok(record) => {
+            let existing = decode(binding, &record)?;
+            return if bool::from(existing.raw_native().ct_eq(key.raw_native())) {
+                Ok(())
+            } else {
+                Err(KeyError::AlreadyExists)
+            };
+        }
+        Err(e) => return Err(e),
+    }
+    let mut record = Zeroizing::new(binding.aad());
+    record.extend_from_slice(key.raw_native());
+    store.create_new(&slot, &record)?;
+    let persisted = store.read(&slot).map_err(|_| KeyError::WriteUncertain)?;
+    if !bool::from(persisted.as_slice().ct_eq(record.as_slice())) {
+        return Err(KeyError::WriteUncertain);
+    }
+    Ok(())
+}
 /// Sólo para nueva versión bajo intención nativa autorizada. Jamás invocarla
 /// como fallback de load/open: el estado ausente no permite reprovisionar.
 pub fn create_vault_key(

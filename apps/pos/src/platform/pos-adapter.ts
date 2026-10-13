@@ -159,7 +159,8 @@ export interface PosQuote {
 export interface PosSnapshot {business?:import("./management").BusinessHeader|null;
   defaultWarrantyDays?:string;
   status: "ready" | "needs-dataset";
-  mode: "synthetic" | "commercial" | "staging-readonly" | "staging-operational";
+  mode: "synthetic" | "commercial" | "staging-readonly" | "staging-operational" | "recovery-readonly";
+  backupCapturedAtMs?:string;
   supportsDrafts?: boolean;
   scopeRevision?:string;
   inventoryReadOnly?:boolean;
@@ -282,6 +283,7 @@ const errors: Record<string, string> = {
   SALES_REMOTE_DENIED:"El servidor no autorizó la operación. Se conserva para revisión.",
   SALES_REMOTE_CONFLICT:"Hay un conflicto remoto. La venta permanece visible; no se repara automáticamente.",
   SALES_MIGRATION_REQUIRED:"Falta aplicar la migración de Ventas en Staging.",
+  BACKUP_ARCHIVE_READ_ONLY: 'Esta copia es de sólo lectura. Vuelve a tu cuenta para operar.',
   SETTINGS_MIGRATION_REQUIRED:"Falta aplicar la migración de Ajustes y actualizar los datos de la cuenta.",
   HISTORY_SNAPSHOT_UNAVAILABLE:
     "Esta venta no tiene un ticket histórico verificable. No se reconstruirá con datos actuales.",

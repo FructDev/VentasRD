@@ -28,7 +28,8 @@ export interface AccessView {
     | "AUTHENTICATED"
     | "LOCKED"
     | "PIN_ENROLLMENT_REQUIRED"
-    | "PREPARATION_REQUIRED";
+    | "PREPARATION_REQUIRED" | "RECOVERY_ARCHIVE";
+  // Recovery archives are read-only data sources, never operational grants.
   configured: boolean;
   actorId: string | null;
   tenantId: string | null;
@@ -78,7 +79,7 @@ type Command =
   | "native_history_ticket"
   | "native_fiscal_read"
   | "native_fiscal_prepare"
-  | "native_sales";
+  | "native_sales" | "native_backup";
 async function call<T = AccessView>(
   command: Command,
   args: Record<string, unknown> = {},
@@ -205,6 +206,25 @@ const messages: Record<string, string> = {
     "Este equipo es nuevo. Un dueño o administrador debe prepararlo primero; después podrás iniciar sesión con tu cuenta de vendedor. Usa «Usar otra cuenta» sin borrar la instalación.",
   ACCESS_INSTALLATION_SCOPE_LOCKED:
     "Esta instalación ya está vinculada a otro ámbito; no se cambia automáticamente.",
+  BACKUP_JOB_ABANDONED:'Este intento fue descartado. Sus archivos se conservan; inicia un respaldo nuevo.',
+  BACKUP_ALREADY_VERIFIED:'Este respaldo ya está verificado. Puedes comprobarlo de nuevo sin cambiar su identidad.',
+  BACKUP_IO:'No se pudo completar el archivo. Conserva el intento y verifica el espacio o la unidad.',
+  BACKUP_INVALID:'El respaldo está incompleto o fue modificado. Los datos activos se conservaron.',
+  BACKUP_DATABASE_INVALID:'No se pudo verificar la base cifrada del respaldo.',
+  BACKUP_SCHEMA_UNSUPPORTED:'Esta copia requiere una versión compatible de VentaRD.',
+  BACKUP_KEY_INVALID:'La llave no corresponde al respaldo o sus datos fueron modificados.',
+  BACKUP_FILE_EXISTS:'El destino contiene otro archivo. No se sobrescribió; elige otra ubicación para un respaldo nuevo.',
+  BACKUP_SEPARATE_KEY_REQUIRED:'Guarda la llave en una carpeta o unidad diferente del respaldo.',
+  BACKUP_DESTINATION_INVALID:'Elige una ubicación externa a los datos internos de VentaRD.',
+  BACKUP_SOURCE_CHANGED:'Cambió la copia temporal verificada. Se conserva el intento anterior.',
+  BACKUP_ORIGINAL_DEVICE_REQUIRED:'Esta copia puede consultarse, pero no acredita que éste sea el Windows original. Preparar otro equipo requiere una identidad nueva; no se clonó la instalación.',
+  BACKUP_CONTEXT_MISMATCH:'La copia pertenece a otra identidad de negocio o equipo. Puedes consultarla, pero no recuperar con ella la llave de esta instalación.',
+  BACKUP_KEY_STORE_FAILED:'No se pudo guardar o recuperar la llave en Windows. No se reemplazaron claves ni datos.',
+  BACKUP_CURRENT_DATABASE_REQUIRED:'La base original debe permanecer en este equipo. La copia se puede consultar; no reemplaza automáticamente la base activa.',
+  BACKUP_CLOSE_ACTIVE_REQUIRED:'Cierra y vuelve a abrir VentaRD antes de recuperar una llave local perdida. Los datos actuales se conservan.',
+  BACKUP_NOT_OPEN:'Vuelve a elegir y verificar el respaldo y su llave.',
+  BACKUP_ARCHIVE_READ_ONLY:'El respaldo permite consulta. No puede cobrar, sincronizar, cambiar datos ni emitir comprobantes.',
+  BACKUP_TOO_MANY_CANDIDATES:'Cierra y abre VentaRD para verificar más copias. Los archivos se conservan.',
   ACCESS_KEY_UNAVAILABLE:
     "No se pudo recuperar la clave local. Los datos no se borrarán.",
   PIN_INVALID: "PIN incorrecto.",
@@ -252,3 +272,28 @@ export function accessMessage(e: unknown) {
     "No se pudo completar el acceso de forma verificable. No se han borrado datos ni habilitado cobros."
   );
 }
+
+export interface BackupSummary {backupId:string;state:string;capturedAtMs?:string;databaseBytes?:string;counts?:Record<string,string>;handle?:string}
+export interface BackupView {rows:BackupSummary[];canCreate:boolean;archive?:BackupSummary}
+export const backupPort={
+ settingsRead:()=>call<import('./management').BusinessSettingsView>('native_backup',{command:{action:'SETTINGS_READ'}}),
+ printLayoutRead:()=>call<{layout:import('./management').PrintLayout;canWrite:boolean;coverage:string}>('native_backup',{command:{action:'PRINT_LAYOUT_READ'}}),
+ repairsRead:()=>call<import('./management').RepairsView>('native_backup',{command:{action:'REPAIRS_READ'}}),
+ layawaysRead:()=>call<import('./management').LayawaysView>('native_backup',{command:{action:'LAYAWAYS_READ'}}),
+ warrantiesRead:()=>call<import('./management').WarrantiesView>('native_backup',{command:{action:'WARRANTIES_READ'}}),
+ report:(fromMs:string,toMs:string)=>call<import('./management').ManagementReport>('native_backup',{command:{action:'REPORT',fromMs,toMs}}),
+ inventoryHistory:(productId:string,page:number)=>call<import('./management').InventoryHistory>('native_backup',{command:{action:'INVENTORY_HISTORY',productId,page}}),
+ document:<T>(family:'REPAIR'|'LAYAWAY'|'WARRANTY'|'CUT',operationId:string)=>call<T>('native_backup',{command:{action:'DOCUMENT',family,operationId}}),
+ status:()=>call<BackupView>('native_backup',{command:{action:'STATUS'}}),
+ abandon:(operationId:string)=>call('native_backup',{command:{action:'ABANDON',operationId}}),
+ create:(operationId:string)=>call<BackupSummary>('native_backup',{command:{action:'CREATE',operationId}}),
+ inspect:()=>call<BackupSummary>('native_backup',{command:{action:'INSPECT'}}),
+ open:(handle:string)=>call('native_backup',{command:{action:'OPEN',handle}}),
+ close:()=>call('native_backup',{command:{action:'CLOSE'}}),
+ recoverKey:(handle:string,pin:string)=>call<{state:string;databaseReplaced:boolean}>('native_backup',{command:{action:'RECOVER_KEY',handle,pin}}),
+ read:()=>call<PosSnapshot>('native_backup',{command:{action:'READ'}}),
+ historyRead:(filter:PosHistoryFilter)=>call<PosHistoryPage>('native_backup',{command:{action:'HISTORY_READ',filter}}),
+ ticket:(operationId:string)=>call<PosTicket>('native_backup',{command:{action:'TICKET',operationId}}),
+ managementRead:()=>call<import('./management').ManagementView>('native_backup',{command:{action:'MANAGEMENT_READ'}}),
+ reportExport:(kind:import('./management').ExportKind,fromMs:string,toMs:string)=>call<import('./management').ReportBundle>('native_backup',{command:{action:'REPORT_EXPORT',kind,fromMs,toMs}}),
+};

@@ -240,7 +240,7 @@ function useWorkspace(port: PosPort) {
     }
   }
   const editingLocked =
-    (snapshot?.mode === "staging-readonly" && !snapshot.supportsDrafts) ||
+    (snapshot?.mode === "staging-readonly" && !snapshot.supportsDrafts) || snapshot?.mode === "recovery-readonly" ||
     busy ||
     !!pending ||
     paymentOpen ||

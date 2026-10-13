@@ -1,5 +1,7 @@
 import {applyBrand} from '../features/settings/brand';
 import {BusinessSettings} from '../features/settings/business-settings';
+import {BackupSettings} from '../features/settings/backup-settings';
+import {nativeArchivePort} from '../platform/archive';
 import {PrintingSettings} from '../features/services/printing-settings';
 import { lazy, Suspense, useEffect, useState } from "react";
 import {
@@ -73,16 +75,17 @@ function SettingsPage() {
       <div className="max-w-3xl mx-auto mb-6"><h1 className="text-2xl sm:text-3xl font-display font-black text-white">Configuración del Negocio</h1><p className="text-vr-gray mt-2">Personaliza la información que aparece en los tickets y reportes.</p></div>
       <div className="grid gap-4 max-w-3xl mx-auto"><BusinessSettings/>
         <PrintingSettings/>
+        <BackupSettings/>
         <div className="bg-navy-2 rounded-xl p-5 border border-navy-3">
           <h3 className="text-lg font-bold text-vr-gray mb-1 border-b border-navy-3 pb-2">🩺 Estado del Sistema</h3>
           <p className="text-xs text-vr-gray mb-4">Datos de este dispositivo para soporte. No envía ventas ni datos de clientes.</p>
           <div className="bg-navy rounded-xl border border-navy-3 p-4">{[
-            ['Entorno',s.snapshot?.mode==='staging-operational'?'Staging QA · operativo':s.snapshot?.mode==='staging-readonly'?'Staging QA · sólo lectura':s.snapshot?'Fixture sintético':'No disponible'],
+            ['Entorno',s.snapshot?.mode==='recovery-readonly'?'Archivo recuperado · sólo consulta':s.snapshot?.mode==='staging-operational'?'Staging QA · operativo':s.snapshot?.mode==='staging-readonly'?'Staging QA · sólo lectura':s.snapshot?'Fixture sintético':'No disponible'],
             ['Pendientes totales',s.snapshot?.pendingOperations??'No disponible'],
             ['Ventas locales confirmadas',s.snapshot?.confirmedSales??'No disponible'],
           ].map(([label,value])=><div key={label} className="flex items-center justify-between gap-3 text-sm py-1.5 border-b border-navy-3/40"><span className="text-vr-gray">{label}</span><span className="font-mono font-bold text-white text-xs text-right">{value}</span></div>)}</div>
           <button type="button" onClick={()=>void s.refresh()} className="mt-3 py-2.5 px-4 bg-navy-3 border border-navy-3 hover:border-gold/40 text-vr-gray hover:text-gold font-bold rounded-xl text-sm transition-all">↻ Actualizar</button>
-          <p className="mt-4 text-xs text-vr-gray">Catálogo público, invitaciones, configuración fiscal, respaldo/recuperación y conexión directa a impresora: pendientes en esta versión.</p>
+          <p className="mt-4 text-xs text-vr-gray">Catálogo público, invitaciones, configuración fiscal, activación operativa de copias en otro equipo y validación de hardware: pendientes en esta versión.</p>
         </div>
       </div>
     </section>
@@ -146,7 +149,7 @@ function Layout({
       </header>
       <div className="bg-gold/10 border-b border-gold/20 px-3 sm:px-4 py-1.5 text-[11px] sm:text-xs text-gold shrink-0">
         Desarrollo nativo ·{" "}
-        {readOnly
+        {s.snapshot?.mode==='recovery-readonly'?`Archivo recuperado · sólo consulta · copia del ${new Date(Number(s.snapshot.backupCapturedAtMs)).toLocaleString('es-DO')}`:readOnly
           ? "Catálogo Staging · borradores locales · cobro deshabilitado"
           : s.snapshot?.mode==="staging-operational"?"Cuenta Staging operativa · ventas locales durables · sincronización con recibos"
           : s.snapshot
@@ -250,8 +253,10 @@ function NativeEntry() {
         <Link className="text-gold inline-block mt-6" to="/login">
           Iniciar sesión online
         </Link>
+        <div className="max-w-3xl mt-6"><BackupSettings recoveryOnly/></div>
       </div>
     );
+  if(view?.status==='RECOVERY_ARCHIVE')return <SalesProvider key="recovery-archive" port={nativeArchivePort}><Layout readOnly/></SalesProvider>;
   if (view?.status === "AUTHENTICATED")
     return <Navigate to="/preparacion" replace />;
   if (view?.status === "PREPARATION_REQUIRED" && (view.operationalReady || (preview && view.catalogueReady)))

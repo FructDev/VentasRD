@@ -11,6 +11,16 @@ use zeroize::Zeroizing;
 
 pub struct RecoverySecret(Zeroizing<[u8; 32]>);
 impl RecoverySecret {
+    /// Native-only conversion; key bytes are never returned to IPC.
+    pub fn from_cipher_key(key: &CipherKey) -> Self {
+        Self(Zeroizing::new(*key.raw_native()))
+    }
+    pub(crate) fn native_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+    pub(crate) fn from_native(bytes: [u8; 32]) -> Self {
+        Self(Zeroizing::new(bytes))
+    }
     pub fn generate() -> Result<Self, KeyError> {
         let mut b = Zeroizing::new([0u8; 32]);
         getrandom::fill(&mut *b).map_err(|_| KeyError::RandomUnavailable)?;

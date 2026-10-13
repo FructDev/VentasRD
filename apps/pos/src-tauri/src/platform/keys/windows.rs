@@ -132,3 +132,57 @@ fn map_error(e: Error) -> KeyError {
         _ => KeyError::ProviderFailure,
     }
 }
+/// Test-only custody. Can remove solely exact records successfully created
+/// by this guard; never enumerates or deletes unrelated user credentials.
+#[cfg(test)]
+pub(crate) struct FixtureKeys {
+    store: WindowsKeyStore,
+    owned: Mutex<HashMap<String, Zeroizing<Vec<u8>>>>,
+}
+#[cfg(test)]
+impl FixtureKeys {
+    pub(crate) fn new(root: &Path) -> Self {
+        Self {
+            store: WindowsKeyStore::new(root).unwrap(),
+            owned: Mutex::new(HashMap::new()),
+        }
+    }
+    pub(crate) fn lose_owned(&self, slot: &str) {
+        let owned = self.owned.lock().unwrap();
+        let expected = owned.get(slot).expect("only this fixture's keys");
+        let actual = self.store.read(slot).unwrap();
+        assert!(bool::from(actual.as_slice().ct_eq(expected.as_slice())));
+        self.store.entry(slot).unwrap().delete_credential().unwrap();
+    }
+}
+#[cfg(test)]
+impl NativeKeyStore for FixtureKeys {
+    fn read(&self, slot: &str) -> Result<Zeroizing<Vec<u8>>, KeyError> {
+        self.store.read(slot)
+    }
+    fn create_new(&self, slot: &str, record: &[u8]) -> Result<(), KeyError> {
+        self.store.create_new(slot, record)?;
+        self.owned
+            .lock()
+            .map_err(|_| KeyError::ProviderFailure)?
+            .insert(slot.into(), Zeroizing::new(record.to_vec()));
+        Ok(())
+    }
+}
+#[cfg(test)]
+impl Drop for FixtureKeys {
+    fn drop(&mut self) {
+        if let Ok(owned) = self.owned.lock() {
+            for (slot, expected) in owned.iter() {
+                if let Ok(actual) = self.store.read(slot) {
+                    if bool::from(actual.as_slice().ct_eq(expected.as_slice())) {
+                        let _ = self
+                            .store
+                            .entry(slot)
+                            .and_then(|e| e.delete_credential().map_err(map_error));
+                    }
+                }
+            }
+        }
+    }
+}

@@ -133,15 +133,43 @@ pub fn unlock_pin(
     pin: &Zeroizing<String>,
     now: u64,
 ) -> Result<AccessDecision, PinError> {
+    authenticate_pin(conn, g, pin, now, false)?.ok_or(PinError::Unauthorized)
+}
+/// Recovery broker additionally proves possession of the backup key and the
+/// original non-portable OS anchor. This checks PIN/standing owner signature
+/// only; it returns no operational capability or renewed licence.
+pub fn verify_recovery_pin(
+    conn: &mut Connection,
+    g: &VerifiedGrant,
+    pin: &Zeroizing<String>,
+    now: u64,
+) -> Result<(), PinError> {
+    authenticate_pin(conn, g, pin, now, true).map(|_| ())
+}
+fn authenticate_pin(
+    conn: &mut Connection,
+    g: &VerifiedGrant,
+    pin: &Zeroizing<String>,
+    now: u64,
+    recovery: bool,
+) -> Result<Option<AccessDecision>, PinError> {
     validate(pin, now)?;
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let (highwater, openings) = runtime(&tx, g, now)?;
-    let access = g
-        .evaluate(now, highwater, openings)
-        .map_err(|_| PinError::Unauthorized)?;
-    if !access.allows("READ") {
-        return Err(PinError::Unauthorized);
-    }
+    let access = if recovery {
+        if !g.payload().capabilities.iter().any(|c| c == "MANAGE") {
+            return Err(PinError::Unauthorized);
+        }
+        None
+    } else {
+        let decision = g
+            .evaluate(now, highwater, openings)
+            .map_err(|_| PinError::Unauthorized)?;
+        if !decision.allows("READ") {
+            return Err(PinError::Unauthorized);
+        }
+        Some(decision)
+    };
     let p = g.payload();
     let scope = scope(g);
     type Row = (String, u64, String, u32, u64);

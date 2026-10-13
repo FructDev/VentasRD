@@ -140,7 +140,7 @@ export function SalesPage() {
       )}
       <SalesWorkspace
         onFree={
-          s.snapshot.mode !== "staging-readonly" && !s.locked
+          s.snapshot.mode !== "staging-readonly" && s.snapshot.mode !== "recovery-readonly" && !s.locked
             ? () => {
                 setFreeError("");
                 setFreeOpen(true);
@@ -154,7 +154,7 @@ export function SalesPage() {
         busy={s.busy}
         pending={!!s.pending || !!s.cartPending}
         paymentBlocked={
-          s.snapshot.mode === "staging-readonly" || s.quote?.totalCents === null
+          s.snapshot.mode === "staging-readonly" || s.snapshot.mode === "recovery-readonly" || s.quote?.totalCents === null
         }
         pausedCount={s.snapshot.carts.paused.length}
         onCash={s.readCash ? () => s.setCashOpen(true) : undefined}

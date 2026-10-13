@@ -5,6 +5,157 @@ fn business_save(op: u32, revision: &str, name: &str) -> management::Command {
     serde_json::from_value(json!({"kind":"BUSINESS_SAVE","operationId":id(op),"expectedRevision":revision,"definition":{"name":name,"whatsapp":"8095550100","phone":"8095550101","rnc":"131000001","address":"Calle QA","footer":"Gracias por su compra","logo":null,"color":"dorado","font":"syne","bank":{"name":"Banco QA","account":"001-123","holder":"Tienda QA"}}})).unwrap()
 }
 #[test]
+fn portable_backup_preserves_wal_pending_money_and_original_tickets_without_os_key() {
+    use ventard_core::{
+        security::recovery_enrollment::RecoverySecret,
+        storage::{backup, cipher::CipherKey, writer::VaultWriter},
+    };
+    let root =
+        std::env::temp_dir().join(format!("ventard-backup-fixture-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir(&root).unwrap();
+    for name in ["live", "exports", "keys", "private"] {
+        std::fs::create_dir(root.join(name)).unwrap();
+    }
+    let key = CipherKey::new([0x45; 32]);
+    let recovery = RecoverySecret::generate().unwrap();
+    let source = backup::Source {
+        local_anchor_hash: None,
+        tenant_id: id(1),
+        vault_id: id(880),
+        installation_id: id(4),
+        device_id: id(3),
+        actor_id: id(2),
+        writer_epoch: "1".into(),
+        scope_type: "BRANCH".into(),
+        branch_id: Some(id(5)),
+        key_version: 1,
+        captured_at_ms: "2000".into(),
+    };
+    let mut live = VaultWriter::create_encrypted(root.join("live"), &key).unwrap();
+    let c = live.connection();
+    c.execute(
+        "INSERT INTO scopes VALUES(?1,'BRANCH',?2,?3)",
+        (sales_key(), id(5), id(1)),
+    )
+    .unwrap();
+    c.execute(
+        "INSERT INTO native_sales_cursor_v1 VALUES(?1,?2,'NATIVE1',0)",
+        (id(1), sales_key()),
+    )
+    .unwrap();
+    repair_fixture(c);
+    run_pro(c, repair_save(701, "0")).unwrap();
+    let ticket = ventard_core::application::printing::repair_ticket(c, &ctx(), &id(701)).unwrap();
+    let path = root.join("exports/test.vrdbackup");
+    let card = root.join("keys/test.vrdkey");
+    let job = backup::prepare(c, source.clone(), &id(881), &path, &card).unwrap();
+    let first = backup::create(c, job, &key, &recovery, &root.join("private")).unwrap();
+    assert_eq!(first["state"], "VERIFIED");
+    let bytes = std::fs::read(&path).unwrap();
+    let keybytes = std::fs::read(&card).unwrap();
+    let old = backup::job(c, &source, &id(881)).unwrap().unwrap();
+    assert_eq!(
+        backup::create(c, old, &key, &recovery, &root.join("private")).unwrap(),
+        first
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    assert_eq!(std::fs::read(&card).unwrap(), keybytes);
+    let archive = backup::restore(&path, &card, &root.join("independent-recovery")).unwrap();
+    archive.read(|db, _| {
+        assert_eq!(
+            ventard_core::application::printing::repair_ticket(db, &ctx(), &id(701)).unwrap(),
+            ticket
+        );
+        assert!(db.execute("DELETE FROM outbox", []).is_err());
+        assert!(
+            db.query_row::<i64, _, _>(
+                "SELECT count(*) FROM outbox WHERE state<>'APPLIED'",
+                [],
+                |r| r.get(0)
+            )
+            .unwrap()
+                > 0
+        );
+    });
+    run(c, save(882, "0")).unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    // Corrupted and incomplete exports never replace the active database.
+    for (name, damaged) in [
+        ("truncated", bytes[..bytes.len() - 1].to_vec()),
+        ("manifest-tampered", {
+            let mut b = bytes.clone();
+            b[40] ^= 1;
+            b
+        }),
+        ("database-tampered", {
+            let mut b = bytes.clone();
+            let last = b.len() - 1;
+            b[last] ^= 1;
+            b
+        }),
+    ] {
+        let file = root.join("exports").join(format!("{name}.vrdbackup"));
+        std::fs::write(&file, damaged).unwrap();
+        assert!(backup::restore(&file, &card, &root.join(name)).is_err());
+        assert_eq!(
+            ventard_core::application::printing::repair_ticket(c, &ctx(), &id(701)).unwrap(),
+            ticket
+        );
+    }
+    let wrong_card = root.join("keys/wrong.vrdkey");
+    let mut wrong_bytes = keybytes.clone();
+    wrong_bytes[55] ^= 1;
+    std::fs::write(&wrong_card, wrong_bytes).unwrap();
+    assert!(backup::restore(&path, &wrong_card, &root.join("wrong-key")).is_err());
+    // A response lost after freeze resumes the same bytes, even after new writes.
+    let header_size = 12 + u32::from_be_bytes(bytes[8..12].try_into().unwrap()) as usize + 8;
+    std::fs::write(&path, &bytes[..header_size + 128]).unwrap();
+    c.execute(
+        "UPDATE native_backup_jobs_v1 SET state='PREPARED' WHERE operation_id=?1",
+        [id(881)],
+    )
+    .unwrap();
+    let pending = backup::job(c, &source, &id(881)).unwrap().unwrap();
+    assert_eq!(
+        backup::create(c, pending, &key, &recovery, &root.join("private")).unwrap(),
+        first
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    let mut foreign = source.clone();
+    foreign.branch_id = Some(id(999));
+    let foreign_path = root.join("exports/foreign.vrdbackup");
+    let foreign_key = root.join("keys/foreign.vrdkey");
+    let foreign_job =
+        backup::prepare(c, foreign.clone(), &id(883), &foreign_path, &foreign_key).unwrap();
+    assert!(backup::create(c, foreign_job, &key, &recovery, &root.join("private")).is_err());
+    assert!(!foreign_path.exists() && !foreign_key.exists());
+    backup::abandon(c, &foreign, &id(883)).unwrap();
+    assert_eq!(
+        backup::job(c, &foreign, &id(883)).unwrap().unwrap().state,
+        "FAILED"
+    );
+    std::fs::remove_file(&card).unwrap();
+    let wrong = RecoverySecret::generate().unwrap();
+    let job = backup::job(c, &source, &id(881)).unwrap().unwrap();
+    assert!(backup::create(c, job, &key, &wrong, &root.join("private")).is_err());
+    assert!(
+        !card.exists(),
+        "a wrong recovery secret must not publish a replacement key file"
+    );
+    drop(archive);
+    drop(live);
+    let real = root.canonicalize().unwrap();
+    assert!(
+        real.starts_with(std::env::temp_dir().canonicalize().unwrap())
+            && real
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("ventard-backup-fixture-")
+    );
+    std::fs::remove_dir_all(real).unwrap();
+}
+#[test]
 fn encrypted_settings_reopen_preserves_bank_header_revision_and_exact_attempt() {
     use ventard_core::{
         application::settings,

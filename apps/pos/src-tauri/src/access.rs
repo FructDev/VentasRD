@@ -1,5 +1,6 @@
 //! DEBUG staging access on definitive pages. No commercial activation until
 //! consistent snapshot/recovery/fiscal are ready. Credentials never leave Rust.
+pub mod backup;
 pub mod sales;
 use crate::platform::keys::windows::WindowsKeyStore;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
@@ -237,11 +238,13 @@ struct Inner {
     unlocked: bool,
 }
 pub struct AccessState {
+    archive_selection: Mutex<Option<AccessView>>,
+    recovery: Mutex<backup::RecoveryState>,
     root: PathBuf,
     inner: Mutex<Inner>,
     launch: Arc<OperationalLaunch>,
 }
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AccessView {
     status: &'static str,
@@ -311,6 +314,8 @@ fn fiscal_recover(
 impl AccessState {
     pub fn new(root: PathBuf) -> Self {
         Self {
+            recovery: Mutex::new(backup::RecoveryState::default()),
+            archive_selection: Mutex::new(None),
             root,
             inner: Mutex::new(Inner {
                 config: None,
@@ -372,6 +377,9 @@ impl AccessState {
         Ok(())
     }
     fn view(&self, inner: &mut Inner) -> Result<AccessView, AccessError> {
+        if let Some(view) = self.archive_view()? {
+            return Ok(view);
+        }
         let config = match self.config(inner) {
             Ok(c) => c,
             Err(e) if e.code == "ACCESS_NOT_CONFIGURED" => {
@@ -447,6 +455,7 @@ impl AccessState {
         Ok(view)
     }
     fn catalogue_authorize(&self, inner: &mut Inner) -> Result<Selection, AccessError> {
+        self.deny_archive()?;
         if !inner.unlocked {
             return Err(error("ACCESS_PIN_REQUIRED"));
         }
@@ -722,6 +731,7 @@ impl AccessState {
             return Err(error("ACCESS_INPUT_INVALID"));
         }
         let mut inner = self.inner.lock().map_err(|_| error("ACCESS_BUSY"))?;
+        self.deny_archive()?;
         inner.session = None;
         inner.unlocked = false;
         let config = self.config(&mut inner)?;
@@ -849,6 +859,7 @@ impl AccessState {
     }
     fn provision(&self, tenant: String, branch: Option<String>) -> Result<AccessView, AccessError> {
         let mut inner = self.inner.lock().map_err(|_| error("ACCESS_BUSY"))?;
+        self.deny_archive()?;
         let config = self.config(&mut inner)?;
         let session = inner
             .session
@@ -990,6 +1001,7 @@ impl AccessState {
     }
     fn pin(&self, pin: Zeroizing<String>, enroll: bool) -> Result<AccessView, AccessError> {
         let mut inner = self.inner.lock().map_err(|_| error("ACCESS_BUSY"))?;
+        self.deny_archive()?;
         let config = self.config(&mut inner)?;
         if inner.selected.is_none() {
             self.view(&mut inner)?;
@@ -1117,6 +1129,7 @@ pub async fn native_access_lock(
     admission(&window, &ipc_version, &request_id)?;
     let s = Arc::clone(state.inner());
     tauri::async_runtime::spawn_blocking(move || {
+        s.clear_archive()?;
         let mut i = s.inner.lock().map_err(|_| error("ACCESS_BUSY"))?;
         i.session = None;
         i.unlocked = false;

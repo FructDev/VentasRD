@@ -127,7 +127,8 @@ pub fn run() {
         access::native_history_ticket,
         access::native_fiscal_read,
         access::native_fiscal_prepare,
-        access::sales::native_sales
+        access::sales::native_sales,
+        access::backup::native_backup
     ]);
     builder
         .run(tauri::generate_context!())

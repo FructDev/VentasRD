@@ -11,6 +11,37 @@ use ventard_core::security::key_provider::{
 use ventard_core::security::recovery_enrollment::{recover_key, seal_recovery_key, RecoverySecret};
 use ventard_core::{domain::identity::EntityId, storage::writer::VaultWriter};
 use zeroize::Zeroizing;
+#[test]
+fn backup_os_anchor_requires_live_original_key_and_is_not_restored_from_portable_data() {
+    use ventard_core::security::key_provider::installation_anchor;
+    let store = FakeStore::default();
+    let original = binding(1);
+    assert!(installation_anchor(&store, &original, true).is_err());
+    assert_eq!(store.writes.get(), 0);
+    let key = create_vault_key(&store, &original).unwrap();
+    let hash = installation_anchor(&store, &original, true).unwrap();
+    assert_eq!(hash.len(), 64);
+    assert_eq!(installation_anchor(&store, &original, false).unwrap(), hash);
+    let other = FakeStore::default();
+    ventard_core::security::key_provider::persist_recovered_key(&other, &original, &key).unwrap();
+    assert!(installation_anchor(&other, &original, false).is_err());
+    assert_eq!(other.writes.get(), 1);
+}
+#[test]
+fn explicit_recovered_key_replays_without_overwriting_a_different_or_unavailable_slot() {
+    use ventard_core::{security::key_provider::persist_recovered_key, storage::cipher::CipherKey};
+    let store = FakeStore::default();
+    let b = binding(1);
+    let key = CipherKey::new([0x7d; 32]);
+    persist_recovered_key(&store, &b, &key).unwrap();
+    assert!(persist_recovered_key(&store, &b, &key).is_ok());
+    assert_eq!(store.writes.get(), 1);
+    assert!(persist_recovered_key(&store, &b, &CipherKey::new([0x7e; 32])).is_err());
+    assert_eq!(store.writes.get(), 1);
+    store.failure.set(Some(KeyError::TemporarilyUnavailable));
+    assert!(persist_recovered_key(&store, &b, &key).is_err());
+    assert_eq!(store.writes.get(), 1);
+}
 
 #[derive(Default)]
 struct FakeStore {

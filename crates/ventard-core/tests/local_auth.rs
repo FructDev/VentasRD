@@ -16,8 +16,17 @@ const ACTOR: &str = "96000000-0000-4000-8000-000000000051";
 const DEVICE: &str = "96000000-0000-4000-8000-000000000052";
 const INSTALL: &str = "96000000-0000-4000-8000-000000000053";
 fn grant(actor: &str) -> VerifiedGrant {
+    grant_variant(actor, false)
+}
+fn grant_variant(actor: &str, recovery_owner: bool) -> VerifiedGrant {
     let signer = SigningKey::from_bytes(&[0x17; 32]);
     let p = json!({"protocol":"ventard.offline-grant.v1","keyId":"test-key-1","issuer":"ventard.staging","audience":"ventard.native.staging.v1","grantId":"96000000-0000-4000-8000-000000000054","grantSequence":"1","policyVersion":"1","tenantId":TENANT,"actorId":actor,"deviceId":DEVICE,"installationId":INSTALL,"writerEpoch":"1","scope":{"type":"GLOBAL","branchId":null},"role":"seller","capabilities":["READ","SELL"],"issuedAtMs":"1000","actorExpiresAtMs":null,"license":{"planActive":true,"accessUntilMs":null,"trialUntilMs":null,"graceDays":"5","warnAfterOpenings":"200","blockAfterOpenings":"300"}});
+    let mut p = p;
+    if recovery_owner {
+        p["role"] = json!("owner");
+        p["capabilities"] = json!(["READ", "SELL", "MANAGE"]);
+        p["actorExpiresAtMs"] = json!("3000");
+    }
     let (c, _) = canonicalize(&serde_json::to_vec(&p).unwrap()).unwrap();
     let signature = signer
         .sign(c.as_bytes())
@@ -68,6 +77,36 @@ impl Drop for Fixture {
 }
 fn pin(s: &str) -> Zeroizing<String> {
     Zeroizing::new(s.into())
+}
+#[test]
+fn recovery_pin_keeps_rate_limits_and_never_renews_expired_operational_authority() {
+    use ventard_core::security::local_auth::verify_recovery_pin;
+    let f = Fixture::new();
+    let key = CipherKey::new([0x79; 32]);
+    let mut w = VaultWriter::create_encrypted(&f.0, &key).unwrap();
+    let g = grant_variant(ACTOR, true);
+    let c = w.connection();
+    enroll_pin(c, &g, &pin("9876"), 2000).unwrap();
+    assert!(unlock_pin(c, &g, &pin("9876"), 6000).is_err());
+    for _ in 0..5 {
+        assert_eq!(
+            verify_recovery_pin(c, &g, &pin("0000"), 6000).unwrap_err(),
+            PinError::Invalid
+        )
+    }
+    assert_eq!(
+        verify_recovery_pin(c, &g, &pin("9876"), 6001).unwrap_err(),
+        PinError::RateLimited
+    );
+    verify_recovery_pin(c, &g, &pin("9876"), 36001).unwrap();
+    assert!(unlock_pin(c, &g, &pin("9876"), 36001).is_err());
+    assert_eq!(
+        c.query_row("SELECT openings FROM local_access_runtime_v1", [], |r| r
+            .get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+    assert!(verify_recovery_pin(c, &grant(ACTOR), &pin("9876"), 36001).is_err());
 }
 #[test]
 fn pin_is_salted_no_plaintext_or_default_and_survives_encrypted_reopen() {
@@ -257,7 +296,7 @@ fn additive_access_upgrade_preserves_v1_rows_and_original_checksum() {
         w.connection()
             .query_row("PRAGMA user_version", [], |r| r.get::<_, u32>(0))
             .unwrap(),
-        12
+        18
     );
     assert_eq!(
         w.connection()

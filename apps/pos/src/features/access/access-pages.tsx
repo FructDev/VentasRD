@@ -15,6 +15,7 @@ import {
 } from "../../platform/access";
 import logo from "../../../../../public/icon-192x192.png";
 import { FiscalPreparation } from "./fiscal-preparation";
+import {BackupSettings} from '../settings/backup-settings';
 function Frame({ children }: { children: ReactNode }) {
   return (
     <div className="min-h-dvh bg-navy flex text-white">
@@ -155,6 +156,7 @@ export function LoginPage() {
           Volver
         </Link>
       </div>
+      <details className="mt-6"><summary className="text-sm text-vr-gray cursor-pointer">Recuperar datos desde un respaldo</summary><div className="mt-4"><BackupSettings recoveryOnly/></div></details>
     </Frame>
   );
 }
