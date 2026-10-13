@@ -139,6 +139,8 @@ export const historyPort = {
     call<PosTicket>("native_history_ticket", { operationId }),
 };
 export const managementAccountPort = {
+ settingsRead:()=>call<import('./management').BusinessSettingsView>('native_sales',{command:{action:'SETTINGS_READ'}}),
+ settingsLoadRemote:()=>call<import('./management').BusinessSettingsView>('native_sales',{command:{action:'SETTINGS_LOAD_REMOTE'}}),
  repairPrivateRead:(repairId:string)=>call<import('./management').RepairPrivateView>('native_sales',{command:{action:'REPAIR_PRIVATE_READ',repairId}}),
  repairTicket:(operationId:string)=>call<import('./management').RepairTicket>('native_sales',{command:{action:'REPAIR_TICKET',operationId}}),
  printRepair:(operationId:string,snapshotHash:string,attemptId:string)=>call<{status:string;submitted?:boolean}>('native_sales',{command:{action:'PRINT_REPAIR',operationId,snapshotHash,attemptId}}),

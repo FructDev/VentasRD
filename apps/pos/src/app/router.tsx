@@ -1,3 +1,5 @@
+import {applyBrand} from '../features/settings/brand';
+import {BusinessSettings} from '../features/settings/business-settings';
 import {PrintingSettings} from '../features/services/printing-settings';
 import { lazy, Suspense, useEffect, useState } from "react";
 import {
@@ -67,32 +69,20 @@ function PendingModule({ name }: { name: string }) {
 function SettingsPage() {
   const s = useSales();
   return (
-    <section className="p-6 overflow-y-auto">
-      <h1 className="text-2xl font-bold">Ajustes</h1>
-      <div className="grid gap-4 mt-6 max-w-2xl">
+    <section className="h-full p-4 sm:p-8 overflow-y-auto">
+      <div className="max-w-3xl mx-auto mb-6"><h1 className="text-2xl sm:text-3xl font-display font-black text-white">Configuración del Negocio</h1><p className="text-vr-gray mt-2">Personaliza la información que aparece en los tickets y reportes.</p></div>
+      <div className="grid gap-4 max-w-3xl mx-auto"><BusinessSettings/>
         <PrintingSettings/>
         <div className="bg-navy-2 rounded-xl p-5 border border-navy-3">
-          <h2 className="font-bold">Fuente de datos</h2>
-          <p className="mt-2 text-sm text-vr-gray">
-            {s.snapshot?.mode === "staging-readonly"
-              ? "Catálogo Staging de sólo lectura en SQLite cifrado · clave Windows"
-              : s.snapshot?.mode === "staging-operational"
-                ? "Cuenta de Staging preparada · datos locales cifrados · cola durable y recibos remotos"
-                : s.snapshot
-                ? "Dataset sintético en SQLite cifrado · clave Windows"
-                : "Adaptador nativo no disponible"}
-          </p>
-          <p className="text-sm text-vr-gray mt-2">
-            {s.snapshot?.mode === "staging-operational" ? "Las ventas se guardan localmente; sólo un recibo remoto válido confirma su sincronización. Este entorno no es producción." : "Fuente de consulta/prueba; no constituye una cuenta operativa."}
-          </p>
-        </div>
-        <div className="bg-navy-2 rounded-xl p-5 border border-navy-3">
-          <h2 className="font-bold">Caja y dispositivos</h2>
-          <p className="text-vr-gray mt-2 text-sm">
-            {s.snapshot?.mode === "staging-readonly"
-              ? "Acceso firmado y PIN verificados. Esta captura no incluye caja/ventas ni habilita cobro. Impresión, respaldo y activación comercial pendientes."
-              : s.snapshot?.mode === "staging-operational" ? "Turno compartido, conteo, cortes y cierre nativos. Clientes, abonos y gastos conservan su identidad y turno. Inventario: fichas, costos, precios, recetas y movimientos durables. Las extensiones remotas requieren sus migraciones Staging. Tickets de venta y corte con impresión Windows integrada; papel y respaldo comercial pendientes." : "Turno de prueba preabierto. Apertura/cierre comercial, impresora, NCF y respaldo con custodia pendientes."}
-          </p>
+          <h3 className="text-lg font-bold text-vr-gray mb-1 border-b border-navy-3 pb-2">🩺 Estado del Sistema</h3>
+          <p className="text-xs text-vr-gray mb-4">Datos de este dispositivo para soporte. No envía ventas ni datos de clientes.</p>
+          <div className="bg-navy rounded-xl border border-navy-3 p-4">{[
+            ['Entorno',s.snapshot?.mode==='staging-operational'?'Staging QA · operativo':s.snapshot?.mode==='staging-readonly'?'Staging QA · sólo lectura':s.snapshot?'Fixture sintético':'No disponible'],
+            ['Pendientes totales',s.snapshot?.pendingOperations??'No disponible'],
+            ['Ventas locales confirmadas',s.snapshot?.confirmedSales??'No disponible'],
+          ].map(([label,value])=><div key={label} className="flex items-center justify-between gap-3 text-sm py-1.5 border-b border-navy-3/40"><span className="text-vr-gray">{label}</span><span className="font-mono font-bold text-white text-xs text-right">{value}</span></div>)}</div>
+          <button type="button" onClick={()=>void s.refresh()} className="mt-3 py-2.5 px-4 bg-navy-3 border border-navy-3 hover:border-gold/40 text-vr-gray hover:text-gold font-bold rounded-xl text-sm transition-all">↻ Actualizar</button>
+          <p className="mt-4 text-xs text-vr-gray">Catálogo público, invitaciones, configuración fiscal, respaldo/recuperación y conexión directa a impresora: pendientes en esta versión.</p>
         </div>
       </div>
     </section>
@@ -108,6 +98,7 @@ function Layout({
   explicitPreview?: boolean;
 }) {
   const s = useSales();
+  useEffect(()=>{applyBrand(s.snapshot?.business?.color??"dorado",s.snapshot?.business?.font??"syne")},[s.snapshot?.business?.color,s.snapshot?.business?.font]);
   const destination = (path: string) =>
     explicitSynthetic ? `${path}?source=synthetic` : explicitPreview ? `${path}?source=preview` : path;
   useEffect(() => {

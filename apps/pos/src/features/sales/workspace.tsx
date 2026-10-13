@@ -54,6 +54,7 @@ function useWorkspace(port: PosPort) {
     [fiscalType, setFiscalType] = useState<"B01" | "B02" | null>(null);
   const [cashOpen, setCashOpen] = useState(false);
   const [ticket, setTicket] = useState<PosTicket | null>(null);
+  const [autoPrintTicket,setAutoPrintTicket]=useState(false);
   const [waitingOpen, setWaitingOpen] = useState(false),
     [cartPending, setCartPending] = useState<CartAttempt | null>(null);
   const [result, setResult] = useState<PosResult | null>(null),
@@ -94,6 +95,7 @@ function useWorkspace(port: PosPort) {
     options = {
       payment,
       ...(snapshot?.defaultWarrantyDays&&Object.keys(serials).some(id=>lines.some(l=>l.productId===id))?{warrantyDays:snapshot.defaultWarrantyDays}:{}),
+
       discountCents:discountKind==='amount'?inputCents(discount||"0"):"0",
       ...(discountKind==='percent'?{discountPercentBasisPoints:inputCents(discount||'0')}:{}),
       serials: Object.fromEntries(
@@ -401,6 +403,7 @@ function useWorkspace(port: PosPort) {
       // Éxito durable antes de refresh: fallo posterior no revive la intención
       // ni oculta una venta confirmada. Leer resultado es otro paso.
       setResult(durable);
+      if(durable.printStatus==="QUEUED"&&port.ticket){try{setAutoPrintTicket(true);setTicket(await port.ticket(durable.operationId))}catch(e){setError("La venta quedó guardada. "+posError(e))}}
       setLines([]);
       setReceived("");
       setPaymentOpen(false);
@@ -424,7 +427,7 @@ function useWorkspace(port: PosPort) {
   async function recover(id: string) {
     await action(async () => {
       const saved = await port.result(id);
-      if (saved) setResult(saved);
+      if(saved){setResult(saved);if(saved.printStatus==="QUEUED"&&port.ticket){setAutoPrintTicket(true);setTicket(await port.ticket(saved.operationId))}}
     });
   }
   async function retryPending() {
@@ -444,6 +447,7 @@ function useWorkspace(port: PosPort) {
   }
   async function showTicket() {
     if (!result || !port.ticket) return;
+    setAutoPrintTicket(false);
     await action(async () => setTicket(await port.ticket!(result.operationId)));
   }
   function closePayment() {
@@ -469,6 +473,7 @@ function useWorkspace(port: PosPort) {
   }
   return {
     management: port.management,
+    autoPrintTicket,
     printTicket: port.printTicket,
     historyRead: port.historyRead,
     readTicket: port.ticket,

@@ -1,5 +1,5 @@
 import {ReceiptDocument} from '../services/receipt-document';
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { type PosTicket } from "../../platform/pos-adapter";
 import {NativeTicketVenta} from "./native-ticket-venta";
 import {useSales} from './workspace';
@@ -9,15 +9,19 @@ export function TicketDialog({
   ticket,
   synthetic,
   onClose,
+  autoPrint = false,
 }: {
   ticket: PosTicket;
   synthetic: boolean;
   onClose: () => void;
+  autoPrint?: boolean;
 }) {
   const ref = useRef<HTMLElement>(null);
-  const s=useSales(),attempt=useRef<string|null>(ticket.printAttempt?.attemptId??null),gate=useRef(false);
+  const autoStarted=useRef(false);
+  const {printTicket}=useSales(),attempt=useRef<string|null>(ticket.printAttempt?.attemptId??null),gate=useRef(false);
   const [printing,setPrinting]=useState(false),[printNotice,setPrintNotice]=useState(''),[printError,setPrintError]=useState(''),[hasPrintAttempt,setHasPrintAttempt]=useState(!!ticket.printAttempt);
-  async function print(){if(!s.printTicket||!ticket.printSnapshotHash||gate.current)return;gate.current=true;setPrinting(true);setPrintError('');attempt.current??=crypto.randomUUID();setHasPrintAttempt(true);try{const response=await s.printTicket(ticket.operationId,ticket.printSnapshotHash,attempt.current);if(response.status==="FAILED")setPrintError("La solicitud anterior falló. Revisa la impresora y solicita una reimpresión.");else setPrintNotice(response.submitted===false?'Solicitud anterior recuperada sin imprimir de nuevo. Comprueba el papel antes de reimprimir.':'Solicitud enviada a Windows. Comprueba el papel antes de reimprimir.');attempt.current=null;setHasPrintAttempt(false);}catch(e){setPrintError(posError(e));}finally{gate.current=false;setPrinting(false);}}
+  const print=useCallback(async()=>{if(!printTicket||!ticket.printSnapshotHash||gate.current)return;gate.current=true;setPrinting(true);setPrintError('');attempt.current??=crypto.randomUUID();setHasPrintAttempt(true);try{await Promise.race([document.fonts.ready,new Promise(resolve=>setTimeout(resolve,2500))]);for(const img of ref.current?.querySelectorAll<HTMLImageElement>('.native-ticket-document img')??[]){await img.decode()}await new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve())));if(!ref.current)return;const response=await printTicket(ticket.operationId,ticket.printSnapshotHash,attempt.current);if(response.status==="FAILED")setPrintError("La solicitud anterior falló. Revisa la impresora y solicita una reimpresión.");else setPrintNotice(response.submitted===false?'Solicitud anterior recuperada sin imprimir de nuevo. Comprueba el papel antes de reimprimir.':'Solicitud enviada a Windows. Comprueba el papel antes de reimprimir.');attempt.current=null;setHasPrintAttempt(false);}catch(e){setPrintError(posError(e));}finally{gate.current=false;setPrinting(false);}},[printTicket,ticket.operationId,ticket.printSnapshotHash]);
+  useEffect(()=>{if(!autoPrint||autoStarted.current||ticket.printAttempt||ticket.autoPrintJob?.state!=='QUEUED')return;const timer=setTimeout(()=>{if(autoStarted.current)return;autoStarted.current=true;attempt.current=ticket.autoPrintJob!.attemptId;void print()},0);return()=>clearTimeout(timer)},[autoPrint,ticket.operationId,ticket.printAttempt,ticket.autoPrintJob,print]);
   useEffect(() => {
     const previous = document.activeElement;
     ref.current
@@ -28,7 +32,7 @@ export function TicketDialog({
     };
   }, []);
   function key(e: KeyboardEvent<HTMLElement>) {
-    if (e.key === "Escape") {
+    if (e.key === "Escape" && !printing) {
       e.preventDefault();
       onClose();
     }
@@ -61,8 +65,9 @@ export function TicketDialog({
           liquidación bancaria. La solicitud de impresión no acredita salida de papel.
         </p>
         {printNotice&&<p role="status" className="text-xs text-green-700 mt-3">{printNotice}</p>}{printError&&<p role="alert" className="text-xs text-red-700 mt-3">{printError}</p>}
-        <button onClick={()=>void print()} disabled={!s.printTicket||!ticket.printSnapshotHash||printing} className="mt-4 w-full rounded-xl bg-gold-gradient text-navy p-3 font-bold disabled:opacity-30">{printing?'Preparando impresión…':hasPrintAttempt?'Recuperar solicitud de impresión':printNotice?'Reimprimir ticket':'Imprimir ticket'}</button>
+        <button onClick={()=>void print()} disabled={!printTicket||!ticket.printSnapshotHash||printing} className="mt-4 w-full rounded-xl bg-gold-gradient text-navy p-3 font-bold disabled:opacity-30">{printing?'Preparando impresión…':hasPrintAttempt?'Recuperar solicitud de impresión':printNotice?'Reimprimir ticket':'Imprimir ticket'}</button>
         <button
+          disabled={printing}
           onClick={onClose}
           className="mt-6 w-full rounded-xl bg-navy text-white p-3"
         >

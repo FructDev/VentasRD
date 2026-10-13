@@ -156,7 +156,7 @@ export interface PosQuote {
   quoteHash?: string | null;
   discountCents?: string;
 }
-export interface PosSnapshot {
+export interface PosSnapshot {business?:import("./management").BusinessHeader|null;
   defaultWarrantyDays?:string;
   status: "ready" | "needs-dataset";
   mode: "synthetic" | "commercial" | "staging-readonly" | "staging-operational";
@@ -282,6 +282,7 @@ const errors: Record<string, string> = {
   SALES_REMOTE_DENIED:"El servidor no autorizó la operación. Se conserva para revisión.",
   SALES_REMOTE_CONFLICT:"Hay un conflicto remoto. La venta permanece visible; no se repara automáticamente.",
   SALES_MIGRATION_REQUIRED:"Falta aplicar la migración de Ventas en Staging.",
+  SETTINGS_MIGRATION_REQUIRED:"Falta aplicar la migración de Ajustes y actualizar los datos de la cuenta.",
   HISTORY_SNAPSHOT_UNAVAILABLE:
     "Esta venta no tiene un ticket histórico verificable. No se reconstruirá con datos actuales.",
   HISTORY_SNAPSHOT_CORRUPT:
@@ -425,11 +426,11 @@ export function posError(error: unknown): string {
     `No se pudo completar la operación (${code}). Los datos se conservaron.`
   );
 }
-export interface PosTicket {
+export interface PosTicket {autoPrintJob?:{attemptId:string;state:string};actorName?:string|null;
   printLayout?:import("./management").PrintLayout;
   printAttempt?:{attemptId:string;state:string};
   printSnapshotHash?: string;
-  business?: {name:string;rnc:string|null;address:string|null;phone:string|null;footer:string|null};
+  business?:import("./management").BusinessHeader;
   version: string;
   operationId: string;
   ticket: string;

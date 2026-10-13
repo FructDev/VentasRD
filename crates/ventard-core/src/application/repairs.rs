@@ -955,16 +955,7 @@ fn document_inner(
     } else if let Some(source) = source {
         source["business"].clone()
     } else {
-        let raw: Option<String> = c
-            .query_row(
-                "SELECT profile FROM native_business_profile_v1 WHERE tenant_id=?1",
-                [&ctx.tenant_id],
-                |r| r.get(0),
-            )
-            .optional()?;
-        raw.map(|r| serde_json::from_str(&r).map_err(|_| invalid()))
-            .transpose()?
-            .unwrap_or(Value::Null)
+        super::settings::public_profile(c, ctx)?
     };
     d["business"] = business;
     if !customer.is_null() {

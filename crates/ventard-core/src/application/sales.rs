@@ -962,15 +962,9 @@ fn apply(
         None
     };
     let mut snapshot = json!({"version":"ventard.ticket.snapshot.1","operationId":op,"tenantId":ctx.tenant_id,"scope":{"type":ctx.scope_type,"branchId":ctx.branch_id},"ticket":ticket,"ncf":ncf,"actorId":ctx.actor_id,"originAtUtcMs":intent["originAtUtcMs"],"customerName":customer_name,"sale":sale});
-    let profile: Option<String> = tx
-        .query_row(
-            "SELECT profile FROM native_business_profile_v1 WHERE tenant_id=?1",
-            [&ctx.tenant_id],
-            |r| r.get(0),
-        )
-        .optional()?;
-    if let Some(raw) = profile {
-        snapshot["business"] = serde_json::from_str(&raw).map_err(|_| invalid())?;
+    let business = super::settings::public_profile(tx, ctx)?;
+    if !business.is_null() {
+        snapshot["business"] = business;
     }
     let (bytes, snapshot_hash) =
         canonicalize(&serde_json::to_vec(&snapshot).map_err(|_| invalid())?)

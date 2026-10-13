@@ -11,6 +11,7 @@ import { showCents, posError } from "../../platform/pos-adapter";
 import { useSales } from "./workspace";
 import { CashDialog } from "../cash/cash-dialog";
 import { TicketDialog } from "./ticket-dialog";
+import {QrTransfer} from './qr-transfer';
 
 export function SalesPage() {
   const s = useSales();
@@ -370,6 +371,7 @@ export function SalesPage() {
           onConfirm={() => void s.confirm()}
           onClose={s.closePayment}
         >
+          {s.paymentMethod==='TRANSFER'&&s.snapshot.business&&s.quote?.totalCents&&<QrTransfer business={s.snapshot.business} cents={s.quote.totalCents}/>}
           {s.paymentMethod === "MIXED" && (
             <div className="grid grid-cols-2 gap-3 mt-4">
               <label className="text-sm text-vr-gray">
@@ -742,7 +744,9 @@ export function SalesPage() {
       )}
       {s.ticket && (
         <TicketDialog
+          key={s.ticket.operationId}
           ticket={s.ticket}
+          autoPrint={s.autoPrintTicket}
           synthetic={s.snapshot.mode === "synthetic"}
           onClose={() => s.setTicket(null)}
         />

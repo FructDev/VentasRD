@@ -19,6 +19,8 @@ pub enum SalesAction {
     LayawaysRead,
     WarrantiesRead,
     PrintLayoutRead,
+    SettingsRead,
+    SettingsLoadRemote,
     ContactNotice {
         family: String,
         id: String,
@@ -604,6 +606,16 @@ impl AccessState {
                     SalesAction::PrintLayoutRead=>{
                         let d=g.evaluate(now,high,opens).map_err(|_|AppError::Protocol(ventard_core::application::errors::ProtocolError::MalformedPayload))?;
                         Ok(json!({"layout":ventard_core::application::printing::layout(c,&ctx)?,"canWrite":d.allows("MANAGE"),"coverage":"LOCAL_INSTALLATION"}))
+                    },
+                    SalesAction::SettingsRead=>{
+                        if !g.payload().capabilities.iter().any(|s|s=="MANAGE"){return Err(AppError::Auth(ventard_core::application::errors::AuthError::PermissionDenied{required:"MANAGE".into()}));}
+                        let d=g.evaluate(now,high,opens).map_err(|_|AppError::Protocol(ventard_core::application::errors::ProtocolError::MalformedPayload))?;
+                        let mut data=ventard_core::application::settings::read(c,&ctx)?;let supported=ventard_core::application::settings::supported(c,&ctx)?;data["supported"]=json!(supported);data["canWrite"]=json!(d.allows("MANAGE")&&supported);Ok(data)
+                    },
+                    SalesAction::SettingsLoadRemote=>{
+                        let d=g.evaluate(now,high,opens).map_err(|_|AppError::Protocol(ventard_core::application::errors::ProtocolError::MalformedPayload))?;
+                        if !d.allows("MANAGE"){return Err(AppError::Auth(ventard_core::application::errors::AuthError::PermissionDenied{required:"MANAGE".into()}));}
+                        ventard_core::application::settings::load_remote(c,&ctx)
                     },
                     SalesAction::PrintLayoutSave{layout}=>ventard_core::application::printing::save_layout(c,&g,now,high,opens,layout),
                     SalesAction::WarrantyTicket{operation_id}=>{

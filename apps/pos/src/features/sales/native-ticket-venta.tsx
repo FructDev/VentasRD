@@ -4,7 +4,7 @@ const fmt=(cents:string)=>{const n=BigInt(cents);return `${n<0n?'-':''}${(n<0n?-
 function quantity(n:bigint,d:bigint){let remaining=d,twos=0,fives=0;while(remaining%2n===0n){remaining/=2n;twos++;}while(remaining%5n===0n){remaining/=5n;fives++;}if(remaining!==1n)return`${n}/${d}`;const places=Math.max(twos,fives);if(!places)return n.toString();const power=10n**BigInt(places),scaled=n*power/d;const tail=(scaled%power).toString().padStart(places,'0').replace(/0+$/,'');return tail?`${scaled/power}.${tail}`:(scaled/power).toString();}
 export function NativeTicketVenta({ticket}:{ticket:PosTicket}){
  const business=ticket.business,nombreNegocio=business?.name??'Datos del negocio no guardados',rnc=business?.rnc,direccion=business?.address,telefono=business?.phone,mensajePie=business?.footer;
- const logoUrl:undefined=undefined,impresion={mostrarLogo:false},es58=ticket.printLayout?.paperWidth==="58mm",vendedor:undefined=undefined;
+ const logoUrl=business?.logo?.startsWith("data:image/png;base64,")?business.logo:undefined,impresion={mostrarLogo:ticket.printLayout?.showLogo!==false},es58=ticket.printLayout?.paperWidth==="58mm",vendedor=ticket.actorName??undefined;
  const fechaActual=new Date(Number(ticket.originAtUtcMs)).toLocaleString('es-DO'),ticketNum=ticket.ticket,ncf=ticket.ncf,clienteNombre=ticket.customerName;
  const {subtotalCents:subtotal,itbisCents:itbis,discountCents:descuento,totalCents:total}=ticket.sale.totals;
  const metodoPago=ticket.sale.payment.method.toLowerCase(),devuelta=ticket.sale.payment.changeCents;

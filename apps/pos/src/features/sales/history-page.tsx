@@ -311,6 +311,7 @@ export function HistoryPage() {
         {tab==='movements'&&m.view&&<MovementHistory rows={m.view.movements} search={search} method={method} from={from} to={to} limit={m.view.movementLimit}/>}</div>{returnData&&<ReturnDialog data={returnData} onClose={()=>setReturnData(null)} onSaved={()=>{setReturnData(null);setReturnNotice('Devolución guardada localmente · sincronización pendiente.');setRevision(n=>n+1);void m.reload();}}/>}
         {ticket && (
           <TicketDialog
+            key={ticket.operationId}
             ticket={ticket}
             synthetic={s.snapshot?.mode === "synthetic"}
             onClose={() => setTicket(null)}

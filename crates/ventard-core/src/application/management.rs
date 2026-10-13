@@ -21,6 +21,11 @@ use serde_json::{json, Value};
     deny_unknown_fields
 )]
 pub enum Command {
+    BusinessSave {
+        operation_id: String,
+        expected_revision: String,
+        definition: Box<super::settings::Definition>,
+    },
     WarrantySave {
         operation_id: String,
         product_id: String,
@@ -689,6 +694,10 @@ pub fn execute_private(
         let mut kind = request["kind"].as_str().ok_or_else(invalid)?.to_owned();
         let mut turn: Option<String> = None;
         match &req {
+            Command::BusinessSave { .. } => {
+                kind = "CONFIG_PATCH".into();
+                doc = super::settings::document(c, &ctx, &req)?;
+            }
             Command::WarrantySave { .. } | Command::WarrantyDefault { .. } => {
                 (kind, doc) =
                     super::warranties::document(c, &ctx, &req, &decision.effective_time_ms, None)?;
@@ -870,15 +879,9 @@ pub fn execute_private(
                 turn = Some(turn_id.clone());
                 let expected = amount(s(&d["expectedCents"])?)?;
                 doc = json!({"drawer":d,"countedCents":counted_cents,"differenceCents":MoneyCents::from_i128(n as i128-expected as i128).map_err(|_|invalid())?.to_dto(),"denominations":denominations,"notes":request["notes"]});
-                let business: Option<String> = c
-                    .query_row(
-                        "SELECT profile FROM native_business_profile_v1 WHERE tenant_id=?1",
-                        [&ctx.tenant_id],
-                        |r| r.get(0),
-                    )
-                    .optional()?;
-                if let Some(raw) = business {
-                    doc["business"] = serde_json::from_str(&raw).map_err(|_| invalid())?;
+                let business = super::settings::public_profile(c, &ctx)?;
+                if !business.is_null() {
+                    doc["business"] = business;
                 }
             }
         }
@@ -1023,7 +1026,9 @@ pub fn apply(
     if kind == "SALE_RETURN" {
         super::returns::apply(tx, ctx, v, remote)?;
     }
-    if matches!(kind, "WARRANTY_PATCH" | "CONFIG_PATCH") {
+    if kind == "CONFIG_PATCH" && req["kind"] == "BUSINESS_SAVE" {
+        super::settings::apply(tx, ctx, v, remote)?;
+    } else if matches!(kind, "WARRANTY_PATCH" | "CONFIG_PATCH") {
         super::warranties::apply(tx, ctx, v, remote)?;
     }
     if super::repairs::supports(kind) {

@@ -12,17 +12,18 @@
   --color-vr-green: #22C55E;
   --color-vr-red: #EF4444;
   --color-vr-orange: #F59E0B;
-  --font-display: system-ui, sans-serif;
+  --font-display: NativeSyne, sans-serif;
+  --font-mono: NativeDMMono, monospace;
 }
 @layer base {
-  body { margin:0; background:#0D1B2E; color:white; font-family:system-ui, sans-serif; }
+  body { margin:0; background:#0D1B2E; color:white; font-family:NativeDMSans, sans-serif; }
   input { display:block; min-width:0; }
-  a:focus-visible, button:focus-visible, input:focus-visible { outline:2px solid #D4A017; outline-offset:3px; }
-  a[aria-current="page"] { color:#D4A017; }
+  a:focus-visible, button:focus-visible, input:focus-visible { outline:2px solid var(--color-gold); outline-offset:3px; }
+  a[aria-current="page"] { color:var(--color-gold); }
   dt { color:#8899AA; font-size:.85rem; }
   dd { margin:0; }
 }
-.bg-gold-gradient {background:linear-gradient(135deg,#D4A017,#EFC84A);}
+.bg-gold-gradient {background:linear-gradient(135deg,var(--color-gold),var(--color-gold-2));}
 .scrollbar-none {scrollbar-width:none;}
 .scrollbar-none::-webkit-scrollbar {display:none;}
 ::-webkit-scrollbar {width:6px;height:6px;}
@@ -50,3 +51,15 @@
 .ticket-compacto .mt-6 {margin-top:.6rem;}
 .ticket-compacto .mt-2 {margin-top:.2rem;}
 .ticket-compacto .py-1 {padding-top:1px;padding-bottom:1px;}
+@font-face {font-family:NativeSyne;src:url('../assets/fonts/syne.ttf') format('truetype');font-weight:400 800;font-display:swap;}
+@font-face {font-family:NativePoppins;src:url('../assets/fonts/poppins.ttf') format('truetype');font-weight:700;font-display:swap;}
+@font-face {font-family:NativePoppins;src:url('../assets/fonts/poppins600.ttf') format('truetype');font-weight:600;font-display:swap;}
+@font-face {font-family:NativePoppins;src:url('../assets/fonts/poppins800.ttf') format('truetype');font-weight:800;font-display:swap;}
+@font-face {font-family:NativeMontserrat;src:url('../assets/fonts/montserrat.ttf') format('truetype');font-weight:400 900;font-display:swap;}
+@font-face {font-family:NativeSpaceGrotesk;src:url('../assets/fonts/spacegro.ttf') format('truetype');font-weight:300 700;font-display:swap;}
+@font-face {font-family:NativeSora;src:url('../assets/fonts/sora.ttf') format('truetype');font-weight:100 800;font-display:swap;}
+@font-face {font-family:NativeOutfit;src:url('../assets/fonts/outfit.ttf') format('truetype');font-weight:100 900;font-display:swap;}
+@font-face {font-family:NativePlayfair;src:url('../assets/fonts/playfair.ttf') format('truetype');font-weight:400 900;font-display:swap;}
+@font-face {font-family:NativeDMSans;src:url('../assets/fonts/dmsans.ttf') format('truetype');font-weight:100 1000;font-display:swap;}
+@font-face {font-family:NativeDMMono;src:url('../assets/fonts/dmmono.ttf') format('truetype');font-weight:400;font-display:swap;}
+@font-face {font-family:NativeDMMono;src:url('../assets/fonts/dmmono500.ttf') format('truetype');font-weight:500;font-display:swap;}

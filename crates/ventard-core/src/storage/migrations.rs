@@ -138,6 +138,13 @@ pub fn get_embedded_migrations() -> Vec<Migration> {
         sql: sql_0016,
         checksum: Migration::compute_checksum(sql_0016),
     });
+    let sql_0017 = include_str!("../../migrations/0017_business_settings.sql");
+    migrations.push(Migration {
+        version: 17,
+        name: "0017_business_settings",
+        sql: sql_0017,
+        checksum: Migration::compute_checksum(sql_0017),
+    });
     migrations
 }
 

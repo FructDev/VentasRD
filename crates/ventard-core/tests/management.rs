@@ -1,6 +1,243 @@
 #![cfg(feature = "encrypted-storage")]
 use rusqlite::Connection;
 use serde_json::json;
+fn business_save(op: u32, revision: &str, name: &str) -> management::Command {
+    serde_json::from_value(json!({"kind":"BUSINESS_SAVE","operationId":id(op),"expectedRevision":revision,"definition":{"name":name,"whatsapp":"8095550100","phone":"8095550101","rnc":"131000001","address":"Calle QA","footer":"Gracias por su compra","logo":null,"color":"dorado","font":"syne","bank":{"name":"Banco QA","account":"001-123","holder":"Tienda QA"}}})).unwrap()
+}
+#[test]
+fn encrypted_settings_reopen_preserves_bank_header_revision_and_exact_attempt() {
+    use ventard_core::{
+        application::settings,
+        storage::{cipher::CipherKey, writer::VaultWriter},
+    };
+    let root = std::env::temp_dir();
+    let path = root.join(format!("ventard-settings-fixture-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir(&path).unwrap();
+    let key = CipherKey::new([0x62; 32]);
+    let request = business_save(840, "0", "Negocio cifrado QA");
+    let expected;
+    {
+        let mut vault = VaultWriter::create_encrypted(&path, &key).unwrap();
+        let c = vault.connection();
+        c.execute(
+            "INSERT INTO scopes VALUES(?1,'BRANCH',?2,?3)",
+            (sales_key(), id(5), id(1)),
+        )
+        .unwrap();
+        c.execute(
+            "INSERT INTO native_sales_cursor_v1 VALUES(?1,?2,'NATIVE1',0)",
+            (id(1), sales_key()),
+        )
+        .unwrap();
+        c.execute("INSERT INTO native_business_settings_protocol_v1 VALUES(?1,'ventard.business.settings.1')",[id(1)]).unwrap();
+        expected = run(c, request.clone()).unwrap();
+    }
+    {
+        let mut vault = VaultWriter::open_encrypted(&path, &key).unwrap();
+        let c = vault.connection();
+        assert_eq!(run(c, request).unwrap(), expected);
+        let settings = settings::read(c, &ctx()).unwrap();
+        assert_eq!(settings["revision"], "1");
+        assert_eq!(settings["definition"]["bank"]["account"], "001-123");
+        assert_eq!(
+            settings::public_profile(c, &ctx()).unwrap()["name"],
+            "Negocio cifrado QA"
+        );
+        assert_eq!(
+            c.query_row(
+                "SELECT count(*) FROM outbox WHERE operation_id=?1",
+                [id(840)],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            1
+        );
+    }
+    let real = std::fs::canonicalize(&path).unwrap();
+    assert!(
+        real.starts_with(std::fs::canonicalize(root).unwrap())
+            && real
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("ventard-settings-fixture-")
+    );
+    std::fs::remove_dir_all(real).unwrap();
+}
+#[test]
+#[ignore = "requires explicit isolated PostgreSQL settings event fixture"]
+fn postgres_settings_proof_imports_current_metadata_without_replaying_money_or_stock() {
+    use ventard_core::application::settings;
+    let path =
+        std::env::var("VENTARD_SETTINGS_EVENT_FIXTURE").expect("explicit isolated fixture path");
+    let packet: serde_json::Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    let watermark = packet["watermark"]
+        .as_str()
+        .unwrap()
+        .parse::<i64>()
+        .unwrap();
+    let mut c = db();
+    for _ in 0..2 {
+        let tx = c.transaction().unwrap();
+        settings::import_protocol(
+            &tx,
+            &ctx(),
+            &json!({"businessSettingsProtocol":"ventard.business.settings.1"}),
+        )
+        .unwrap();
+        settings::import_current(&tx, &ctx(), &packet["event"], watermark).unwrap();
+        tx.commit().unwrap();
+    }
+    let expected = settings::read(&c, &ctx()).unwrap();
+    assert_eq!(expected["definition"]["bank"]["account"], "001-123");
+    assert_eq!(expected["remoteStatus"], "APPLIED");
+    let mut bad = packet["event"].clone();
+    bad["receipt"]["effects"] = json!([]);
+    let tx = c.transaction().unwrap();
+    assert!(settings::import_current(&tx, &ctx(), &bad, watermark).is_err());
+    assert!(settings::import_current(&tx, &ctx(), &packet["event"], watermark - 1).is_err());
+    drop(tx);
+    assert_eq!(settings::read(&c, &ctx()).unwrap(), expected);
+    for table in [
+        "payments",
+        "inventory_movements",
+        "operation_journal",
+        "outbox",
+    ] {
+        assert_eq!(
+            c.query_row(&format!("SELECT count(*) FROM {table}"), [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+    }
+}
+#[test]
+fn business_conflicts_keep_latest_verified_remote_choice_and_block_new_headers() {
+    use ventard_core::application::settings;
+    let mut a = db();
+    let mut b = db();
+    for c in [&mut a, &mut b] {
+        c.execute("INSERT INTO native_business_settings_protocol_v1 VALUES(?1,'ventard.business.settings.1')",[id(1)]).unwrap();
+    }
+    run(&mut a, business_save(830, "0", "Servidor uno")).unwrap();
+    let first = event(&a, 830, 1);
+    run(&mut a, business_save(831, "1", "Servidor dos")).unwrap();
+    let second = event(&a, 831, 2);
+    run(&mut b, business_save(832, "0", "Edición concurrente")).unwrap();
+    for e in [&second, &first] {
+        let tx = b.transaction().unwrap();
+        settings::import_current(&tx, &ctx(), e, 2).unwrap();
+        tx.commit().unwrap();
+    }
+    assert!(settings::read(&b, &ctx()).unwrap()["canLoadRemote"]
+        .as_bool()
+        .unwrap());
+    assert_eq!(
+        settings::public_profile(&b, &ctx()).unwrap_err().code(),
+        "SERVICE_SYNC_CONFLICT"
+    );
+    let before: Vec<u8> = b
+        .query_row(
+            "SELECT canonical_bytes FROM operation_journal WHERE operation_id=?1",
+            [id(832)],
+            |r| r.get(0),
+        )
+        .unwrap();
+    settings::load_remote(&mut b, &ctx()).unwrap();
+    assert_eq!(
+        settings::read(&b, &ctx()).unwrap()["definition"]["name"],
+        "Servidor dos"
+    );
+    assert!(settings::load_remote(&mut b, &ctx()).is_err());
+    assert_eq!(
+        settings::public_profile(&b, &ctx()).unwrap()["name"],
+        "Servidor dos"
+    );
+    let after: Vec<u8> = b
+        .query_row(
+            "SELECT canonical_bytes FROM operation_journal WHERE operation_id=?1",
+            [id(832)],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(before, after);
+    assert_eq!(
+        b.query_row("SELECT count(*) FROM payments", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+}
+#[test]
+fn business_settings_are_basic_owner_authorized_atomic_and_recover_exactly_without_money_or_stock()
+{
+    use ventard_core::application::settings;
+    let mut c = db();
+    let request = business_save(810, "0", "Tienda QA");
+    assert!(run(&mut c, request.clone()).is_err());
+    c.execute(
+        "INSERT INTO native_business_settings_protocol_v1 VALUES(?1,'ventard.business.settings.1')",
+        [id(1)],
+    )
+    .unwrap();
+    assert!(
+        management::execute(&mut c, &grant(2, 5, false), 2000, 2000, 1, request.clone()).is_err()
+    );
+    c.execute_batch("CREATE TRIGGER fail_business BEFORE INSERT ON native_management_records_v1 WHEN NEW.kind='CONFIG_PATCH' BEGIN SELECT RAISE(ABORT,'fixture rollback');END;").unwrap();
+    assert!(run(&mut c, request.clone()).is_err());
+    assert_eq!(settings::read(&c, &ctx()).unwrap()["revision"], "0");
+    c.execute_batch("DROP TRIGGER fail_business;").unwrap();
+    let first = run(&mut c, request.clone()).unwrap();
+    assert_eq!(run(&mut c, request).unwrap(), first);
+    let view = settings::read(&c, &ctx()).unwrap();
+    assert_eq!(view["revision"], "1");
+    assert_eq!(view["definition"]["bank"]["account"], "001-123");
+    assert_eq!(
+        c.query_row("SELECT count(*) FROM payments", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        c.query_row("SELECT count(*) FROM inventory_movements", [], |r| r
+            .get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+    assert!(run(&mut c, business_save(811, "0", "Conflict")).is_err());
+    let mut bad = serde_json::to_value(business_save(812, "1", "Nueva tienda")).unwrap();
+    bad["definition"]["logo"] = json!("data:image/svg+xml,<svg></svg>");
+    assert!(run(&mut c, serde_json::from_value(bad).unwrap()).is_err());
+    assert_eq!(settings::read(&c, &ctx()).unwrap()["revision"], "1");
+}
+#[test]
+fn business_change_updates_future_documents_and_preserves_issued_repair_header_and_hash() {
+    use ventard_core::application::{printing, settings};
+    let mut c = db();
+    repair_fixture(&mut c);
+    c.execute(
+        "INSERT INTO native_business_settings_protocol_v1 VALUES(?1,'ventard.business.settings.1')",
+        [id(1)],
+    )
+    .unwrap();
+    run(&mut c, business_save(820, "0", "Nombre original")).unwrap();
+    run_pro(&mut c, repair_save(701, "0")).unwrap();
+    let old = printing::repair_ticket(&c, &ctx(), &id(701)).unwrap();
+    assert_eq!(old["document"]["business"]["name"], "Nombre original");
+    run(&mut c, business_save(821, "1", "Nombre nuevo")).unwrap();
+    assert_eq!(printing::repair_ticket(&c, &ctx(), &id(701)).unwrap(), old);
+    let mut next = repair_save(702, "0");
+    if let management::Command::RepairSave { repair_id, .. } = &mut next {
+        *repair_id = id(703)
+    };
+    run_pro(&mut c, next).unwrap();
+    assert_eq!(
+        printing::repair_ticket(&c, &ctx(), &id(702)).unwrap()["document"]["business"]["name"],
+        "Nombre nuevo"
+    );
+    let mut branch = ctx();
+    branch.branch_id = Some(id(60));
+    assert_eq!(settings::read(&c, &branch).unwrap()["revision"], "2");
+}
 #[test]
 fn repair_can_save_a_new_customer_with_zero_credit_limit_in_the_same_commit() {
     let mut c = db();
@@ -2501,6 +2738,7 @@ fn print_layout_is_local_scoped_durable_and_never_changes_ticket_hash_or_money()
         font_size: "grande".into(),
         density: "compacta".into(),
         copies: 2,
+        ..Default::default()
     };
     printing::save_layout(
         &c,

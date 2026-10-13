@@ -1,3 +1,4 @@
+import {BusinessLogo} from './business-logo';
 // Presentation adapted from src/components/TicketReparacion.tsx, immutable native receipt.
 import type {RepairTicket} from '../../platform/management';
 export function NativeTicketReparacion({ticket}:{ticket:RepairTicket}){
@@ -17,7 +18,7 @@ export function NativeTicketReparacion({ticket}:{ticket:RepairTicket}){
         <div className={`font-mono text-sm text-black ${claseTicket}`} style={{ width: impresion.anchoPapel, padding: es58 ? '4px' : '10px' }}>
             {/* Cabecera */}
             <div className="text-center mb-3">
-                <h1 className="text-lg font-bold uppercase">{nombreNegocio}</h1>
+                <BusinessLogo business={b} layout={ticket.printLayout}/><h1 className="text-lg font-bold uppercase">{nombreNegocio}</h1>
                 {rnc && <p className="text-xs">RNC: {rnc}</p>}
                 {direccion && <p className="text-xs">{direccion}</p>}
                 {telefono && <p className="text-xs">Tel: {telefono}</p>}

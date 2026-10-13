@@ -1,3 +1,4 @@
+import {BusinessLogo} from '../services/business-logo';
 // Markup adapted directly from src/components/TicketCorte.tsx; frozen cut only.
 import type {CutTicket} from '../../platform/management';
 const fmtDOP=(c:string)=>{const n=BigInt(c);return `${n<0n?'-':''}${(n<0n?-n:n)/100n}.${String((n<0n?-n:n)%100n).padStart(2,'0')}`;};
@@ -14,7 +15,7 @@ export function NativeTicketCorte({ticket}:{ticket:CutTicket}){
 
             {/* Cabecera */}
             <div className="text-center mb-3">
-                <h1 className="text-lg font-bold uppercase">{nombreNegocio}</h1>
+                <BusinessLogo business={business} layout={ticket.printLayout}/><h1 className="text-lg font-bold uppercase">{nombreNegocio}</h1>
                 {rnc && <p className="text-xs">RNC: {rnc}</p>}
                 {direccion && <p className="text-xs">{direccion}</p>}
                 {telefono && <p className="text-xs">Tel: {telefono}</p>}

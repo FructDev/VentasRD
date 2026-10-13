@@ -461,16 +461,7 @@ fn document_inner(
     } else if let Some(source) = source {
         source["business"].clone()
     } else {
-        let b: Option<String> = c
-            .query_row(
-                "SELECT profile FROM native_business_profile_v1 WHERE tenant_id=?1",
-                [&ctx.tenant_id],
-                |r| r.get(0),
-            )
-            .optional()?;
-        b.map(|v| serde_json::from_str(&v).map_err(|_| invalid()))
-            .transpose()?
-            .unwrap_or(Value::Null)
+        super::settings::public_profile(c, ctx)?
     };
     let mut d = json!({"operationId":op,"layaway":a,"stock":stock,"serials":serials,"payment":payment,"amountCents":amount.to_string(),"method":if amount==0{Value::Null}else{json!(method)},"concept":format!("Apartado {}",s(&a["folio"])?),"business":business});
     if !customer.is_null() {

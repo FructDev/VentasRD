@@ -23,6 +23,60 @@ use ventard_core::{
     security::offline_grant::*,
     storage::{catalogue_preview::CatalogueContext, migrations},
 };
+#[test]
+fn automatic_print_job_is_visible_durable_and_recovery_never_repeats_sale_or_os_attempt() {
+    use ventard_core::application::printing;
+    let mut c = sales_db();
+    c.execute(
+        "INSERT INTO sale_print_settings_v1 VALUES(?1,?2,1,'WINDOWS_DIALOG')",
+        (id(1), id(4)),
+    )
+    .unwrap();
+    let request = native_request(&c, options(SalePayment::Card));
+    let result = sales::confirm(&mut c, &grant(2, true), 1000, 0, 0, request.clone()).unwrap();
+    assert_eq!(result.print_status, "QUEUED");
+    let ticket = printing::ticket(&c, &ctx(2), &result.operation_id).unwrap();
+    assert_eq!(ticket["autoPrintJob"]["state"], "QUEUED");
+    let attempt = ticket["autoPrintJob"]["attemptId"].as_str().unwrap();
+    assert!(printing::request(
+        &mut c,
+        &ctx(2),
+        &result.operation_id,
+        ticket["printSnapshotHash"].as_str().unwrap(),
+        attempt
+    )
+    .unwrap());
+    assert!(!printing::request(
+        &mut c,
+        &ctx(2),
+        &result.operation_id,
+        ticket["printSnapshotHash"].as_str().unwrap(),
+        attempt
+    )
+    .unwrap());
+    assert_eq!(
+        printing::ticket(&c, &ctx(2), &result.operation_id).unwrap()["autoPrintJob"]["state"],
+        "UNKNOWN"
+    );
+    assert_eq!(
+        sales::confirm(&mut c, &grant(2, true), 1000, 0, 0, request).unwrap(),
+        result
+    );
+    assert_eq!(
+        c.query_row("SELECT count(*) FROM payments", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        c.query_row(
+            "SELECT count(*) FROM native_document_print_attempts_v1",
+            [],
+            |r| r.get::<_, i64>(0)
+        )
+        .unwrap(),
+        1
+    );
+}
 
 #[test]
 fn shared_opening_creates_only_a_durable_request_until_exact_server_receipt() {
@@ -1005,7 +1059,7 @@ fn complete_sales_upgrade_preserves_v10_sales_payments_and_foreign_keys() {
     migrations::apply(&mut c).unwrap();
     let after: String = c.query_row("SELECT json_array(s.ticket,s.turn_id,s.total_cents,l.nombre,l.costo_cents,l.serial,p.amount_cents,p.change_cents,p.turn_id) FROM sales s JOIN sale_lines l ON l.sale_id=s.sale_id JOIN payments p ON p.sale_id=s.sale_id",[],|r|r.get(0)).unwrap();
     assert_eq!(before, after);
-    assert_eq!(migrations::validate_history(&c).unwrap(), 16);
+    assert_eq!(migrations::validate_history(&c).unwrap(), 17);
     assert_eq!(
         c.query_row::<u32, _, _>("SELECT count(*) FROM pragma_foreign_key_check", [], |r| r
             .get(0))
@@ -1591,7 +1645,7 @@ fn local_encrypted_reopen_recovers_preparation_and_v7_upgrade_preserves_pin_and_
     {
         let mut w = VaultWriter::open_encrypted(&path, &key).unwrap();
         let c = w.connection();
-        assert_eq!(migrations::validate_history(c).unwrap(), 16);
+        assert_eq!(migrations::validate_history(c).unwrap(), 17);
         assert!(unlock_pin(c, &g, &pin, 2100).unwrap().allows("READ"));
         assert_eq!(drafts::read(c, &ctx(2)).unwrap().active.unwrap().id, id(21));
         original = prepare_checkout(c, &g, 2100, 2100, 1, request(30, &p), &p).unwrap();

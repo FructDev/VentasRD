@@ -10,6 +10,10 @@ use serde_json::{json, Value};
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Layout {
+    #[serde(default = "show_logo_default")]
+    pub show_logo: bool,
+    #[serde(default)]
+    pub auto_print: bool,
     pub paper_width: String,
     pub font_size: String,
     pub density: String,
@@ -18,12 +22,17 @@ pub struct Layout {
 impl Default for Layout {
     fn default() -> Self {
         Self {
+            show_logo: true,
+            auto_print: false,
             paper_width: "80mm".into(),
             font_size: "normal".into(),
             density: "normal".into(),
             copies: 1,
         }
     }
+}
+fn show_logo_default() -> bool {
+    true
 }
 fn valid_layout(d: &Layout) -> Result<(), AppError> {
     if !matches!(d.paper_width.as_str(), "58mm" | "80mm")
@@ -70,7 +79,10 @@ pub fn save_layout(
     valid_layout(&d)?;
     let p = g.payload();
     let raw = serde_json::to_string(&d).map_err(|_| invalid())?;
-    c.execute("INSERT INTO native_print_layout_v1 VALUES(?1,?2,?3) ON CONFLICT(tenant_id,installation_id) DO UPDATE SET payload=excluded.payload",(&p.tenant_id,&p.installation_id,raw))?;
+    let tx = c.unchecked_transaction()?;
+    tx.execute("INSERT INTO native_print_layout_v1 VALUES(?1,?2,?3) ON CONFLICT(tenant_id,installation_id) DO UPDATE SET payload=excluded.payload",(&p.tenant_id,&p.installation_id,raw))?;
+    tx.execute("INSERT INTO sale_print_settings_v1 VALUES(?1,?2,?3,?4) ON CONFLICT(tenant_id,installation_id) DO UPDATE SET auto_print=excluded.auto_print,printer_profile_id=excluded.printer_profile_id",(&p.tenant_id,&p.installation_id,d.auto_print,Some("WINDOWS_DIALOG")))?;
+    tx.commit()?;
     Ok(json!(d))
 }
 fn invalid() -> AppError {
@@ -340,6 +352,16 @@ pub fn ticket(
     )?;
     v["printSnapshotHash"] = serde_json::json!(hash);
     v["printLayout"] = json!(layout(c, ctx)?);
+    let job: Option<Value> = c
+        .query_row(
+            "SELECT job_id,state FROM sale_print_jobs_v1 WHERE operation_id=?1",
+            [op],
+            |r| Ok(json!({"attemptId":r.get::<_,String>(0)?,"state":r.get::<_,String>(1)?})),
+        )
+        .optional()?;
+    if let Some(job) = job {
+        v["autoPrintJob"] = job;
+    }
     if let Some(attempt) = last_attempt(c, op)? {
         v["printAttempt"] = attempt;
     }

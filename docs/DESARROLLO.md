@@ -21,7 +21,7 @@ Estados: pendiente, en desarrollo, bloqueado, terminado. Una funcionalidad activ
 
 ## Siguiente funcionalidad: completar Ajustes sobre su página definitiva
 
-**Objetivo/aceptación siguiente:** reutilizar los controles originales de configuración del negocio y de impresión, conservando los documentos ya emitidos. Papel, letra, espaciado y copias ya persisten por equipo; faltan configuración completa del negocio, logo/vendedor, impresión automática/conexión directa y respaldo/recuperación. Garantías, Reparaciones y Apartados están implementados con los límites registrados abajo.
+**Objetivo/aceptación actual:** datos del negocio, logo, banco, colores/fuentes originales y preferencias/autoimpresión implementados sobre Ajustes/Ventas definitivos. Conservar encabezados históricos y recuperar el mismo intento. Migración de Ajustes autorizada sólo en Staging QA A/B; aplicación/validación real en curso. Siguen pendientes catálogo público/invitaciones, configuración fiscal, nombre verificable del vendedor, conexión directa/papel y respaldo/recuperación. Garantías, Reparaciones y Apartados conservan los límites registrados abajo.
 
 Entorno: el usuario autorizó explícitamente sólo Staging blzzinivvzadqjbnpsre y QA A/B. Siete migraciones más la compatibilidad necesaria de seriales ya aplicadas; Pro sólo en esas dos licencias. PostgreSQL real pasó con fixture de rol authenticated, captura paginada para una segunda instalación y rollback. Falta refrescar el permiso firmado y demostrar los recorridos desde los brokers de las aplicaciones reales A/B; no se modifica producción. Después: importación/backup/transición, hardware y piloto.
 ## Objetivo anterior 2026-10-09 — cobro nativo (referencia histórica)

@@ -180,12 +180,23 @@ pub fn read(c: &Connection, ctx: &CatalogueContext) -> Result<Value, AppError> {
     let stock_state:String=c.query_row("SELECT json_group_array(json_array(producto_id,remote_base_qty,remote_seq,pending_coverage,effective_stock,authority_state)) FROM (SELECT * FROM stock_projections WHERE scope_key=?1 ORDER BY producto_id)",[&sk],|r|r.get(0))?;
     let customer_state:String=c.query_row("SELECT json_group_array(json_array(customer_id,name,balance_cents,limit_cents,revision,active,metadata_revision,price_tier)) FROM (SELECT a.*,coalesce(m.revision,1) metadata_revision,coalesce(p.tier,1) price_tier FROM sale_customer_accounts_v1 a LEFT JOIN native_customer_metadata_v1 m ON m.customer_id=a.customer_id AND m.tenant_id=a.tenant_id LEFT JOIN native_sales_customer_pricing_v1 p ON p.customer_id=a.customer_id AND p.tenant_id=a.tenant_id WHERE a.tenant_id=?1 ORDER BY a.customer_id)",[&ctx.tenant_id],|r|r.get(0))?;
     let turn_state:String=c.query_row("SELECT json_group_array(json_array(t.turn_id,t.status,t.revision,coalesce(r.remote_sequence,0))) FROM cash_turns t LEFT JOIN native_sales_receipts_v1 r ON r.operation_id=t.operation_id WHERE t.tenant_id=?1 AND t.scope_key=?2",(&ctx.tenant_id,&sk),|r|r.get(0))?;
+    let business: Option<String> = c
+        .query_row(
+            "SELECT profile FROM native_business_profile_v1 WHERE tenant_id=?1",
+            [&ctx.tenant_id],
+            |r| r.get(0),
+        )
+        .optional()?;
+    let business: Value = business
+        .map(|raw| serde_json::from_str(&raw).map_err(|_| invalid()))
+        .transpose()?
+        .unwrap_or(Value::Null);
     let scope_revision = {
         let management_state:String=c.query_row("SELECT json_array((SELECT count(*) FROM native_management_records_v1 WHERE tenant_id=?1 AND scope_key=?2),(SELECT max(rowid) FROM native_management_records_v1 WHERE tenant_id=?1 AND scope_key=?2),(SELECT max(remote_sequence) FROM native_sales_receipts_v1 WHERE tenant_id=?1 AND scope_key=?2),(SELECT sequence FROM native_sales_cursor_v1 WHERE tenant_id=?1 AND scope_key=?2))",(&ctx.tenant_id,&sk),|r|r.get(0))?;
-        bytes(&json!({"products":products,"stock":stock_state,"customers":customer_state,"turn":turn_state,"management":management_state}))?.1
+        bytes(&json!({"products":products,"stock":stock_state,"customers":customer_state,"turn":turn_state,"management":management_state,"business":business,"settingsSupported":super::settings::supported(c,ctx)?}))?.1
     };
     Ok(
-        json!({"status":"ready","mode":"staging-operational","supportsDrafts":true,"inventoryReadOnly":true,"inventorySummary":inventory_summary,"scopeRevision":scope_revision,"defaultWarrantyDays":super::warranties::defaults(c,ctx)?["days"],"products":products,"confirmedSales":sales.to_string(),"cashCents":cash.to_string(),"pendingOperations":pending.to_string(),"lastResult":last.map(|id|sale_result(c,ctx,&id)).transpose()?.flatten(),"pendingAttempt":attempt,"carts":super::drafts::read(c,ctx)?,"customers":super::sales::customers(c,ctx)?,"syncIssues":issues}),
+        json!({"status":"ready","mode":"staging-operational","supportsDrafts":true,"inventoryReadOnly":true,"inventorySummary":inventory_summary,"scopeRevision":scope_revision,"business":business,"defaultWarrantyDays":super::warranties::defaults(c,ctx)?["days"],"products":products,"confirmedSales":sales.to_string(),"cashCents":cash.to_string(),"pendingOperations":pending.to_string(),"lastResult":last.map(|id|sale_result(c,ctx,&id)).transpose()?.flatten(),"pendingAttempt":attempt,"carts":super::drafts::read(c,ctx)?,"customers":super::sales::customers(c,ctx)?,"syncIssues":issues}),
     )
 }
 pub fn operational(c: &Connection, ctx: &CatalogueContext) -> Result<bool, AppError> {
@@ -553,6 +564,15 @@ pub fn activate_bootstrap(
     }
     if m["business"].is_object() {
         tx.execute("INSERT INTO native_business_profile_v1 VALUES(?1,?2) ON CONFLICT(tenant_id) DO UPDATE SET profile=excluded.profile",(&ctx.tenant_id,m["business"].to_string()))?;
+    }
+    super::settings::import_protocol(&tx, ctx, &m)?;
+    if m["businessSettings"].is_object() {
+        super::settings::import_current(
+            &tx,
+            ctx,
+            &m["businessSettings"],
+            integer(&m["watermark"])?,
+        )?;
     }
     tx.execute(
         "UPDATE native_sales_bootstrap_v1 SET state='ACTIVE' WHERE context_key=?1",
@@ -1351,8 +1371,18 @@ pub fn receive_feed(
     if page["cashBase"].is_object() {
         store_cash_base(&tx, ctx, &page["cashBase"], end)?;
     }
-    if page["business"].is_object() {
+    if page["business"].is_object()
+        && !tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM native_business_settings_v1 WHERE tenant_id=?1)",
+            [&ctx.tenant_id],
+            |r| r.get::<_, bool>(0),
+        )?
+    {
         tx.execute("INSERT INTO native_business_profile_v1 VALUES(?1,?2) ON CONFLICT(tenant_id) DO UPDATE SET profile=excluded.profile",(&ctx.tenant_id,page["business"].to_string()))?;
+    }
+    super::settings::import_protocol(&tx, ctx, page)?;
+    if page["businessSettings"].is_object() {
+        super::settings::import_current(&tx, ctx, &page["businessSettings"], end)?;
     }
     tx.execute(
         "UPDATE native_sales_cursor_v1 SET sequence=?3 WHERE tenant_id=?1 AND scope_key=?2",

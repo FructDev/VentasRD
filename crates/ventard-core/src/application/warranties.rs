@@ -298,16 +298,7 @@ pub fn document(
             let business = if let Some(source) = source {
                 source["business"].clone()
             } else {
-                let b: Option<String> = c
-                    .query_row(
-                        "SELECT profile FROM native_business_profile_v1 WHERE tenant_id=?1",
-                        [&ctx.tenant_id],
-                        |r| r.get(0),
-                    )
-                    .optional()?;
-                b.map(|v| serde_json::from_str::<Value>(&v).map_err(|_| invalid()))
-                    .transpose()?
-                    .unwrap_or(Value::Null)
+                super::settings::public_profile(c, ctx)?
             };
             Ok((
                 "WARRANTY_PATCH".into(),
