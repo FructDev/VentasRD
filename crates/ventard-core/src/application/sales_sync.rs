@@ -387,6 +387,7 @@ pub fn activate_bootstrap(
             text(&m["capturedAtMs"])?,
         ),
     )?;
+    crate::storage::legacy_services::import(&tx, ctx, &m["legacyServices"])?;
     let mut seen = HashSet::new();
     let mut rows = vec![];
     for i in 0..array(&m["pages"])?.len() {
@@ -1360,6 +1361,7 @@ pub fn receive_feed(
     if end < last || end > watermark || array(&page["events"])?.len() > 200 {
         return Err(invalid());
     }
+    crate::storage::legacy_services::import(&tx, ctx, &page["legacyServices"])?;
     for event in array(&page["events"])? {
         let seq = integer(&event["receipt"]["remoteSequence"])?;
         if seq <= last || seq > end {

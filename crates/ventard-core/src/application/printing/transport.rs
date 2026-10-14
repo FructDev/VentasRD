@@ -80,7 +80,7 @@ pub fn probe(
         });
     }
     if tx.query_row(
-        "SELECT EXISTS(SELECT 1 FROM native_document_print_attempts_v1 WHERE attempt_id=?1)",
+        "SELECT EXISTS(SELECT 1 FROM native_document_print_attempts_v1 WHERE attempt_id=?1 UNION ALL SELECT 1 FROM legacy_service_print_attempts_v1 WHERE attempt_id=?1)",
         [attempt],
         |r| r.get::<_, bool>(0),
     )? {
@@ -273,7 +273,7 @@ pub fn prepare(
         return Err(invalid());
     }
     let tx = c.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    let stored:Option<(String,String,String,String,Vec<u8>,String)>=tx.query_row("SELECT operation_id,context_key,snapshot_hash,target,wire_bytes,wire_hash FROM native_printer_dispatch_v1 WHERE attempt_id=?1",[attempt],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?))).optional()?;
+    let stored:Option<(String,String,String,String,Vec<u8>,String)>=tx.query_row("SELECT operation_id,context_key,snapshot_hash,target,wire_bytes,wire_hash FROM native_printer_dispatch_v1 WHERE attempt_id=?1 UNION ALL SELECT operation_id,context_key,snapshot_hash,target,wire_bytes,wire_hash FROM legacy_service_printer_dispatch_v1 WHERE attempt_id=?1",[attempt],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?))).optional()?;
     if let Some((old_op, k, s, p, b, h)) = stored {
         if old_op != op || k != context(ctx)? || s != snapshot || hash(&b) != h {
             return Err(invalid());
@@ -288,7 +288,7 @@ pub fn prepare(
         });
     }
     // Old dialog attempts remain terminal/unknown and cannot become a direct send.
-    let old:Option<(String,String)>=tx.query_row("SELECT operation_id,snapshot_hash FROM native_document_print_attempts_v1 WHERE attempt_id=?1",[attempt],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
+    let old:Option<(String,String)>=tx.query_row("SELECT operation_id,snapshot_hash FROM native_document_print_attempts_v1 WHERE attempt_id=?1 UNION ALL SELECT operation_id,snapshot_hash FROM legacy_service_print_attempts_v1 WHERE attempt_id=?1",[attempt],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
     if let Some((a, b)) = old {
         if a != op || b != snapshot {
             return Err(invalid());
@@ -338,7 +338,12 @@ pub fn prepare(
     }
     let h = hash(&bytes);
     tx.execute(
-        "INSERT INTO native_printer_dispatch_v1 VALUES(?1,?2,?3,?4,?5,?6,?7,NULL)",
+        if document && super::document_attempt_table(&tx, op)? == "legacy_service_print_attempts_v1"
+        {
+            "INSERT INTO legacy_service_printer_dispatch_v1 VALUES(?1,?2,?3,?4,?5,?6,?7,NULL)"
+        } else {
+            "INSERT INTO native_printer_dispatch_v1 VALUES(?1,?2,?3,?4,?5,?6,?7,NULL)"
+        },
         (
             attempt,
             op,
@@ -364,7 +369,7 @@ pub fn acknowledge(
     wire_hash: &str,
     receipt: &Value,
 ) -> Result<(), AppError> {
-    let(table,k,h,old):(String,String,String,Option<String>)=c.query_row("SELECT 'DISPATCH',context_key,wire_hash,transport_receipt FROM native_printer_dispatch_v1 WHERE attempt_id=?1 UNION ALL SELECT 'PROBE',context_key,wire_hash,transport_receipt FROM native_printer_probes_v1 WHERE attempt_id=?1",[attempt],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?)))?;
+    let(table,k,h,old):(String,String,String,Option<String>)=c.query_row("SELECT 'DISPATCH',context_key,wire_hash,transport_receipt FROM native_printer_dispatch_v1 WHERE attempt_id=?1 UNION ALL SELECT 'BASELINE',context_key,wire_hash,transport_receipt FROM legacy_service_printer_dispatch_v1 WHERE attempt_id=?1 UNION ALL SELECT 'PROBE',context_key,wire_hash,transport_receipt FROM native_printer_probes_v1 WHERE attempt_id=?1",[attempt],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?)))?;
     if k != context(ctx)? || h != wire_hash {
         return Err(invalid());
     }
@@ -374,6 +379,6 @@ pub fn acknowledge(
         }
         return Ok(());
     }
-    c.execute(if table=="PROBE"{"UPDATE native_printer_probes_v1 SET transport_receipt=?2 WHERE attempt_id=?1 AND transport_receipt IS NULL"}else{"UPDATE native_printer_dispatch_v1 SET transport_receipt=?2 WHERE attempt_id=?1 AND transport_receipt IS NULL"},(attempt,receipt.to_string()))?;
+    c.execute(if table=="PROBE"{"UPDATE native_printer_probes_v1 SET transport_receipt=?2 WHERE attempt_id=?1 AND transport_receipt IS NULL"}else if table=="BASELINE"{"UPDATE legacy_service_printer_dispatch_v1 SET transport_receipt=?2 WHERE attempt_id=?1 AND transport_receipt IS NULL"}else{"UPDATE native_printer_dispatch_v1 SET transport_receipt=?2 WHERE attempt_id=?1 AND transport_receipt IS NULL"},(attempt,receipt.to_string()))?;
     Ok(())
 }

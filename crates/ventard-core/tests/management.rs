@@ -1519,6 +1519,41 @@ fn run_pro(
 ) -> Result<serde_json::Value, ventard_core::application::errors::AppError> {
     management::execute(c, &grant_tier(2, 5, true, Some("pro")), 2000, 2000, 1, req)
 }
+#[test]
+fn adopted_repair_continues_with_original_folio_and_only_collects_remaining_money() {
+    use ventard_core::storage::legacy_services;
+    let mut c = db();
+    repair_fixture(&mut c);
+    let raw = json!({"id":id(700),"negocio_id":id(1),"sucursal_id":id(5),"folio":"REP-0089","estado":"listo","cliente_nombre":"Ana QA","equipo_modelo":"Teléfono QA","problema_reportado":"Pantalla","mano_obra":{"$number":"10"},"total":{"$number":"15"},"abono":{"$number":"4"},"repuestos":[{"producto_id":id(300),"nombre":"Pieza QA","cantidad":{"$number":"1"},"costo":{"$number":"1"},"precio":{"$number":"5"},"desde_inventario":true}],"fecha_creacion":{"$number":"1000"},"fecha_actualizacion":{"$number":"1500"},"patron_clave":"QA-PRIVATE-1234"});
+    let document = legacy_services::project("reparaciones", &raw).unwrap();
+    let hash = ventard_core::domain::canonical::canonicalize(document.to_string().as_bytes())
+        .unwrap()
+        .1;
+    let envelope = json!({"table":"reparaciones","source":raw,"document":document,"receipt":{"protocol":"ventard.service.baseline.receipt.1","status":"BASELINE_ADOPTED","cutoverId":id(799),"tenantId":id(1),"scope":{"type":"BRANCH","branchId":id(5)},"sourceHash":document["legacyBaseline"]["sourceHash"],"documentHash":hash,"legacyReplay":false}});
+    let journal_before = c
+        .query_row("SELECT count(*) FROM operation_journal", [], |r| {
+            r.get::<_, i64>(0)
+        })
+        .unwrap();
+    legacy_services::import(&c, &ctx(), &json!([envelope])).unwrap();
+    assert_eq!(
+        c.query_row("SELECT count(*) FROM operation_journal", [], |r| r
+            .get::<_, i64>(0))
+            .unwrap(),
+        journal_before
+    );
+    let private = ventard_core::application::repair_private::read(&c, &ctx(), &id(700)).unwrap();
+    assert_eq!(private["value"], "QA-PRIVATE-1234");
+    assert_eq!(private["remoteState"], "BASELINE_ADOPTED");
+    let req = repair_action(780, "1", "DELIVER", "TARJETA", "0");
+    let result = run_pro(&mut c, req.clone()).unwrap();
+    assert_eq!(result["document"]["repair"]["folio"], "REP-0089");
+    assert_eq!(result["document"]["amountCents"], "1100");
+    assert_eq!(result["document"]["repair"]["paidCents"], "1500");
+    assert_eq!(result["document"]["stock"], json!([]));
+    assert_eq!(run_pro(&mut c, req).unwrap(), result);
+    assert!(!result.to_string().contains("QA-PRIVATE-1234"));
+}
 fn repair_fixture(c: &mut Connection) {
     run(c, inventory_save(301, "0")).unwrap();
     let rev = inventory_product(c)["stockRevision"]

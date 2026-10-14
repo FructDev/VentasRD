@@ -79,12 +79,19 @@ fn current(c: &Connection, ctx: &CatalogueContext, id: &str) -> Result<Option<Va
         Ok(d)
     })
     .transpose()
+    .and_then(|v| {
+        if v.is_some() {
+            Ok(v)
+        } else {
+            crate::storage::legacy_services::current(c, ctx, "layaway", id)
+        }
+    })
 }
 pub fn read(c: &Connection, ctx: &CatalogueContext) -> Result<Value, AppError> {
     if !sales_sync::operational(c, ctx)? {
         return Err(guard("LEGACY_NOT_VERIFIABLE"));
     }
-    let mut q=c.prepare("SELECT DISTINCT json_extract(document,'$.layaway.id') FROM native_management_records_v1 WHERE tenant_id=?1 AND scope_key=?2 AND kind LIKE 'LAYAWAY_%' LIMIT 10001")?;
+    let mut q=c.prepare(if crate::storage::legacy_services::available(c)? {"SELECT DISTINCT json_extract(document,'$.layaway.id') FROM native_management_records_v1 WHERE tenant_id=?1 AND scope_key=?2 AND kind LIKE 'LAYAWAY_%' UNION SELECT service_id FROM legacy_service_baselines_v1 WHERE tenant_id=?1 AND scope_key=?2 AND kind='layaway' LIMIT 10001"}else{"SELECT DISTINCT json_extract(document,'$.layaway.id') FROM native_management_records_v1 WHERE tenant_id=?1 AND scope_key=?2 AND kind LIKE 'LAYAWAY_%' LIMIT 10001"})?;
     let ids = q
         .query_map((&ctx.tenant_id, sales::scope_key(ctx)?), |r| {
             r.get::<_, String>(0)
@@ -109,7 +116,7 @@ pub fn read(c: &Connection, ctx: &CatalogueContext) -> Result<Value, AppError> {
                 .unwrap_or(0),
         )
     });
-    Ok(json!({"rows":rows,"coverage":"LOCAL_NATIVE_ONLY"}))
+    Ok(json!({"rows":rows,"coverage":"NATIVE_AND_ADOPTED_SERVICE_BASELINES"}))
 }
 fn folio(c: &Connection, ctx: &CatalogueContext, op: &str) -> Result<(String, String), AppError> {
     let old:Option<(String,String)>=c.query_row("SELECT json_extract(CAST(canonical_bytes AS TEXT),'$.payload.document.layaway.folio'),json_extract(CAST(canonical_bytes AS TEXT),'$.payload.document.layaway.folioNumber') FROM operation_journal WHERE operation_id=?1 AND kind='LAYAWAY_CREATE'",[op],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
@@ -599,7 +606,7 @@ pub fn import_capture(
     let d = &v["payload"]["document"];
     let a = &d["layaway"];
     let id = s(&a["id"])?;
-    if current(tx, ctx, id)?.is_some() {
+    if tx.query_row("SELECT EXISTS(SELECT 1 FROM native_management_records_v1 WHERE tenant_id=?1 AND scope_key=?2 AND json_extract(document,'$.layaway.id')=?3)",(&ctx.tenant_id,sales::scope_key(ctx)?,id),|r|r.get::<_,bool>(0))? {
         return Err(invalid());
     }
     let def: Definition = serde_json::from_value(a["definition"].clone()).map_err(|_| invalid())?;
@@ -658,7 +665,20 @@ pub fn import_capture(
     if created > updated || a["updatedAtMs"] != v["originAtUtcMs"] {
         return Err(invalid());
     }
-    let mut paid = 0i128;
+    let baseline = crate::storage::legacy_services::current(tx, ctx, "layaway", id)?;
+    let legacy_paid = if a["legacyBaseline"].is_object() {
+        let original = &baseline.as_ref().ok_or_else(invalid)?["layaway"];
+        if original["legacyBaseline"] != a["legacyBaseline"]
+            || original["folio"] != a["folio"]
+            || original["folioNumber"] != a["folioNumber"]
+        {
+            return Err(invalid());
+        }
+        n(s(&a["legacyBaseline"]["paidCents"])?)?
+    } else {
+        0
+    };
+    let mut paid = legacy_paid as i128;
     let mut seen = HashSet::new();
     let payments = a["payments"].as_array().ok_or_else(invalid)?;
     if payments.len() > 10000 {
@@ -727,19 +747,21 @@ pub fn import_capture(
     {
         return Err(invalid());
     }
-    let number = n(s(&a["folioNumber"])?)?;
-    let folio = s(&a["folio"])?;
-    let prefix = folio
-        .strip_prefix("AP-N")
-        .and_then(|v| v.split_once('-'))
-        .ok_or_else(invalid)?
-        .0;
-    if number == 0
-        || prefix.len() != 32
-        || !prefix.bytes().all(|b| b.is_ascii_hexdigit())
-        || !folio.ends_with(&format!("-{number:03}"))
-    {
-        return Err(invalid());
+    if !a["legacyBaseline"].is_object() {
+        let number = n(s(&a["folioNumber"])?)?;
+        let folio = s(&a["folio"])?;
+        let prefix = folio
+            .strip_prefix("AP-N")
+            .and_then(|v| v.split_once('-'))
+            .ok_or_else(invalid)?
+            .0;
+        if number == 0
+            || prefix.len() != 32
+            || !prefix.bytes().all(|b| b.is_ascii_hexdigit())
+            || !folio.ends_with(&format!("-{number:03}"))
+        {
+            return Err(invalid());
+        }
     }
     let scope = sales::scope_key(ctx)?;
     let origin = scope.split_once('/').ok_or_else(invalid)?.1;
@@ -775,7 +797,7 @@ pub fn import_capture(
 /// Called after every product/serial/current document in the same capture exists.
 pub fn bind_captured_serials(tx: &Transaction<'_>, ctx: &CatalogueContext) -> Result<(), AppError> {
     let sk = sales::scope_key(ctx)?;
-    let mut q=tx.prepare("SELECT document FROM native_management_records_v1 WHERE tenant_id=?1 AND scope_key=?2 AND kind LIKE 'LAYAWAY_%'")?;
+    let mut q=tx.prepare("SELECT document FROM native_management_records_v1 WHERE tenant_id=?1 AND scope_key=?2 AND kind LIKE 'LAYAWAY_%' UNION ALL SELECT json_object('operationId',json_extract(envelope,'$.receipt.cutoverId'),'layaway',json_extract(envelope,'$.document')) FROM legacy_service_baselines_v1 WHERE tenant_id=?1 AND scope_key=?2 AND kind='layaway'")?;
     let docs = q
         .query_map((&ctx.tenant_id, &sk), |r| r.get::<_, String>(0))?
         .collect::<Result<Vec<_>, _>>()?;

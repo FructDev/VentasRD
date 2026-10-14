@@ -103,12 +103,19 @@ fn current(c: &Connection, ctx: &CatalogueContext, id: &str) -> Result<Option<Va
         Ok(d)
     })
     .transpose()
+    .and_then(|v| {
+        if v.is_some() {
+            Ok(v)
+        } else {
+            crate::storage::legacy_services::current(c, ctx, "repair", id)
+        }
+    })
 }
 pub fn read(c: &Connection, ctx: &CatalogueContext) -> Result<Value, AppError> {
     if !sales_sync::operational(c, ctx)? {
         return Err(guard("LEGACY_NOT_VERIFIABLE"));
     }
-    let mut q=c.prepare("SELECT DISTINCT json_extract(document,'$.repair.id') FROM native_management_records_v1 WHERE tenant_id=?1 AND scope_key=?2 AND kind IN('REPAIR_CREATE','REPAIR_EDIT','REPAIR_DISASSEMBLE') LIMIT 10001")?;
+    let mut q=c.prepare(if crate::storage::legacy_services::available(c)? {"SELECT DISTINCT json_extract(document,'$.repair.id') FROM native_management_records_v1 WHERE tenant_id=?1 AND scope_key=?2 AND kind IN('REPAIR_CREATE','REPAIR_EDIT','REPAIR_DISASSEMBLE') UNION SELECT service_id FROM legacy_service_baselines_v1 WHERE tenant_id=?1 AND scope_key=?2 AND kind='repair' LIMIT 10001"}else{"SELECT DISTINCT json_extract(document,'$.repair.id') FROM native_management_records_v1 WHERE tenant_id=?1 AND scope_key=?2 AND kind IN('REPAIR_CREATE','REPAIR_EDIT','REPAIR_DISASSEMBLE') LIMIT 10001"})?;
     let ids = q
         .query_map((&ctx.tenant_id, sales::scope_key(ctx)?), |r| {
             r.get::<_, String>(0)
@@ -135,7 +142,7 @@ pub fn read(c: &Connection, ctx: &CatalogueContext) -> Result<Value, AppError> {
                     .and_then(|s| s.parse::<u64>().ok()),
             )
     });
-    Ok(json!({"rows":rows,"coverage":"LOCAL_NATIVE_ONLY"}))
+    Ok(json!({"rows":rows,"coverage":"NATIVE_AND_ADOPTED_SERVICE_BASELINES"}))
 }
 /// The snapshot already includes past cash/stock in its verified baselines.
 /// Import the current document and its exact receipt, without replaying effects.
@@ -191,7 +198,7 @@ pub fn import_capture(
         || v["operationId"] != *op
         || id != req_id
         || uint(s(&r["revision"])?)? != uint(revision)?.checked_add(1).ok_or_else(invalid)?
-        || current(tx, ctx, id)?.is_some()
+        || tx.query_row("SELECT EXISTS(SELECT 1 FROM native_management_records_v1 WHERE tenant_id=?1 AND scope_key=?2 AND json_extract(document,'$.repair.id')=?3)",(&ctx.tenant_id,sales::scope_key(ctx)?,id),|r|r.get::<_,bool>(0))?
     {
         return Err(invalid());
     }
@@ -239,24 +246,39 @@ pub fn import_capture(
     if created > updated || r["updatedAtMs"] != v["originAtUtcMs"] {
         return Err(invalid());
     }
-    let number = s(&r["folioNumber"])?;
-    let number = n(number)?;
-    if number == 0 {
-        return Err(invalid());
+    let baseline = crate::storage::legacy_services::current(tx, ctx, "repair", id)?;
+    let legacy_paid = if r["legacyBaseline"].is_object() {
+        let original = &baseline.as_ref().ok_or_else(invalid)?["repair"];
+        if original["legacyBaseline"] != r["legacyBaseline"]
+            || original["folio"] != r["folio"]
+            || original["folioNumber"] != r["folioNumber"]
+        {
+            return Err(invalid());
+        }
+        n(s(&r["legacyBaseline"]["paidCents"])?)?
+    } else {
+        0
+    };
+    if !r["legacyBaseline"].is_object() {
+        let number = s(&r["folioNumber"])?;
+        let number = n(number)?;
+        if number == 0 {
+            return Err(invalid());
+        }
+        let ending = format!("-{number:03}");
+        let prefix = s(&r["folio"])?
+            .strip_prefix("REP-N")
+            .and_then(|x| x.strip_suffix(&ending))
+            .ok_or_else(invalid)?;
+        if prefix.len() != 32
+            || !prefix
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        {
+            return Err(invalid());
+        }
     }
-    let ending = format!("-{number:03}");
-    let prefix = s(&r["folio"])?
-        .strip_prefix("REP-N")
-        .and_then(|x| x.strip_suffix(&ending))
-        .ok_or_else(invalid)?;
-    if prefix.len() != 32
-        || !prefix
-            .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-    {
-        return Err(invalid());
-    }
-    let mut paid = 0;
+    let mut paid = legacy_paid;
     let mut seen = HashSet::new();
     let payments = r["payments"].as_array().ok_or_else(invalid)?;
     for p in payments {

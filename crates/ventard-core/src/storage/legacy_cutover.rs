@@ -45,6 +45,8 @@ pub struct Input {
     pub backup_id: String,
     pub confirmation: String,
     pub free_tax: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service_reservations_confirmed: Option<bool>,
 }
 #[derive(Clone, Debug)]
 pub struct Pending {
@@ -154,26 +156,42 @@ pub fn readiness(c: &Connection, ctx: &CatalogueContext, run: &str) -> Result<Va
             blockers.push(json!({"code":"CUTOVER_CLOSE_WEB_CASH","id":row["id"]}))
         }
     }
-    for (table, terminal) in [
-        (
-            "reparaciones",
-            &["entregado", "cancelado", "no_reparado"][..],
-        ),
-        ("apartados", &["completado", "cancelado"][..]),
-    ] {
+    let mut services = vec![];
+    for table in ["reparaciones", "apartados"] {
         for row in selected.get(table).into_iter().flatten() {
             if row["negocio_id"] != ctx.tenant_id {
                 continue;
             }
-            if row["estado"]
-                .as_str()
-                .is_none_or(|s| !terminal.contains(&s))
-            {
-                blockers.push(json!({"code":"CUTOVER_SERVICE_REQUIRES_RECONCILIATION","table":table,"id":row["id"]}))
+            if super::legacy_services::active(table, row) {
+                if super::legacy_services::project(table, row).is_err() {
+                    blockers.push(json!({"code":"CUTOVER_SERVICE_REQUIRES_RECONCILIATION","table":table,"id":row["id"]}));
+                } else {
+                    services.push(json!({"table":table,"id":row["id"],"folio":row["folio"]}));
+                }
             }
         }
     }
+    let mut service_history_warnings = vec![];
     for issue in report["issues"].as_array().ok_or_else(invalid)? {
+        // Current acknowledged aggregates are distinct from unverifiable past
+        // payment details. Preserve these warnings; never reconstruct cash.
+        let service = services
+            .iter()
+            .any(|s| s["table"] == issue["table"] && s["id"] == issue["id"]);
+        if service
+            && matches!(
+                issue["code"].as_str(),
+                Some(
+                    "PAYMENT_HISTORY_MISSING"
+                        | "PAYMENT_SUM_MISMATCH"
+                        | "PAYMENT_UNKNOWN"
+                        | "CASH_REFERENCE_MISSING"
+                )
+            )
+        {
+            service_history_warnings.push(issue.clone());
+            continue;
+        }
         // A shared browser may preserve another explicitly identified business.
         // Keep its raw copy, but never adopt it into the selected tenant.
         let known_foreign = issue["code"] == "TENANT_UNPROVEN"
@@ -198,7 +216,7 @@ pub fn readiness(c: &Connection, ctx: &CatalogueContext, run: &str) -> Result<Va
         }
     }
     Ok(
-        json!({"runId":run,"revision":report["revision"],"canPrepare":blockers.is_empty(),"blockers":blockers,"coverage":"CONVERGED_CLOSED_WEB_BASELINE","legacyReplay":false}),
+        json!({"runId":run,"revision":report["revision"],"canPrepare":blockers.is_empty(),"blockers":blockers,"services":services,"serviceHistoryWarnings":service_history_warnings,"coverage":"CONVERGED_CLOSED_WEB_BASELINE","legacyReplay":false}),
     )
 }
 pub fn load(c: &Connection, ctx: &CatalogueContext, id: &str) -> Result<Pending, Error> {
@@ -293,6 +311,11 @@ pub fn prepare(
     if ready["canPrepare"] != true || ready["revision"] != input.revision {
         return Err(Error("CUTOVER_REVIEW_REQUIRED"));
     }
+    if ready["services"].as_array().is_some_and(|s| !s.is_empty())
+        && input.service_reservations_confirmed != Some(true)
+    {
+        return Err(Error("CUTOVER_SERVICE_RESERVATIONS_REQUIRED"));
+    }
     let raw:Option<String>=tx.query_row("SELECT result FROM native_backup_jobs_v1 WHERE operation_id=?1 AND tenant_id=?2 AND installation_id=?3 AND actor_id=?4 AND state='VERIFIED'",(&input.backup_id,&ctx.tenant_id,&ctx.installation_id,&ctx.actor_id),|r|r.get(0)).optional()?.flatten();
     let backup: Value = serde_json::from_str(&raw.ok_or(Error("CUTOVER_BACKUP_REQUIRED"))?)
         .map_err(|_| invalid())?;
@@ -317,7 +340,10 @@ pub fn prepare(
         return Err(Error("CUTOVER_BACKUP_REQUIRED"));
     }
     let report = transition::report(&tx, ctx, &input.run_id)?;
-    let plan = json!({"protocol":"ventard.web.cutover.1","cutoverId":input.cutover_id,"runId":input.run_id,"revision":input.revision,"context":ctx,"backupId":input.backup_id,"backupHash":manifest["databaseHash"],"runHash":fingerprint,"confirmation":input.confirmation,"freeTax":input.free_tax,"sources":report["sources"],"tables":tables(&tx,ctx,&input.run_id)?});
+    let mut plan = json!({"protocol":"ventard.web.cutover.1","cutoverId":input.cutover_id,"runId":input.run_id,"revision":input.revision,"context":ctx,"backupId":input.backup_id,"backupHash":manifest["databaseHash"],"runHash":fingerprint,"confirmation":input.confirmation,"freeTax":input.free_tax,"sources":report["sources"],"tables":tables(&tx,ctx,&input.run_id)?});
+    if let Some(confirmed) = input.service_reservations_confirmed {
+        plan["serviceReservationsConfirmed"] = json!(confirmed);
+    }
     let (intent, hash) = canonical(&plan)?;
     tx.execute(
         "INSERT INTO legacy_cutovers_v1 VALUES(?1,?2,?3,?4,?5,?6,'UNKNOWN',NULL,?7)",

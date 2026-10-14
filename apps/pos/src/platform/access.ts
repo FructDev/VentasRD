@@ -217,6 +217,9 @@ const messages: Record<string, string> = {
   CUTOVER_COPIES_NOT_CONVERGED:'Hay datos elegidos que todavía difieren de la nube. Completa su conciliación; no se volverán a enviar ventas antiguas automáticamente.',
   CUTOVER_SOURCE_CHANGED:'La nube cambió después de la captura. Captura y concilia de nuevo antes de hacer el corte.',
   CUTOVER_CLOSE_WEB_CASH:'Cierra la caja en la versión web y captura su estado final antes del corte. Se conserva su historia y arqueo.',
+  CUTOVER_SERVICE_CAPTURE_TOO_LARGE:'Los servicios activos superan 512 KiB de incorporación operativa. El corte no se aplicó; conserva la copia para revisión.',
+  CUTOVER_SERVICE_BASELINE_CONFLICT:'Un servicio ya tiene una base o movimientos nativos diferentes. Se conserva y requiere revisión antes de otro corte.',
+  CUTOVER_SERVICE_RESERVATIONS_REQUIRED:'Confirma los abonos anteriores y las reservas físicas de reparaciones y apartados antes del corte.',
   CUTOVER_SERVICE_REQUIRES_RECONCILIATION:'Hay reparaciones o apartados activos sin incorporación operativa verificada. Se conservan; su continuación todavía requiere conciliación.',
   CUTOVER_CREDIT_UNVERIFIABLE:'La deuda contiene importes o referencias que impiden adoptar un saldo seguro.',
   CUTOVER_ACTIVE_BALANCE_CONFLICT:'El saldo nativo existente difiere de la historia web. No se reemplazó el saldo ni el trabajo posterior.',
@@ -368,9 +371,9 @@ export const backupPort={
  reportExport:(kind:import('./management').ExportKind,fromMs:string,toMs:string)=>call<import('./management').ReportBundle>('native_backup',{command:{action:'REPORT_EXPORT',kind,fromMs,toMs}}),
 };
 export interface TransitionReport {runId:string;revision:number;historyPublished:boolean;createdAtMs:string;sources:{id:string;kind:'BROWSER'|'CLOUD';sha256:string}[];counts:Record<string,number>;conflicts:number;issues:{code:string;table:string;id:string;field:string}[];sales:{totalCents:string|null;byMethodCents:Record<string,string>};debts:{customerId:string;name:string|null;balanceCents:string|null;observedBalanceCents:string;coverage:string}[];cash:{id:string;state:string|null;openingCents:string|null;movementsCents:string;expectedCents:string|null;observedExpectedCents:string|null;coverage:string}[];payments:{id:string;table:string;documentId:string;montoCents:string;method:string|null;cajaId:string|null}[];cloudCoverage:string;effectStatus:'UNKNOWN_LEGACY';canActivate:false}
-export interface CutoverInput {cutoverId:string;runId:string;revision:number;backupId:string;confirmation:'WEB_WRITERS_CLOSED_BALANCES_REVIEWED';freeTax:'0'|'0.18'}
+export interface CutoverInput {cutoverId:string;runId:string;revision:number;backupId:string;confirmation:'WEB_WRITERS_CLOSED_BALANCES_REVIEWED';freeTax:'0'|'0.18';serviceReservationsConfirmed?:boolean}
 export interface CutoverStatus {cutoverId:string;runId:string;backupId:string;state:'UNKNOWN'|'ADOPTED'|'ACTIVE'|'ABANDONED'}
-export interface CutoverView {runId:string;revision:number;canPrepare:boolean;blockers:{code:string;id?:string;table?:string}[];pending:CutoverStatus|null;backups:string[];coverage:string;legacyReplay:false}
+export interface CutoverView {serviceHistoryWarnings?:{code:string;id:string;table:string}[];services?:{table:string;id:string;folio:string}[];runId:string;revision:number;canPrepare:boolean;blockers:{code:string;id?:string;table?:string}[];pending:CutoverStatus|null;backups:string[];coverage:string;legacyReplay:false}
 // A refresh hint carries no authority; the router rereads the native status.
 export const nativeAccessChanged = () => window.dispatchEvent(new Event('ventard:access-changed'));
 export interface TransitionRow {id:string;variants:{variantId:string;sourceIds:string[];row:Record<string,unknown>}[];selected:Record<string,unknown>|null;selectedVariant:string|null;excluded?:boolean;document?:{state:'CONFLICT'|'CONSENSUS'|'CHOSEN';chosenSource:string|null;variants:{sourceId:string;sale:Record<string,unknown>;details:Record<string,unknown>[];charges:Record<string,unknown>[];inventory:Record<string,unknown>[];journals:Record<string,unknown>[]}[]}}

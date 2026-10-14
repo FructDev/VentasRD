@@ -4,7 +4,7 @@ import type {LayawayTicket} from '../../platform/management';
 export function NativeTicketApartado({ticket}:{ticket:LayawayTicket}){
  const p=ticket.document.layaway,b=ticket.document.business;
  const modo=p.state==='completado'?'entrega':p.payments.at(-1)?.operationId===ticket.operationId&&p.revision!=='1'?'abono':'contrato';
- const a={folio:p.folio,cliente_nombre:p.definition.customerName,cliente_telefono:p.definition.phone,items:p.definition.items.map(i=>({nombre:i.name,cantidad:i.quantity,precio_unitario:i.priceCents,serial_numero:i.serial})),total:p.totalCents,abonado:p.paidCents,abonos:p.payments.map(p=>({monto:p.amountCents,metodo:p.method.toLowerCase(),fecha:Number(p.dateMs)})),fecha_completado:p.completedAtMs?Number(p.completedAtMs):null};
+ const a={folio:p.folio,cliente_nombre:p.definition.customerName,cliente_telefono:p.definition.phone,items:p.definition.items.map(i=>({nombre:i.name,cantidad:i.quantity,precio_unitario:i.priceCents,serial_numero:i.serial})),total:p.totalCents,abonado:p.paidCents,abonos:[...(p.legacyBaseline?.payments??[]).map(p=>({monto:p.amountCents,metodo:p.method??'no guardado',fecha:p.dateMs===null?null:Number(p.dateMs)})),...p.payments.map(p=>({monto:p.amountCents,metodo:p.method.toLowerCase(),fecha:Number(p.dateMs)}))],fecha_completado:p.completedAtMs?Number(p.completedAtMs):null};
  const nombreNegocio=b?.name??'Datos del negocio no guardados',rnc=b?.rnc,direccion=b?.address,telefono=b?.phone;
  const TITULO={contrato:'Comprobante de apartado',abono:'Recibo de abono',entrega:'Entrega de apartado'};
  const layout=ticket.printLayout;const impresion={anchoPapel:layout?.paperWidth??'80mm'},es58=impresion.anchoPapel==='58mm',claseTicket=[layout?.fontSize==='grande'?'ticket-grande':'',layout?.density==='compacta'?'ticket-compacto':''].join(' ');
@@ -71,8 +71,8 @@ export function NativeTicketApartado({ticket}:{ticket:LayawayTicket}){
                         <tbody>
                             {a.abonos.map((ab, i) => (
                                 <tr key={i}>
-                                    <td className="py-0.5">{new Date(ab.fecha).toLocaleDateString('es-DO')} ({ab.metodo})</td>
-                                    <td className="py-0.5 text-right">RD$ {fmtDOP(ab.monto)}</td>
+                                    <td className="py-0.5">{ab.fecha===null?'Fecha no guardada':new Date(ab.fecha).toLocaleDateString('es-DO')} ({ab.metodo})</td>
+                                    <td className="py-0.5 text-right">RD$ {ab.monto===null?'No guardado':fmtDOP(ab.monto)}</td>
                                 </tr>
                             ))}
                         </tbody>

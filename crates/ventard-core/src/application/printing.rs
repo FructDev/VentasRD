@@ -89,11 +89,43 @@ pub fn save_layout(
 fn invalid() -> AppError {
     AppError::Protocol(ProtocolError::MalformedPayload)
 }
+pub(crate) fn document_attempt_table(c: &Connection, op: &str) -> Result<&'static str, AppError> {
+    if crate::storage::legacy_services::available(c)? && c.query_row("SELECT EXISTS(SELECT 1 FROM legacy_service_baselines_v1 WHERE service_id=?1) AND NOT EXISTS(SELECT 1 FROM operation_journal WHERE operation_id=?1)",[op],|r|r.get::<_,bool>(0))? {Ok("legacy_service_print_attempts_v1")} else {Ok("native_document_print_attempts_v1")}
+}
+fn baseline_ticket(
+    c: &Connection,
+    ctx: &CatalogueContext,
+    kind: &str,
+    op: &str,
+) -> Result<Value, AppError> {
+    let d = crate::storage::legacy_services::current(c, ctx, kind, op)?.ok_or_else(invalid)?;
+    let mut ticket = json!({"version":if kind=="repair"{"ventard.repair.snapshot.1"}else{"ventard.layaway.snapshot.1"},"operationId":op,"tenantId":ctx.tenant_id,"scope":{"type":ctx.scope_type,"branchId":ctx.branch_id},"originAtUtcMs":d[kind]["updatedAtMs"],"document":d,"source":"ADOPTED_LEGACY_BASELINE"});
+    let (_, hash) = crate::domain::canonical::canonicalize(ticket.to_string().as_bytes())
+        .map_err(|_| invalid())?;
+    ticket["printSnapshotHash"] = json!(hash);
+    ticket["printLayout"] = json!(layout(c, ctx)?);
+    ticket["printTarget"] = json!(transport::profile(c, ctx)?);
+    if let Some(attempt) = last_attempt(c, op)? {
+        ticket["printAttempt"] = attempt;
+    }
+    Ok(ticket)
+}
 fn last_attempt(c: &Connection, op: &str) -> Result<Option<Value>, AppError> {
-    Ok(c.query_row("SELECT attempt_id,state FROM native_document_print_attempts_v1 WHERE operation_id=?1 ORDER BY rowid DESC LIMIT 1",[op],|r|Ok(json!({"attemptId":r.get::<_,String>(0)?,"state":r.get::<_,String>(1)?}))).optional()?)
+    Ok(c.query_row(
+        &format!(
+            "SELECT attempt_id,state FROM {} WHERE operation_id=?1 ORDER BY rowid DESC LIMIT 1",
+            document_attempt_table(c, op)?
+        ),
+        [op],
+        |r| Ok(json!({"attemptId":r.get::<_,String>(0)?,"state":r.get::<_,String>(1)?})),
+    )
+    .optional()?)
 }
 pub fn repair_ticket(c: &Connection, ctx: &CatalogueContext, op: &str) -> Result<Value, AppError> {
     let row:Option<(Vec<u8>,String,String)>=c.query_row("SELECT j.canonical_bytes,j.hash,r.document FROM native_management_records_v1 r JOIN operation_journal j ON j.operation_id=r.operation_id WHERE r.operation_id=?1 AND r.tenant_id=?2 AND r.scope_key=?3 AND r.kind IN('REPAIR_CREATE','REPAIR_EDIT','REPAIR_DISASSEMBLE') AND j.local_state='COMMITTED'",(op,&ctx.tenant_id,sales::scope_key(ctx)?),|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?;
+    if row.is_none() {
+        return baseline_ticket(c, ctx, "repair", op);
+    }
     let (raw, hash, document) = row.ok_or_else(invalid)?;
     let (canonical, h) = crate::domain::canonical::canonicalize(&raw).map_err(|_| invalid())?;
     let v: Value = serde_json::from_slice(&raw).map_err(|_| invalid())?;
@@ -122,6 +154,9 @@ pub fn repair_ticket(c: &Connection, ctx: &CatalogueContext, op: &str) -> Result
 }
 pub fn layaway_ticket(c: &Connection, ctx: &CatalogueContext, op: &str) -> Result<Value, AppError> {
     let row:Option<(Vec<u8>,String,String)>=c.query_row("SELECT j.canonical_bytes,j.hash,r.document FROM native_management_records_v1 r JOIN operation_journal j ON j.operation_id=r.operation_id WHERE r.operation_id=?1 AND r.tenant_id=?2 AND r.scope_key=?3 AND r.kind IN('LAYAWAY_CREATE','LAYAWAY_PAYMENT','LAYAWAY_COMPLETE','LAYAWAY_CANCEL') AND j.local_state='COMMITTED'",(op,&ctx.tenant_id,sales::scope_key(ctx)?),|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?;
+    if row.is_none() {
+        return baseline_ticket(c, ctx, "layaway", op);
+    }
     let (raw, hash, document) = row.ok_or_else(invalid)?;
     let (canonical, h) = crate::domain::canonical::canonicalize(&raw).map_err(|_| invalid())?;
     let v: Value = serde_json::from_slice(&raw).map_err(|_| invalid())?;
@@ -185,7 +220,13 @@ pub(crate) fn management_ticket(
     ctx: &CatalogueContext,
     op: &str,
 ) -> Result<Value, AppError> {
-    let kind:String=c.query_row("SELECT kind FROM native_management_records_v1 WHERE operation_id=?1 AND tenant_id=?2 AND scope_key=?3",(op,&ctx.tenant_id,sales::scope_key(ctx)?),|r|r.get(0))?;
+    let kind:Option<String>=c.query_row("SELECT kind FROM native_management_records_v1 WHERE operation_id=?1 AND tenant_id=?2 AND scope_key=?3",(op,&ctx.tenant_id,sales::scope_key(ctx)?),|r|r.get(0)).optional()?;
+    let Some(kind) = kind else {
+        if crate::storage::legacy_services::current(c, ctx, "repair", op)?.is_some() {
+            return baseline_ticket(c, ctx, "repair", op);
+        }
+        return baseline_ticket(c, ctx, "layaway", op);
+    };
     if kind == "WARRANTY_PATCH" {
         warranty_ticket(c, ctx, op)
     } else if super::layaways::supports(&kind) {
@@ -273,7 +314,7 @@ pub(crate) fn request_document_in_transaction(
     hash: &str,
     attempt: &str,
 ) -> Result<bool, AppError> {
-    let old:Option<(String,String)>=tx.query_row("SELECT operation_id,snapshot_hash FROM native_document_print_attempts_v1 WHERE attempt_id=?1",[attempt],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
+    let old:Option<(String,String)>=tx.query_row("SELECT operation_id,snapshot_hash FROM native_document_print_attempts_v1 WHERE attempt_id=?1 UNION ALL SELECT operation_id,snapshot_hash FROM legacy_service_print_attempts_v1 WHERE attempt_id=?1",[attempt],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
     if let Some((stored, h)) = old {
         if stored != op || h != hash {
             return Err(AppError::Protocol(ProtocolError::OperationIdConflict));
@@ -281,7 +322,10 @@ pub(crate) fn request_document_in_transaction(
         return Ok(false);
     }
     tx.execute(
-        "INSERT INTO native_document_print_attempts_v1 VALUES(?1,?2,?3,'UNKNOWN')",
+        &format!(
+            "INSERT INTO {} VALUES(?1,?2,?3,'UNKNOWN')",
+            document_attempt_table(tx, op)?
+        ),
         (attempt, op, hash),
     )?;
     Ok(true)
@@ -293,7 +337,13 @@ pub fn failed_cut(
     attempt: &str,
 ) -> Result<(), AppError> {
     management_ticket(c, ctx, op)?;
-    c.execute("UPDATE native_document_print_attempts_v1 SET state='FAILED' WHERE attempt_id=?1 AND operation_id=?2",(attempt,op))?;
+    c.execute(
+        &format!(
+            "UPDATE {} SET state='FAILED' WHERE attempt_id=?1 AND operation_id=?2",
+            document_attempt_table(c, op)?
+        ),
+        (attempt, op),
+    )?;
     Ok(())
 }
 pub fn cut_status(
@@ -303,7 +353,14 @@ pub fn cut_status(
     attempt: &str,
 ) -> Result<String, AppError> {
     management_ticket(c, ctx, op)?;
-    Ok(c.query_row("SELECT state FROM native_document_print_attempts_v1 WHERE attempt_id=?1 AND operation_id=?2",(attempt,op),|r|r.get(0))?)
+    Ok(c.query_row(
+        &format!(
+            "SELECT state FROM {} WHERE attempt_id=?1 AND operation_id=?2",
+            document_attempt_table(c, op)?
+        ),
+        (attempt, op),
+        |r| r.get(0),
+    )?)
 }
 pub fn request(
     c: &mut Connection,

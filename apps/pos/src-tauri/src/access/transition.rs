@@ -115,6 +115,20 @@ impl AccessState {
                     Some("CUTOVER_SERVICE_REQUIRES_RECONCILIATION") => {
                         "CUTOVER_SERVICE_REQUIRES_RECONCILIATION"
                     }
+                    Some("CUTOVER_SERVICE_RESERVATIONS_REQUIRED") => {
+                        "CUTOVER_SERVICE_RESERVATIONS_REQUIRED"
+                    }
+                    Some("CUTOVER_SERVICE_CAPTURE_TOO_LARGE") => {
+                        "CUTOVER_SERVICE_CAPTURE_TOO_LARGE"
+                    }
+                    Some("CUTOVER_SERVICE_BASELINE_CONFLICT") => {
+                        "CUTOVER_SERVICE_BASELINE_CONFLICT"
+                    }
+                    Some(
+                        "NATIVE_SERVICE_PART_UNSUPPORTED"
+                        | "NATIVE_SERIAL_SOURCE_UNVERIFIABLE"
+                        | "NATIVE_SERIAL_CONFLICT",
+                    ) => "CUTOVER_SERVICE_REQUIRES_RECONCILIATION",
                     Some("CUTOVER_CREDIT_UNVERIFIABLE") => "CUTOVER_CREDIT_UNVERIFIABLE",
                     Some("CUTOVER_ACTIVE_BALANCE_CONFLICT") => "CUTOVER_ACTIVE_BALANCE_CONFLICT",
                     Some("CUTOVER_ID_CONFLICT") => "CUTOVER_ID_CONFLICT",
@@ -357,6 +371,7 @@ mod tests {
                     backup_id: TENANTS[0].into(),
                     confirmation: "WEB_WRITERS_CLOSED_BALANCES_REVIEWED".into(),
                     free_tax: "0.18".into(),
+                    service_reservations_confirmed: None,
                 },
             },
             backup::Action::TransitionCapture {

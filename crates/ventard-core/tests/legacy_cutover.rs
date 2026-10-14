@@ -71,6 +71,7 @@ fn input() -> cut::Input {
         backup_id: "96000016-0000-4000-8000-000000000004".into(),
         confirmation: "WEB_WRITERS_CLOSED_BALANCES_REVIEWED".into(),
         free_tax: "0.18".into(),
+        service_reservations_confirmed: None,
     }
 }
 fn sources(w: &mut VaultWriter, data: Value) {
@@ -226,6 +227,36 @@ fn readiness_rejects_open_cash_and_keeps_services_without_inventing_authority() 
         .iter()
         .any(|b| b["code"] == "CUTOVER_CLOSE_WEB_CASH"));
     assert_eq!(r["canPrepare"], false);
+}
+#[test]
+fn active_service_with_missing_old_payment_details_requires_explicit_baseline_confirmation() {
+    let (dir, mut w) = create();
+    let ctx = context();
+    sources(
+        &mut w,
+        json!({"apartados":[{"id":"96000016-0000-4000-8000-000000000040","negocio_id":ctx.tenant_id,"sucursal_id":null,"folio":"AP-042","estado":"activo","cliente_nombre":"Ana","items":[{"producto_id":"96000016-0000-4000-8000-000000000041","nombre":"Equipo","cantidad":{"$number":"1"},"precio_unitario":{"$number":"25"}}],"total":{"$number":"25"},"abonado":{"$number":"5"},"fecha_creacion":{"$number":"1000"},"fecha_actualizacion":{"$number":"2000"}}]}),
+    );
+    let r = cut::readiness(w.connection(), &ctx, &input().run_id).unwrap();
+    assert_eq!(r["canPrepare"], true);
+    assert_eq!(r["services"].as_array().unwrap().len(), 1);
+    let mut i = input();
+    verified_backup(&mut w, &dir, &ctx, &i);
+    assert_eq!(
+        cut::prepare(w.connection(), &ctx, &i, "3000")
+            .unwrap_err()
+            .code(),
+        "CUTOVER_SERVICE_RESERVATIONS_REQUIRED"
+    );
+    i.service_reservations_confirmed = Some(true);
+    let pending = cut::prepare(w.connection(), &ctx, &i, "3000").unwrap();
+    let plan: Value = serde_json::from_str(&pending.intent).unwrap();
+    assert_eq!(plan["serviceReservationsConfirmed"], true);
+    assert_eq!(
+        w.connection()
+            .query_row("SELECT count(*) FROM payments", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
 }
 #[test]
 fn abandoned_attempt_remains_a_tombstone_and_cannot_become_active() {

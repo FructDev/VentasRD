@@ -43,7 +43,19 @@ fn credential(value: &str) -> Result<(), AppError> {
 }
 pub fn read(c: &Connection, ctx: &CatalogueContext, id: &str) -> Result<Value, AppError> {
     EntityId::parse(id).map_err(|_| invalid())?;
-    Ok(c.query_row("SELECT credential,operation_id,remote_state FROM native_repair_private_values_v1 WHERE repair_id=?1 AND tenant_id=?2 AND scope_key=?3",(id,&ctx.tenant_id,sales::scope_key(ctx)?),|r|Ok(json!({"value":r.get::<_,String>(0)?,"baseOperationId":r.get::<_,String>(1)?,"remoteState":r.get::<_,String>(2)?}))).optional()?.unwrap_or(json!({"value":null,"baseOperationId":null,"remoteState":"NOT_CAPTURED"})))
+    let current=c.query_row("SELECT credential,operation_id,remote_state FROM native_repair_private_values_v1 WHERE repair_id=?1 AND tenant_id=?2 AND scope_key=?3",(id,&ctx.tenant_id,sales::scope_key(ctx)?),|r|Ok(json!({"value":r.get::<_,String>(0)?,"baseOperationId":r.get::<_,String>(1)?,"remoteState":r.get::<_,String>(2)?}))).optional()?;
+    if let Some(current) = current {
+        return Ok(current);
+    }
+    if let Some(source) = crate::storage::legacy_services::source(c, ctx, "repair", id)? {
+        if let Some(value) = source["patron_clave"].as_str() {
+            credential(value)?;
+            return Ok(
+                json!({"value":value,"baseOperationId":null,"remoteState":"BASELINE_ADOPTED"}),
+            );
+        }
+    }
+    Ok(json!({"value":null,"baseOperationId":null,"remoteState":"NOT_CAPTURED"}))
 }
 pub(crate) fn stage(
     c: &Connection,
