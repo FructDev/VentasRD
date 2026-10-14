@@ -6,6 +6,7 @@ const tenant='96000000-0000-4000-8000-000000000001',id=n=>'96200000-0000-4000-80
 const canon=v=>v===null||typeof v!=='object'?JSON.stringify(v):Array.isArray(v)?'['+v.map(canon).join(',')+']':'{'+Object.keys(v).sort().map(k=>JSON.stringify(k)+':'+canon(v[k])).join(',')+'}';
 const sha=s=>createHash('sha256').update(s).digest('hex');
 const migration='20261014004611_native_web_cutover_staging_v1.sql';
+export {complete as cutoverSetup,plan as cutoverPlan,submit as cutoverSubmit,ctx as cutoverContext};
 async function complete(){const db=await setup();await db.exec('reset role');
  for(const t of ['apartados','cajas','cortes_caja','devoluciones','gastos','movimientos_stock','reparaciones','venta_detalles','ventas'])await db.exec(`create table public.${t}(id uuid primary key,negocio_id uuid,sucursal_id uuid,estado text)`);
  await db.exec("alter table transacciones_fiado add column sucursal_id uuid;insert into transacciones_fiado values('"+id(301)+"','"+tenant+"','"+id(30)+"','cargo',12.34,'"+id(4)+"');");

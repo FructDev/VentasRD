@@ -1,6 +1,7 @@
 import {test} from 'node:test';import assert from 'node:assert/strict';import {readFile,writeFile} from 'node:fs/promises';
 import {inventorySetup,managementCommand,submitManagement,context,rpc,hash,canon,id,product,tenant,actor,installation,device,branch} from './sales-server.test.mjs';
 const migration='20261014023547_native_legacy_service_baselines_staging_v1.sql';
+export {setup as legacyServicesSetup,plan as legacyServicesPlan,sourceWrite as legacySourceWrite};
 async function admin(db,sql,args=[]){await db.exec('reset role');try{return(await db.query(sql,args)).rows}finally{await db.exec('set role authenticated')}}
 async function setup(){const db=await inventorySetup();await db.exec('reset role');
  for(const name of ['20261012123311_native_returns_staging_v1.sql','20261012150846_native_service_plan_staging_v1.sql','20261012153049_native_repairs_staging_v1.sql','20261012201138_native_layaways_staging_v1.sql','20261012222616_native_layaway_serial_state_compat_v1.sql'])await db.exec(await readFile(new URL('../../supabase/migrations/'+name,import.meta.url),'utf8'));

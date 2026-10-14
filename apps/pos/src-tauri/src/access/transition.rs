@@ -112,6 +112,9 @@ impl AccessState {
                     Some("WEB_OBSERVATION_TOO_LARGE") => "TRANSITION_TOO_LARGE",
                     Some("CUTOVER_SOURCE_CHANGED") => "CUTOVER_SOURCE_CHANGED",
                     Some("CUTOVER_CLOSE_WEB_CASH") => "CUTOVER_CLOSE_WEB_CASH",
+                    Some("CUTOVER_CASH_HISTORY_CONFIRMATION_REQUIRED") => {
+                        "CUTOVER_CASH_HISTORY_CONFIRMATION_REQUIRED"
+                    }
                     Some("CUTOVER_SERVICE_REQUIRES_RECONCILIATION") => {
                         "CUTOVER_SERVICE_REQUIRES_RECONCILIATION"
                     }

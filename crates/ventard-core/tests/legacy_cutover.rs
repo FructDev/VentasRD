@@ -72,6 +72,7 @@ fn input() -> cut::Input {
         confirmation: "WEB_WRITERS_CLOSED_BALANCES_REVIEWED".into(),
         free_tax: "0.18".into(),
         service_reservations_confirmed: None,
+        legacy_cash_history_confirmed: None,
     }
 }
 fn sources(w: &mut VaultWriter, data: Value) {
@@ -227,6 +228,52 @@ fn readiness_rejects_open_cash_and_keeps_services_without_inventing_authority() 
         .iter()
         .any(|b| b["code"] == "CUTOVER_CLOSE_WEB_CASH"));
     assert_eq!(r["canPrepare"], false);
+}
+#[test]
+fn unlinked_historical_cash_requires_frozen_explicit_archive_confirmation_without_money_replay() {
+    let (dir, mut w) = create();
+    let ctx = context();
+    sources(
+        &mut w,
+        json!({"ventas":[{"id":"old-unlinked-sale","negocio_id":ctx.tenant_id,"sucursal_id":null,"total":{"$number":"10"},"metodo_pago":"efectivo","fecha":{"$number":"1000"},"caja_id":null}],"venta_detalles":[{"id":"old-free-line","negocio_id":ctx.tenant_id,"sucursal_id":null,"venta_id":"old-unlinked-sale","producto_id":null,"producto_nombre":"Libre QA","cantidad":{"$number":"1"},"precio_unitario":{"$number":"10"},"subtotal":{"$number":"10"}}]}),
+    );
+    let ready = cut::readiness(w.connection(), &ctx, &input().run_id).unwrap();
+    assert_eq!(
+        ready["legacyCashHistoryWarnings"].as_array().unwrap().len(),
+        1
+    );
+    assert_eq!(ready["canPrepare"], true);
+    let mut i = input();
+    verified_backup(&mut w, &dir, &ctx, &i);
+    assert_eq!(
+        cut::prepare(w.connection(), &ctx, &i, "3000")
+            .unwrap_err()
+            .code(),
+        "CUTOVER_CASH_HISTORY_CONFIRMATION_REQUIRED"
+    );
+    i.legacy_cash_history_confirmed = Some(true);
+    let prepared = cut::prepare(w.connection(), &ctx, &i, "3000").unwrap();
+    let frozen: Value = serde_json::from_str(&prepared.intent).unwrap();
+    assert_eq!(frozen["legacyCashHistoryConfirmed"], true);
+    assert_eq!(
+        transition::report(w.connection(), &ctx, &i.run_id).unwrap()["effectStatus"],
+        "UNKNOWN_LEGACY"
+    );
+    for table in ["outbox", "sale_cash_entries_v1", "inventory_movements"] {
+        assert_eq!(
+            w.connection()
+                .query_row::<i64, _, _>(&format!("SELECT count(*) FROM {table}"), [], |r| r.get(0))
+                .unwrap(),
+            0
+        );
+    }
+    i.legacy_cash_history_confirmed = Some(false);
+    assert_eq!(
+        cut::prepare(w.connection(), &ctx, &i, "3000")
+            .unwrap_err()
+            .code(),
+        "CUTOVER_ID_CONFLICT"
+    );
 }
 #[test]
 fn active_service_with_missing_old_payment_details_requires_explicit_baseline_confirmation() {

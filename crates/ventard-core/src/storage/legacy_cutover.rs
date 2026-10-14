@@ -47,6 +47,8 @@ pub struct Input {
     pub free_tax: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub service_reservations_confirmed: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub legacy_cash_history_confirmed: Option<bool>,
 }
 #[derive(Clone, Debug)]
 pub struct Pending {
@@ -172,7 +174,14 @@ pub fn readiness(c: &Connection, ctx: &CatalogueContext, run: &str) -> Result<Va
         }
     }
     let mut service_history_warnings = vec![];
+    let mut legacy_cash_history_warnings = vec![];
     for issue in report["issues"].as_array().ok_or_else(invalid)? {
+        if issue["code"] == "CASH_LINK_UNKNOWN" && issue["table"] == "ventas" {
+            // These rows stay UNKNOWN_LEGACY in the published history. The
+            // closed cloud baseline, not this missing link, governs new cash.
+            legacy_cash_history_warnings.push(issue.clone());
+            continue;
+        }
         // Current acknowledged aggregates are distinct from unverifiable past
         // payment details. Preserve these warnings; never reconstruct cash.
         let service = services
@@ -216,7 +225,7 @@ pub fn readiness(c: &Connection, ctx: &CatalogueContext, run: &str) -> Result<Va
         }
     }
     Ok(
-        json!({"runId":run,"revision":report["revision"],"canPrepare":blockers.is_empty(),"blockers":blockers,"services":services,"serviceHistoryWarnings":service_history_warnings,"coverage":"CONVERGED_CLOSED_WEB_BASELINE","legacyReplay":false}),
+        json!({"runId":run,"revision":report["revision"],"canPrepare":blockers.is_empty(),"blockers":blockers,"services":services,"serviceHistoryWarnings":service_history_warnings,"legacyCashHistoryWarnings":legacy_cash_history_warnings,"coverage":"CONVERGED_CLOSED_WEB_BASELINE","legacyReplay":false}),
     )
 }
 pub fn load(c: &Connection, ctx: &CatalogueContext, id: &str) -> Result<Pending, Error> {
@@ -316,6 +325,13 @@ pub fn prepare(
     {
         return Err(Error("CUTOVER_SERVICE_RESERVATIONS_REQUIRED"));
     }
+    if ready["legacyCashHistoryWarnings"]
+        .as_array()
+        .is_some_and(|v| !v.is_empty())
+        && input.legacy_cash_history_confirmed != Some(true)
+    {
+        return Err(Error("CUTOVER_CASH_HISTORY_CONFIRMATION_REQUIRED"));
+    }
     let raw:Option<String>=tx.query_row("SELECT result FROM native_backup_jobs_v1 WHERE operation_id=?1 AND tenant_id=?2 AND installation_id=?3 AND actor_id=?4 AND state='VERIFIED'",(&input.backup_id,&ctx.tenant_id,&ctx.installation_id,&ctx.actor_id),|r|r.get(0)).optional()?.flatten();
     let backup: Value = serde_json::from_str(&raw.ok_or(Error("CUTOVER_BACKUP_REQUIRED"))?)
         .map_err(|_| invalid())?;
@@ -343,6 +359,9 @@ pub fn prepare(
     let mut plan = json!({"protocol":"ventard.web.cutover.1","cutoverId":input.cutover_id,"runId":input.run_id,"revision":input.revision,"context":ctx,"backupId":input.backup_id,"backupHash":manifest["databaseHash"],"runHash":fingerprint,"confirmation":input.confirmation,"freeTax":input.free_tax,"sources":report["sources"],"tables":tables(&tx,ctx,&input.run_id)?});
     if let Some(confirmed) = input.service_reservations_confirmed {
         plan["serviceReservationsConfirmed"] = json!(confirmed);
+    }
+    if let Some(confirmed) = input.legacy_cash_history_confirmed {
+        plan["legacyCashHistoryConfirmed"] = json!(confirmed);
     }
     let (intent, hash) = canonical(&plan)?;
     tx.execute(
