@@ -221,6 +221,7 @@ const messages: Record<string, string> = {
   CUTOVER_COPIES_NOT_CONVERGED:'Hay datos elegidos que todavía difieren de la nube. Completa su conciliación; no se volverán a enviar ventas antiguas automáticamente.',
   CUTOVER_SOURCE_CHANGED:'La nube cambió después de la captura. Captura y concilia de nuevo antes de hacer el corte.',
   CUTOVER_CLOSE_WEB_CASH:'Cierra la caja en la versión web y captura su estado final antes del corte. Se conserva su historia y arqueo.',
+  CASH_LINK_UNKNOWN:'Hay un movimiento histórico en efectivo sin caja identificada. Se conserva para consulta; concilia esa referencia antes del corte. No se asignará por fecha ni se repetirá el cobro.',
   CUTOVER_SERVICE_CAPTURE_TOO_LARGE:'Los servicios activos superan 512 KiB de incorporación operativa. El corte no se aplicó; conserva la copia para revisión.',
   CUTOVER_SERVICE_BASELINE_CONFLICT:'Un servicio ya tiene una base o movimientos nativos diferentes. Se conserva y requiere revisión antes de otro corte.',
   CUTOVER_SERVICE_RESERVATIONS_REQUIRED:'Confirma los abonos anteriores y las reservas físicas de reparaciones y apartados antes del corte.',
