@@ -78,7 +78,7 @@ fn schema_23_upgrade_preserves_frozen_plan_and_existing_row_checkpoints() {
     let next = r::next(w.connection(), &ctx(), report).unwrap().unwrap();
     // Owned synthetic fixture reconstructed as the actual prior schema; never
     // downgrade a user's database or modify historical migration checksums.
-    w.connection().execute_batch("ALTER TABLE legacy_web_observation_plans_v1 DROP COLUMN source_kind; DROP TABLE legacy_history_active_v1; DROP TABLE legacy_transition_decisions_v1; DROP TABLE legacy_transition_docs_v1; DROP TABLE legacy_transition_rows_v1; DROP TABLE legacy_transition_runs_v1; DROP TABLE legacy_cloud_captures_v1; DELETE FROM migration_history WHERE version>=24; PRAGMA user_version=23;").unwrap();
+    w.connection().execute_batch("ALTER TABLE legacy_web_observation_plans_v1 DROP COLUMN source_kind; DROP TABLE legacy_cutovers_v1; DROP TABLE legacy_history_active_v1; DROP TABLE legacy_transition_decisions_v1; DROP TABLE legacy_transition_docs_v1; DROP TABLE legacy_transition_rows_v1; DROP TABLE legacy_transition_runs_v1; DROP TABLE legacy_cloud_captures_v1; DELETE FROM migration_history WHERE version>=24; PRAGMA user_version=23;").unwrap();
     drop(w);
     let mut w = VaultWriter::open_encrypted(&dir.0, &key).unwrap();
     assert_eq!(
@@ -93,7 +93,7 @@ fn schema_23_upgrade_preserves_frozen_plan_and_existing_row_checkpoints() {
         w.connection()
             .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
             .unwrap(),
-        25
+        26
     );
 }
 #[test]

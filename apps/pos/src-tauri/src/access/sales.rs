@@ -343,7 +343,7 @@ impl AccessState {
         }
         serde_json::from_slice(&b).map_err(|_| (503, 3000, None))
     }
-    fn sales_bootstrap(&self) -> Result<Value, AccessError> {
+    pub(super) fn sales_bootstrap(&self) -> Result<Value, AccessError> {
         let n = self.sales_network()?;
         let ctx = n.selected.catalogue_context();
         let x = ctx.clone();
@@ -487,25 +487,7 @@ impl AccessState {
                 }
             }
         }
-        // Receive complete tenant scans; gaps from other scopes are NOT errors.
-        for _ in 0..25 {
-            self.sales_current(&n)?;
-            let x = ctx.clone();
-            let after=n.writer.call(move|c|Ok(c.query_row::<i64,_,_>("SELECT sequence FROM native_sales_cursor_v1 WHERE tenant_id=?1 AND scope_key=?2",(&x.tenant_id,sales::scope_key(&x)?),|r|r.get(0))?)).map_err(|e|error(e.code()))?;
-            let mut b = body(&ctx);
-            b["p_after"] = json!(after.to_string());
-            let page = Self::sales_rpc(&n, "native_sales_feed_v1", b).map_err(sales_http)?;
-            let complete = page["scannedThrough"] == page["watermark"];
-            let advanced = page["scannedThrough"].as_str() != Some(&after.to_string());
-            self.sales_current(&n)?;
-            let x = ctx.clone();
-            n.writer
-                .call(move |c| sync::receive_feed(c, &x, &page))
-                .map_err(|e| error(e.code()))?;
-            if complete || !advanced {
-                break;
-            }
-        }
+        self.receive_sales_pages(&n, &ctx)?;
         let private_allowed = self.sales_local(|_, _, g, high, opens| {
             let now = time().map_err(|_| {
                 AppError::Protocol(
@@ -574,6 +556,40 @@ impl AccessState {
         let mut view = self.sales_local(|c, ctx, _, _, _| sync::read(c, &ctx))?;
         view["privateSyncPending"] = json!(private_pending);
         Ok(view)
+    }
+    fn receive_sales_pages(
+        &self,
+        n: &NetworkContext,
+        ctx: &CatalogueContext,
+    ) -> Result<(), AccessError> {
+        for _ in 0..25 {
+            self.sales_current(n)?;
+            let x = ctx.clone();
+            let after=n.writer.call(move|c|Ok(c.query_row::<i64,_,_>("SELECT sequence FROM native_sales_cursor_v1 WHERE tenant_id=?1 AND scope_key=?2",(&x.tenant_id,sales::scope_key(&x)?),|r|r.get(0))?)).map_err(|e|error(e.code()))?;
+            let mut b = body(ctx);
+            b["p_after"] = json!(after.to_string());
+            let page = Self::sales_rpc(n, "native_sales_feed_v1", b).map_err(sales_http)?;
+            let complete = page["scannedThrough"] == page["watermark"];
+            let advanced = page["scannedThrough"].as_str() != Some(&after.to_string());
+            self.sales_current(n)?;
+            let x = ctx.clone();
+            n.writer
+                .call(move |c| sync::receive_feed(c, &x, &page))
+                .map_err(|e| error(e.code()))?;
+            if complete {
+                return Ok(());
+            }
+            if !advanced {
+                return Err(error("SALES_SYNC_INCOMPLETE"));
+            }
+        }
+        Err(error("SALES_SYNC_INCOMPLETE"))
+    }
+    pub(super) fn sales_receive_only(&self) -> Result<Value, AccessError> {
+        let n = self.sales_network()?;
+        let ctx = n.selected.catalogue_context();
+        self.receive_sales_pages(&n, &ctx)?;
+        self.sales_local(|c, ctx, _, _, _| sync::read(c, &ctx))
     }
     fn sales_action(&self, action: SalesAction) -> Result<Value, AccessError> {
         match action {

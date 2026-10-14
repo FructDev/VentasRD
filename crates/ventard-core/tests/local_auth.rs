@@ -289,14 +289,14 @@ fn additive_access_upgrade_preserves_v1_rows_and_original_checksum() {
             )
             .unwrap();
         // Construct a valid historical v1 in this isolated synthetic fixture only.
-        c.execute_batch("DROP TABLE fiscal_requests_v2;DROP TABLE local_operational_openings_v1;DROP TABLE local_pin_credentials_v1;DROP TABLE local_access_runtime_v1;DELETE FROM migration_history WHERE version>1;PRAGMA user_version=1;").unwrap();
+        c.execute_batch("ALTER TABLE legacy_web_observation_plans_v1 DROP COLUMN source_kind;DROP TABLE fiscal_requests_v2;DROP TABLE local_operational_openings_v1;DROP TABLE local_pin_credentials_v1;DROP TABLE local_access_runtime_v1;DELETE FROM migration_history WHERE version>1;PRAGMA user_version=1;").unwrap();
     }
     let mut w = VaultWriter::open_encrypted(&f.0, &key).unwrap();
     assert_eq!(
         w.connection()
             .query_row("PRAGMA user_version", [], |r| r.get::<_, u32>(0))
             .unwrap(),
-        21
+        26
     );
     assert_eq!(
         w.connection()

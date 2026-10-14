@@ -219,11 +219,12 @@ function NativeEntry() {
     [ready, setReady] = useState(false);
   useEffect(() => {
     let active = true;
-    void accessPort
+    const refresh = () => { void accessPort
       .status()
       .then((v) => {
         if (active) {
           setView(v);
+          setError('');
           setReady(true);
         }
       })
@@ -234,9 +235,12 @@ function NativeEntry() {
           if (code !== "ACCESS_NATIVE_REQUIRED") setError(accessMessage(e));
           setReady(true);
         }
-      });
+      }); };
+    refresh();
+    window.addEventListener('ventard:access-changed', refresh);
     return () => {
       active = false;
+      window.removeEventListener('ventard:access-changed', refresh);
     };
   }, []);
   if (synthetic)

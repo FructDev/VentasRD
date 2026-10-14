@@ -201,6 +201,13 @@ pub fn get_embedded_migrations() -> Vec<Migration> {
         sql: sql_0025,
         checksum: Migration::compute_checksum(sql_0025),
     });
+    let sql_0026 = include_str!("../../migrations/0026_legacy_cutover.sql");
+    migrations.push(Migration {
+        version: 26,
+        name: "0026_legacy_cutover",
+        sql: sql_0026,
+        checksum: Migration::compute_checksum(sql_0026),
+    });
     migrations
 }
 

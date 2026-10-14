@@ -211,6 +211,24 @@ const messages: Record<string, string> = {
   TRANSITION_STORAGE:'No se pudo guardar el informe. Actualiza para recuperar el resultado anterior.',
   TRANSITION_SOURCE_CONFLICT:'La fuente o la identidad del informe cambió. No se sustituyeron los datos conservados.',
   TRANSITION_TOO_LARGE:'La captura admite 32 MB y 200.000 filas; la combinación, hasta 600.000 filas de fuentes. Se superó un límite y no se omitieron datos silenciosamente.',
+  CUTOVER_BACKUP_REQUIRED:'Crea y verifica un respaldo nuevo después de incorporar esta conciliación. El respaldo anterior no contiene exactamente sus decisiones.',
+  CUTOVER_REVIEW_REQUIRED:'Publica la historia y resuelve las observaciones antes de activar el negocio.',
+  CUTOVER_CLOUD_REQUIRED:'Falta la captura completa de nube para el corte operativo.',
+  CUTOVER_COPIES_NOT_CONVERGED:'Hay datos elegidos que todavía difieren de la nube. Completa su conciliación; no se volverán a enviar ventas antiguas automáticamente.',
+  CUTOVER_SOURCE_CHANGED:'La nube cambió después de la captura. Captura y concilia de nuevo antes de hacer el corte.',
+  CUTOVER_CLOSE_WEB_CASH:'Cierra la caja en la versión web y captura su estado final antes del corte. Se conserva su historia y arqueo.',
+  CUTOVER_SERVICE_REQUIRES_RECONCILIATION:'Hay reparaciones o apartados activos sin incorporación operativa verificada. Se conservan; su continuación todavía requiere conciliación.',
+  CUTOVER_CREDIT_UNVERIFIABLE:'La deuda contiene importes o referencias que impiden adoptar un saldo seguro.',
+  CUTOVER_ACTIVE_BALANCE_CONFLICT:'El saldo nativo existente difiere de la historia web. No se reemplazó el saldo ni el trabajo posterior.',
+  CUTOVER_ACTIVE_SCOPE_CONFLICT:'Este negocio ya tiene otro ámbito o ITBIS operativo. Usa su configuración vigente; no se cambió el ámbito existente.',
+  CUTOVER_SOURCE_CONFLICT:'La fuente guardada no coincide con su huella. Conserva las copias y revisa el origen antes de activar.',
+  CUTOVER_STORAGE:'La operación no pudo confirmarse en el almacenamiento local. Recupera el mismo intento.',
+  CUTOVER_INVALID:'Los datos del corte no cumplen el contrato esperado. No se activaron efectos a partir de esos datos.',
+  CUTOVER_ID_CONFLICT:'El intento de corte ya tiene datos distintos. Recupera el intento guardado.',
+  CUTOVER_CONTEXT:'La cuenta, instalación o permiso cambió. El intento original se conserva.',
+  CUTOVER_RECEIPT_INVALID:'La respuesta no demuestra este corte exacto; el intento sigue pendiente.',
+  CUTOVER_BOOTSTRAP_REQUIRED:'El corte remoto está conservado; falta terminar la descarga operativa. Recupera el mismo intento.',
+  SALES_SYNC_INCOMPLETE:'La recepción aún no alcanzó la última operación. Vuelve a recuperar o sincronizar; el avance se conserva.',
   TRANSITION_REVISION:'El informe cambió o ya se incorporó. Actualiza antes de elegir otra versión.',
   TRANSITION_REVIEW_REQUIRED:'Resuelve las versiones en conflicto antes de incorporar el historial.',
   TRANSITION_DOCUMENT_REQUIRED:'Esta fila pertenece a una venta con versiones diferentes. Elige la venta completa desde la tabla ventas.',
@@ -309,6 +327,10 @@ export interface WebInventoryEvidence {status:'PENDING_LOOKUP'|'APPLIED_VERIFIED
 export interface WebComparisonRow {id:string;table:string;status:string;effectStatus:'UNKNOWN_LEGACY';matchedFields?:string[];differentFields?:string[];unverifiableFields?:string[];reviewFields?:{field:string;local:string;remote:string}[];limitations:string[];observedAtMs?:string;inventoryEvidence?:WebInventoryEvidence;inventoryReceivedAtMs?:string}
 export const backupPort={
  transitionView:()=>call<{report:TransitionReport|null;capture:{captureId:string;capturedAtMs:string}|null}>('native_backup',{command:{action:'TRANSITION_VIEW'}}),
+ transitionCutoverView:(runId:string)=>call<CutoverView>('native_backup',{command:{action:'TRANSITION_CUTOVER_VIEW',runId}}),
+ transitionCutover:(input:CutoverInput)=>call<CutoverStatus>('native_backup',{command:{action:'TRANSITION_CUTOVER',input}}),
+ transitionCutoverRecover:(cutoverId:string)=>call<CutoverStatus>('native_backup',{command:{action:'TRANSITION_CUTOVER_RECOVER',cutoverId}}),
+ transitionCutoverAbandon:(cutoverId:string)=>call<CutoverStatus>('native_backup',{command:{action:'TRANSITION_CUTOVER_ABANDON',cutoverId}}),
  transitionCapture:(captureId:string)=>call<{captureId:string;capturedAtMs:string;counts:Record<string,number>}>('native_backup',{command:{action:'TRANSITION_CAPTURE',captureId}}),
  transitionPrepare:(runId:string,exportIds:string[],captureId:string|null)=>call<TransitionReport>('native_backup',{command:{action:'TRANSITION_PREPARE',runId,exportIds,captureId}}),
  transitionRows:(runId:string,table:string,page:number)=>call<{rows:TransitionRow[];total:number;page:number}>('native_backup',{command:{action:'TRANSITION_ROWS',runId,table,page}}),
@@ -346,6 +368,11 @@ export const backupPort={
  reportExport:(kind:import('./management').ExportKind,fromMs:string,toMs:string)=>call<import('./management').ReportBundle>('native_backup',{command:{action:'REPORT_EXPORT',kind,fromMs,toMs}}),
 };
 export interface TransitionReport {runId:string;revision:number;historyPublished:boolean;createdAtMs:string;sources:{id:string;kind:'BROWSER'|'CLOUD';sha256:string}[];counts:Record<string,number>;conflicts:number;issues:{code:string;table:string;id:string;field:string}[];sales:{totalCents:string|null;byMethodCents:Record<string,string>};debts:{customerId:string;name:string|null;balanceCents:string|null;observedBalanceCents:string;coverage:string}[];cash:{id:string;state:string|null;openingCents:string|null;movementsCents:string;expectedCents:string|null;observedExpectedCents:string|null;coverage:string}[];payments:{id:string;table:string;documentId:string;montoCents:string;method:string|null;cajaId:string|null}[];cloudCoverage:string;effectStatus:'UNKNOWN_LEGACY';canActivate:false}
+export interface CutoverInput {cutoverId:string;runId:string;revision:number;backupId:string;confirmation:'WEB_WRITERS_CLOSED_BALANCES_REVIEWED';freeTax:'0'|'0.18'}
+export interface CutoverStatus {cutoverId:string;runId:string;backupId:string;state:'UNKNOWN'|'ADOPTED'|'ACTIVE'|'ABANDONED'}
+export interface CutoverView {runId:string;revision:number;canPrepare:boolean;blockers:{code:string;id?:string;table?:string}[];pending:CutoverStatus|null;backups:string[];coverage:string;legacyReplay:false}
+// A refresh hint carries no authority; the router rereads the native status.
+export const nativeAccessChanged = () => window.dispatchEvent(new Event('ventard:access-changed'));
 export interface TransitionRow {id:string;variants:{variantId:string;sourceIds:string[];row:Record<string,unknown>}[];selected:Record<string,unknown>|null;selectedVariant:string|null;excluded?:boolean;document?:{state:'CONFLICT'|'CONSENSUS'|'CHOSEN';chosenSource:string|null;variants:{sourceId:string;sale:Record<string,unknown>;details:Record<string,unknown>[];charges:Record<string,unknown>[];inventory:Record<string,unknown>[];journals:Record<string,unknown>[]}[]}}
 export interface LegacyHistoryRow {id:string;ticket:string;dateMs:string|null;method:string|null;totalCents:string|null;ncf:string|null;customerName:string|null;effectStatus:'UNKNOWN_LEGACY'}
 export interface LegacyHistoryPage {rows:LegacyHistoryRow[];total:string;page:number;pageSize:number;coverage:'PUBLISHED_LEGACY_HISTORY'}

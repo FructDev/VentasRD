@@ -22,6 +22,18 @@ pub enum Action {
     WebStatus {},
     WebImport {},
     TransitionView {},
+    TransitionCutoverView {
+        run_id: String,
+    },
+    TransitionCutover {
+        input: ventard_core::storage::legacy_cutover::Input,
+    },
+    TransitionCutoverRecover {
+        cutover_id: String,
+    },
+    TransitionCutoverAbandon {
+        cutover_id: String,
+    },
     TransitionCapture {
         capture_id: String,
     },
@@ -317,6 +329,10 @@ v["mode"] = json!("recovery-readonly");
         if matches!(
             &action,
             Action::TransitionView {}
+                | Action::TransitionCutoverView { .. }
+                | Action::TransitionCutover { .. }
+                | Action::TransitionCutoverRecover { .. }
+                | Action::TransitionCutoverAbandon { .. }
                 | Action::TransitionCapture { .. }
                 | Action::TransitionPrepare { .. }
                 | Action::TransitionRows { .. }

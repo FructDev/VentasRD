@@ -750,7 +750,7 @@ fn report_preserves_original_cost_and_print_request_never_repeats_the_sale() {
         (id(603), &result.operation_id, hash),
     )
     .unwrap();
-    c.execute_batch("DROP TABLE native_repair_private_outbox_v1;DROP TABLE native_repair_private_values_v1;DROP TABLE native_repair_private_intents_v1;DROP TABLE native_document_print_attempts_v1;DELETE FROM migration_history WHERE version>=14;PRAGMA user_version=13;").unwrap();
+    c.execute_batch("ALTER TABLE legacy_web_observation_plans_v1 DROP COLUMN source_kind;DROP TABLE native_repair_private_outbox_v1;DROP TABLE native_repair_private_values_v1;DROP TABLE native_repair_private_intents_v1;DROP TABLE native_document_print_attempts_v1;DELETE FROM migration_history WHERE version>=14;PRAGMA user_version=13;").unwrap();
     migrations::apply(&mut c).unwrap();
     assert!(!printing::request(&mut c, &context, &result.operation_id, hash, &id(603)).unwrap());
     assert_eq!(
@@ -1174,7 +1174,7 @@ fn complete_sales_upgrade_preserves_v10_sales_payments_and_foreign_keys() {
     migrations::apply(&mut c).unwrap();
     let after: String = c.query_row("SELECT json_array(s.ticket,s.turn_id,s.total_cents,l.nombre,l.costo_cents,l.serial,p.amount_cents,p.change_cents,p.turn_id) FROM sales s JOIN sale_lines l ON l.sale_id=s.sale_id JOIN payments p ON p.sale_id=s.sale_id",[],|r|r.get(0)).unwrap();
     assert_eq!(before, after);
-    assert_eq!(migrations::validate_history(&c).unwrap(), 23);
+    assert_eq!(migrations::validate_history(&c).unwrap(), 26);
     assert_eq!(
         c.query_row::<u32, _, _>("SELECT count(*) FROM pragma_foreign_key_check", [], |r| r
             .get(0))
@@ -1753,14 +1753,14 @@ fn local_encrypted_reopen_recovers_preparation_and_v7_upgrade_preserves_pin_and_
         let c = w.connection();
         populate(c);
         enroll_pin(c, &g, &pin, 2000).unwrap();
-        c.execute_batch("DROP TABLE fiscal_requests_v2;DROP TABLE fiscal_reservations;DROP TABLE fiscal_blocks;DROP TABLE fiscal_watermarks;DROP TABLE ticket_allocations;DROP TABLE ticket_sequences;DROP TABLE checkout_drafts;DELETE FROM migration_history WHERE version>=8;PRAGMA user_version=7;").unwrap();
+        c.execute_batch("ALTER TABLE legacy_web_observation_plans_v1 DROP COLUMN source_kind;DROP TABLE fiscal_requests_v2;DROP TABLE fiscal_reservations;DROP TABLE fiscal_blocks;DROP TABLE fiscal_watermarks;DROP TABLE ticket_allocations;DROP TABLE ticket_sequences;DROP TABLE checkout_drafts;DELETE FROM migration_history WHERE version>=8;PRAGMA user_version=7;").unwrap();
         assert_eq!(migrations::validate_history(c).unwrap(), 7);
     }
     let original;
     {
         let mut w = VaultWriter::open_encrypted(&path, &key).unwrap();
         let c = w.connection();
-        assert_eq!(migrations::validate_history(c).unwrap(), 23);
+        assert_eq!(migrations::validate_history(c).unwrap(), 26);
         assert!(unlock_pin(c, &g, &pin, 2100).unwrap().allows("READ"));
         assert_eq!(drafts::read(c, &ctx(2)).unwrap().active.unwrap().id, id(21));
         original = prepare_checkout(c, &g, 2100, 2100, 1, request(30, &p), &p).unwrap();

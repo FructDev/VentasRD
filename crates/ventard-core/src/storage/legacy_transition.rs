@@ -647,7 +647,7 @@ pub fn prepare(
     tx.commit()?;
     report(c, ctx, run)
 }
-fn selected(c: &Connection, id: &str) -> Result<BTreeMap<String, Vec<Value>>, Error> {
+pub(crate) fn selected(c: &Connection, id: &str) -> Result<BTreeMap<String, Vec<Value>>, Error> {
     let mut out = BTreeMap::<String, Vec<Value>>::new();
     let mut q=c.prepare("SELECT table_name,selected FROM legacy_transition_rows_v1 WHERE run_id=?1 AND selected IS NOT NULL AND excluded=0 ORDER BY table_name,row_id")?;
     for r in q.query_map([id], |r| {

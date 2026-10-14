@@ -139,6 +139,8 @@ pub struct Manifest {
     pub recovery_envelope: String,
     pub counts: BTreeMap<String, String>,
     pub external_assets: Vec<String>,
+    #[serde(default)]
+    pub transition_runs: BTreeMap<String, String>,
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -446,6 +448,8 @@ pub fn create(
         drop(backup);
         validate_database(snapshot.connection(), &source)?;
         let count = counts(snapshot.connection())?;
+        let transition_runs =
+            super::legacy_cutover::fingerprints(snapshot.connection()).map_err(|_| invalid())?;
         snapshot
             .connection()
             .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);PRAGMA journal_mode=DELETE;")?;
@@ -465,6 +469,7 @@ pub fn create(
             ),
             counts: count,
             external_assets: vec![],
+            transition_runs,
         };
         let protected = encrypt_manifest(&m, secret)?;
         let mut header = MAGIC.to_vec();

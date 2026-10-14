@@ -250,13 +250,13 @@ fn v6_to_current_preserves_pin_catalogue_and_active_account_draft() {
         )
         .unwrap()
         .workspace;
-        c.execute_batch("DROP TABLE fiscal_requests_v2;DROP TABLE fiscal_reservations;DROP TABLE fiscal_blocks;DROP TABLE fiscal_watermarks;DROP TABLE ticket_allocations;DROP TABLE ticket_sequences;DROP TABLE checkout_drafts;DROP TABLE cash_turns;DROP TABLE cash_drawers;DELETE FROM migration_history WHERE version>=7;PRAGMA user_version=6;").unwrap();
+        c.execute_batch("ALTER TABLE legacy_web_observation_plans_v1 DROP COLUMN source_kind;DROP TABLE fiscal_requests_v2;DROP TABLE fiscal_reservations;DROP TABLE fiscal_blocks;DROP TABLE fiscal_watermarks;DROP TABLE ticket_allocations;DROP TABLE ticket_sequences;DROP TABLE checkout_drafts;DROP TABLE cash_turns;DROP TABLE cash_drawers;DELETE FROM migration_history WHERE version>=7;PRAGMA user_version=6;").unwrap();
         assert_eq!(migrations::validate_history(c).unwrap(), 6);
     }
     {
         let mut w = VaultWriter::open_encrypted(&path, &key).unwrap();
         let c = w.connection();
-        assert_eq!(migrations::validate_history(c).unwrap(), 23);
+        assert_eq!(migrations::validate_history(c).unwrap(), 26);
         assert!(unlock_pin(c, &g, &pin, 2100).unwrap().allows("READ"));
         assert_eq!(drafts::read(c, &context).unwrap(), original);
         assert_eq!(

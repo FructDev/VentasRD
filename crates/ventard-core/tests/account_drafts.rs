@@ -74,13 +74,13 @@ fn additive_v5_to_current_preserves_capture_hash_and_existing_scope() {
             .unwrap();
         c.execute("INSERT INTO scopes(scope_key,type,sucursal_id,negocio_id)VALUES('existing-global','GLOBAL',NULL,?1)",[&context().tenant_id]).unwrap();
         // Only this unique synthetic vault: reproduce a tracked, complete v5.
-        c.execute_batch("DROP TABLE fiscal_requests_v2;DROP TABLE fiscal_reservations;DROP TABLE fiscal_blocks;DROP TABLE fiscal_watermarks;DROP TABLE ticket_allocations;DROP TABLE ticket_sequences;DROP TABLE checkout_drafts;DROP TABLE cash_turns;DROP TABLE cash_drawers;DROP TABLE account_draft_requests;DROP TABLE account_drafts;DELETE FROM migration_history WHERE version>=6;PRAGMA user_version=5;").unwrap();
+        c.execute_batch("ALTER TABLE legacy_web_observation_plans_v1 DROP COLUMN source_kind;DROP TABLE fiscal_requests_v2;DROP TABLE fiscal_reservations;DROP TABLE fiscal_blocks;DROP TABLE fiscal_watermarks;DROP TABLE ticket_allocations;DROP TABLE ticket_sequences;DROP TABLE checkout_drafts;DROP TABLE cash_turns;DROP TABLE cash_drawers;DROP TABLE account_draft_requests;DROP TABLE account_drafts;DELETE FROM migration_history WHERE version>=6;PRAGMA user_version=5;").unwrap();
         migrations::validate_history(c).unwrap();
     }
     {
         let mut w = VaultWriter::open_encrypted(&path, &key).unwrap();
         let c = w.connection();
-        assert_eq!(migrations::validate_history(c).unwrap(), 23);
+        assert_eq!(migrations::validate_history(c).unwrap(), 26);
         assert_eq!(
             c.query_row(
                 "SELECT manifest FROM catalogue_preview_manifests_v1",

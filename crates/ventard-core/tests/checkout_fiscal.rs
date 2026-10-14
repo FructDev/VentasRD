@@ -183,10 +183,10 @@ fn v9_to_v10_is_additive_and_preserves_allocated_blocks_and_cursor() {
     let evidence: Vec<u8> = c
         .query_row("SELECT evidence_bytes FROM fiscal_blocks", [], |r| r.get(0))
         .unwrap();
-    c.execute_batch("DROP TABLE fiscal_requests_v2;DELETE FROM migration_history WHERE version>=10;PRAGMA user_version=9;").unwrap();
+    c.execute_batch("ALTER TABLE legacy_web_observation_plans_v1 DROP COLUMN source_kind;DROP TABLE fiscal_requests_v2;DELETE FROM migration_history WHERE version>=10;PRAGMA user_version=9;").unwrap();
     assert_eq!(migrations::validate_history(&c).unwrap(), 9);
     migrations::apply(&mut c).unwrap();
-    assert_eq!(migrations::validate_history(&c).unwrap(), 23);
+    assert_eq!(migrations::validate_history(&c).unwrap(), 26);
     assert_eq!(
         c.query_row("SELECT evidence_bytes FROM fiscal_blocks", [], |r| r
             .get::<_, Vec<u8>>(0))
@@ -689,14 +689,14 @@ fn v8_upgrade_and_encrypted_reopen_preserve_pin_cart_and_fiscal_counter() {
         populate(c);
         enroll_pin(c, &g, &pin, 2000).unwrap();
         original = prep(c, 30, None);
-        c.execute_batch("DROP TABLE fiscal_requests_v2;DROP TABLE fiscal_reservations;DROP TABLE fiscal_blocks;DROP TABLE fiscal_watermarks;DROP TABLE ticket_allocations;DROP TABLE ticket_sequences;DELETE FROM migration_history WHERE version>=9;PRAGMA user_version=8;").unwrap();
+        c.execute_batch("ALTER TABLE legacy_web_observation_plans_v1 DROP COLUMN source_kind;DROP TABLE fiscal_requests_v2;DROP TABLE fiscal_reservations;DROP TABLE fiscal_blocks;DROP TABLE fiscal_watermarks;DROP TABLE ticket_allocations;DROP TABLE ticket_sequences;DELETE FROM migration_history WHERE version>=9;PRAGMA user_version=8;").unwrap();
         assert_eq!(migrations::validate_history(c).unwrap(), 8);
     }
     let next;
     {
         let mut w = VaultWriter::open_encrypted(&path, &key).unwrap();
         let c = w.connection();
-        assert_eq!(migrations::validate_history(c).unwrap(), 23);
+        assert_eq!(migrations::validate_history(c).unwrap(), 26);
         assert!(unlock_pin(c, &g, &pin, 2100).unwrap().allows("READ"));
         assert_eq!(
             read_checkout(c, &g, 2100, 2100, 1, &id(30), &original.hash).unwrap(),
