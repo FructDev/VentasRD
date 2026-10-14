@@ -203,6 +203,425 @@ fn event() -> Value {
 fn feed(events: Vec<Value>) -> Value {
     json!({"namespace":"NATIVE1","tenantId":id(1),"scope":{"type":"BRANCH","branchId":id(5)},"coverage":"COMPLETE","scannedThrough":"1","watermark":"1","events":events})
 }
+
+fn history_bootstrap(
+    c: &mut Connection,
+    events: Vec<Value>,
+    watermark: &str,
+) -> Result<(), ventard_core::application::errors::AppError> {
+    let mut rows = vec![
+        json!({"kind":"PRODUCT","id":id(20),"name":"Sintético actual","code":"QA","revision":"7","deleted":false,"priceTiers":{"retailCents":"25000"},"metadata":{"taxRate":{"numerator":"9","denominator":"50"},"costCents":null,"serialRequired":false,"recipe":[]},"stock":{"quantity":"93","version":watermark,"authority":"VERIFIED"}}),
+    ];
+    let turn = events
+        .iter()
+        .find(|e| {
+            serde_json::from_str::<Value>(e["intent"].as_str().unwrap()).unwrap()["kind"]
+                == "TURN_OPEN"
+        })
+        .cloned();
+    if events.iter().any(|e| {
+        serde_json::from_str::<Value>(e["intent"].as_str().unwrap()).unwrap()["payload"]["sale"]
+            ["payment"]["method"]
+            == "FIADO"
+    }) {
+        rows.push(json!({"kind":"CUSTOMER","id":id(30),"name":"Cliente actual","balanceCents":"20000","limitCents":"100000","active":true,"revision":"7","priceTier":"1"}));
+    }
+    let history_count = events.len();
+    for e in &events {
+        let v: Value = serde_json::from_str(e["intent"].as_str().unwrap()).unwrap();
+        if let Some(serials) = v["payload"]["sale"]["serials"].as_array() {
+            for s in serials {
+                rows[0]["metadata"]["serialRequired"] = json!(true);
+                rows[0]["stock"]["quantity"] = json!("0");
+                rows.push(json!({"kind":"SERIAL","productId":s["productId"],"text":s["text"],"revision":"1","state":"SOLD","saleOperationId":e["receipt"]["operationId"]}));
+            }
+        }
+    }
+    rows.extend(
+        events
+            .into_iter()
+            .map(|e| json!({"kind":"HISTORY_EVENT","id":e["receipt"]["operationId"],"event":e})),
+    );
+    let (payload, h) = canon(&json!(rows));
+    let m = json!({"version":"ventard.native.operational.1","namespace":"NATIVE1","coverage":"QA_SYNTHETIC_ADOPTED","snapshotId":id(305),"context":ctx(),"capturedAtMs":"1000","expiresAtMs":"5000","watermark":watermark,"historyCoverage":"NATIVE_LEDGER_THROUGH_WATERMARK","historyCount":history_count,"totalCount":rows.len(),"ticketPrefix":format!("N{}",ctx().installation_id.replace('-',"")),"lastTicket":"0","freeTax":{"numerator":"9","denominator":"50"},"turn":turn,"cashBase":turn.as_ref().map(|t|json!({"turnId":t["receipt"]["operationId"],"tenantId":ctx().tenant_id,"scope":{"type":ctx().scope_type,"branchId":ctx().branch_id},"sequence":watermark,"netCents":"11800"})),"pages":[{"index":0,"count":rows.len(),"byteLength":payload.len(),"sha256":h}]});
+    begin_bootstrap(c, &ctx(), &m, 1000)?;
+    stage_bootstrap_page(c, &ctx(), 0, &payload, 1000)?;
+    activate_bootstrap(c, &ctx(), 1000, &id(1000))
+}
+
+#[test]
+fn captured_sold_serial_retains_original_sale_ownership_without_replaying_sale() {
+    let mut e = event();
+    let mut v: Value = serde_json::from_str(e["intent"].as_str().unwrap()).unwrap();
+    v["payload"]["sale"]["lines"][0]["serial"] = json!("SERIAL-QA-HISTORY");
+    let serial = json!({"productId":id(20),"text":"SERIAL-QA-HISTORY","expectedRevision":"1"});
+    v["payload"]["sale"]["serials"] = json!([serial]);
+    e["receipt"]["effects"][0]["payload"] = v["payload"]["sale"]["lines"][0].clone();
+    e["receipt"]["effects"].as_array_mut().unwrap().push(
+        json!({"id":eid(&id(100),"serial/SERIAL-QA-HISTORY"),"kind":"SERIAL","payload":serial}),
+    );
+    let mut s: Value = serde_json::from_str(e["snapshot"].as_str().unwrap()).unwrap();
+    s["sale"] = v["payload"]["sale"].clone();
+    let (raw, h) = canon(&s);
+    e["snapshot"] = json!(raw);
+    e["receipt"]["snapshotHash"] = json!(h);
+    let (raw, h) = canon(&v);
+    e["intent"] = json!(raw);
+    e["receipt"]["intentHash"] = json!(h);
+    let mut c = db();
+    history_bootstrap(&mut c, vec![e.clone()], "7").unwrap();
+    let row: (String, String) = c
+        .query_row(
+            "SELECT state,sale_operation_id FROM sale_serial_inventory_v1",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(row, ("SOLD".into(), id(100)));
+    receive_event(&mut c, &ctx(), &e).unwrap();
+    assert_eq!(
+        c.query_row::<String, _, _>("SELECT effective_stock FROM stock_projections", [], |r| r
+            .get(0))
+            .unwrap(),
+        "0"
+    );
+    assert_eq!(
+        ventard_core::application::returns::read(&c, &ctx(), &id(100)).unwrap()["serials"][0]
+            ["text"],
+        "SERIAL-QA-HISTORY"
+    );
+}
+
+fn historic_payment(method: &str) -> Value {
+    let mut e = event();
+    let mut v: Value = serde_json::from_str(e["intent"].as_str().unwrap()).unwrap();
+    let p = &mut v["payload"]["sale"]["payment"];
+    *p = json!({"method":method,"customerId":if method=="FIADO"{Some(id(30))}else{None},"paidCents":if method=="FIADO"{"0"}else{"11800"},"creditChargeCents":if method=="FIADO"{"11800"}else{"0"},"cashNetCents":if method=="EFECTIVO"{"11800"}else{"0"},"cardCents":"0","transferCents":"0","tenderCents":if method=="EFECTIVO"{"11800"}else{"0"},"changeCents":"0","turnId":if method=="EFECTIVO"{Some(id(90))}else{None},"bankSettlementVerified":false});
+    e["receipt"]["effects"][2]["payload"] = p.clone();
+    e["receipt"]["effects"].as_array_mut().unwrap().push(if method=="FIADO"{json!({"id":eid(&id(100),"credit"),"kind":"CREDIT","payload":{"customerId":id(30),"amountCents":"11800"}})}else{json!({"id":eid(&id(100),"cash"),"kind":"CASH","payload":{"turnId":id(90),"amountCents":"11800"}})});
+    let mut s: Value = serde_json::from_str(e["snapshot"].as_str().unwrap()).unwrap();
+    s["sale"] = v["payload"]["sale"].clone();
+    let (raw, h) = canon(&v);
+    e["intent"] = json!(raw);
+    e["receipt"]["intentHash"] = json!(h);
+    let (raw, h) = canon(&s);
+    e["snapshot"] = json!(raw);
+    e["receipt"]["snapshotHash"] = json!(h);
+    e["receipt"]["remoteSequence"] = json!("2");
+    e["receipt"]["stock"][0]["version"] = json!("2");
+    e
+}
+fn captured_turn() -> Value {
+    let mut v: Value = serde_json::from_str(event()["intent"].as_str().unwrap()).unwrap();
+    v["operationId"] = json!(id(90));
+    v["kind"] = json!("TURN_OPEN");
+    v["payload"] = json!({"openingCents":"2000"});
+    let (raw, h) = canon(&v);
+    json!({"intent":raw,"snapshot":null,"receipt":{"protocol":"ventard.native.receipt.1","status":"APPLIED","namespace":"NATIVE1","operationId":id(90),"tenantId":ctx().tenant_id,"scope":{"type":"BRANCH","branchId":ctx().branch_id},"actorId":v["actorId"],"installationId":v["installationId"],"deviceId":v["originDeviceId"],"writerEpoch":"1","intentHash":h,"snapshotHash":null,"remoteSequence":"1","appliedAtMs":"1000","ticket":null,"ncf":null,"totalCents":null,"effects":[{"id":id(90),"kind":"TURN_OPEN","amountCents":"2000"}],"stock":[]}})
+}
+#[test]
+fn historical_cash_and_credit_keep_current_balances_and_current_drawer_once() {
+    for method in ["EFECTIVO", "FIADO"] {
+        let mut c = db();
+        let e = historic_payment(method);
+        history_bootstrap(&mut c, vec![captured_turn(), e.clone()], "7").unwrap();
+        let drawer = ventard_core::application::management::drawer(&c, &ctx(), &id(90)).unwrap();
+        assert_eq!(drawer["expectedCents"], "13800");
+        assert_eq!(
+            c.query_row::<i64, _, _>("SELECT count(*) FROM sale_cash_entries_v1", [], |r| r
+                .get(0))
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            c.query_row::<i64, _, _>("SELECT count(*) FROM sale_credit_entries_v1", [], |r| r
+                .get(0))
+                .unwrap(),
+            0
+        );
+        if method == "FIADO" {
+            let view = ventard_core::application::returns::read(&c, &ctx(), &id(100)).unwrap();
+            let req = ventard_core::application::management::Command::SaleReturn {
+                operation_id: id(110),
+                sale_id: id(100),
+                expected_return_revision: view["revision"].as_str().unwrap().into(),
+                items: vec![ventard_core::domain::return_plan::Item {
+                    key: id(20),
+                    quantity: "1".into(),
+                }],
+                serials: vec![],
+                reason: "Devolución QA".into(),
+                turn_id: id(90),
+            };
+            let document = ventard_core::application::returns::document(&c, &ctx(), &req).unwrap();
+            assert_eq!(document["credit"]["beforeCents"], "20000");
+            assert_eq!(document["credit"]["afterCents"], "8200");
+            assert_eq!(
+                c.query_row::<i64, _, _>(
+                    "SELECT balance_cents FROM sale_customer_accounts_v1",
+                    [],
+                    |r| r.get(0)
+                )
+                .unwrap(),
+                20000
+            );
+        }
+        receive_event(&mut c, &ctx(), &e).unwrap();
+        assert_eq!(
+            ventard_core::application::management::drawer(&c, &ctx(), &id(90)).unwrap()
+                ["expectedCents"],
+            "13800"
+        );
+    }
+}
+
+#[test]
+fn fresh_installation_preserves_exact_native_history_without_replaying_authority() {
+    let mut c = db();
+    let e = event();
+    history_bootstrap(&mut c, vec![e.clone()], "7").unwrap();
+    assert_eq!(
+        ventard_core::application::history::ticket(&c, &ctx(), &id(100)).unwrap(),
+        serde_json::from_str::<Value>(e["snapshot"].as_str().unwrap()).unwrap()
+    );
+    assert_eq!(
+        c.query_row::<String, _, _>("SELECT effective_stock FROM stock_projections", [], |r| r
+            .get(0))
+            .unwrap(),
+        "93"
+    );
+    for table in [
+        "inventory_movements",
+        "sale_cash_entries_v1",
+        "sale_credit_entries_v1",
+        "outbox",
+        "cash_turns",
+    ] {
+        assert_eq!(
+            c.query_row::<i64, _, _>(&format!("SELECT count(*) FROM {table}"), [], |r| r.get(0))
+                .unwrap(),
+            0,
+            "{table}"
+        );
+    }
+    assert_eq!(
+        c.query_row::<i64, _, _>("SELECT sum(amount_cents) FROM payments", [], |r| r.get(0))
+            .unwrap(),
+        11800
+    );
+    assert_eq!(
+        c.query_row::<String, _, _>("SELECT origin_device FROM operation_journal", [], |r| r
+            .get(0))
+            .unwrap(),
+        id(10)
+    );
+    let prefix = c
+        .query_row::<String, _, _>("SELECT prefix FROM ticket_sequences", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(
+        prefix,
+        format!("N{}", ctx().installation_id.replace('-', ""))
+    );
+    receive_event(&mut c, &ctx(), &e).unwrap();
+    assert_eq!(
+        c.query_row::<String, _, _>("SELECT effective_stock FROM stock_projections", [], |r| r
+            .get(0))
+            .unwrap(),
+        "93"
+    );
+    assert_eq!(
+        c.query_row::<i64, _, _>("SELECT count(*) FROM sales", [], |r| r.get(0))
+            .unwrap(),
+        1
+    );
+}
+
+#[test]
+fn corrupted_or_future_captured_history_rolls_back_entire_activation() {
+    for mode in ["future", "corrupt", "duplicate", "foreign"] {
+        let mut c = db();
+        let mut e = event();
+        let mut events = vec![];
+        match mode {
+            "future" => e["receipt"]["remoteSequence"] = json!("8"),
+            "corrupt" => e["receipt"]["effects"]
+                .as_array_mut()
+                .unwrap()
+                .pop()
+                .map(|_| ())
+                .unwrap(),
+            "duplicate" => events.push(e.clone()),
+            "foreign" => e["receipt"]["tenantId"] = json!(id(99)),
+            _ => unreachable!(),
+        }
+        events.push(e);
+        assert!(history_bootstrap(&mut c, events, "7").is_err(), "{mode}");
+        for table in [
+            "sales",
+            "products",
+            "native_sales_cursor_v1",
+            "ticket_sequences",
+            "operation_journal",
+        ] {
+            assert_eq!(
+                c.query_row::<i64, _, _>(&format!("SELECT count(*) FROM {table}"), [], |r| r
+                    .get(0))
+                    .unwrap(),
+                0,
+                "{mode}/{table}"
+            );
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires explicitly generated isolated PostgreSQL fixture"]
+fn postgres_history_capture_activates_new_encrypted_installation_without_replay() {
+    use ventard_core::storage::{cipher::CipherKey, writer::VaultWriter};
+    let path = std::env::var("VENTARD_HISTORY_CAPTURE_FIXTURE")
+        .expect("generate PostgreSQL fixture first");
+    let captured: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    let context: CatalogueContext =
+        serde_json::from_value(captured["manifest"]["context"].clone()).unwrap();
+    let now = captured["manifest"]["capturedAtMs"]
+        .as_str()
+        .unwrap()
+        .parse::<u64>()
+        .unwrap();
+    let root = std::env::temp_dir().join(format!(
+        "ventard-history-recovery-fixture-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir(&root).unwrap();
+    let key = CipherKey::new([0x46; 32]);
+    let captured_rows = captured["pages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|p| serde_json::from_str::<Vec<Value>>(p.as_str().unwrap()).unwrap())
+        .collect::<Vec<_>>();
+    let original_snapshots = captured_rows
+        .iter()
+        .filter(|r| r["kind"] == "HISTORY_EVENT" && r["event"]["snapshot"].is_string())
+        .map(|r| {
+            (
+                r["id"].as_str().unwrap().to_owned(),
+                r["event"]["snapshot"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect::<Vec<_>>();
+    let mut writer = VaultWriter::create_encrypted(&root, &key).unwrap();
+    let c = writer.connection();
+    begin_bootstrap(c, &context, &captured["manifest"], now).unwrap();
+    for (i, p) in captured["pages"].as_array().unwrap().iter().enumerate() {
+        stage_bootstrap_page(c, &context, i, p.as_str().unwrap(), now).unwrap();
+    }
+    activate_bootstrap(c, &context, now, &id(1000)).unwrap();
+    let pages = captured["pages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p.as_str().unwrap().to_owned())
+        .collect::<Vec<_>>();
+    let before = c.total_changes();
+    for _ in 0..2 {
+        import_history(c, &context, &captured["manifest"], &pages, now).unwrap();
+    }
+    assert_eq!(
+        c.total_changes(),
+        before,
+        "history replay must be read-only for already captured facts"
+    );
+    c.execute("UPDATE native_sales_cursor_v1 SET sequence=0", [])
+        .unwrap();
+    assert_eq!(
+        import_history(c, &context, &captured["manifest"], &pages, now)
+            .unwrap_err()
+            .code(),
+        "HISTORY_SYNC_REQUIRED"
+    );
+    c.execute(
+        "UPDATE native_sales_cursor_v1 SET sequence=?1",
+        [captured["manifest"]["watermark"].as_str().unwrap()],
+    )
+    .unwrap();
+    assert_eq!(
+        c.query_row::<i64, _, _>("SELECT count(*) FROM sales", [], |r| r.get(0))
+            .unwrap(),
+        original_snapshots.len() as i64
+    );
+    for p in captured_rows.iter().filter(|r| r["kind"] == "PRODUCT") {
+        assert_eq!(
+            c.query_row::<String, _, _>(
+                "SELECT effective_stock FROM stock_projections WHERE producto_id=?1",
+                [p["id"].as_str().unwrap()],
+                |r| r.get(0)
+            )
+            .unwrap(),
+            p["stock"]["quantity"].as_str().unwrap()
+        );
+    }
+    for table in [
+        "outbox",
+        "inventory_movements",
+        "sale_cash_entries_v1",
+        "sale_credit_entries_v1",
+    ] {
+        assert_eq!(
+            c.query_row::<i64, _, _>(&format!("SELECT count(*) FROM {table}"), [], |r| r.get(0))
+                .unwrap(),
+            0
+        );
+    }
+    drop(writer);
+    let mut writer = VaultWriter::open_encrypted(&root, &key).unwrap();
+    let c = writer.connection();
+    for (op, raw) in original_snapshots {
+        let saved: Vec<u8> = c
+            .query_row(
+                "SELECT snapshot_bytes FROM sale_ticket_snapshots_v1 WHERE operation_id=?1",
+                [&op],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(saved, raw.as_bytes());
+        assert_eq!(
+            ventard_core::application::history::ticket(c, &context, &op).unwrap(),
+            serde_json::from_str::<Value>(&raw).unwrap()
+        );
+    }
+    assert_eq!(
+        c.query_row::<String, _, _>("SELECT installation_id FROM ticket_sequences", [], |r| r
+            .get(0))
+            .unwrap(),
+        context.installation_id
+    );
+    if captured["manifest"]["serviceRefunds"]
+        .as_array()
+        .is_some_and(|r| !r.is_empty())
+    {
+        let repairs = ventard_core::application::repairs::read(c, &context).unwrap();
+        assert_eq!(repairs["rows"][0]["revision"], "2");
+        assert_eq!(repairs["rows"][0]["state"], "cancelado");
+        assert_eq!(repairs["rows"][0]["settlement"]["refundedCents"], "40");
+        let turn = captured["manifest"]["turn"]["receipt"]["operationId"]
+            .as_str()
+            .unwrap();
+        assert_eq!(
+            ventard_core::application::management::drawer(c, &context, turn).unwrap()
+                ["expectedCents"],
+            "50060"
+        );
+    }
+    assert!(c
+        .prepare("PRAGMA foreign_key_check")
+        .unwrap()
+        .query([])
+        .unwrap()
+        .next()
+        .unwrap()
+        .is_none());
+}
 #[test]
 fn other_pc_receives_whole_sale_once_and_keeps_own_pending_stock() {
     let mut c = db();

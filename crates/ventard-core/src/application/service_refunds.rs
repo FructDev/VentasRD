@@ -363,6 +363,18 @@ pub fn import_capture(
         tx.execute("INSERT INTO operation_journal VALUES(?1,'ventard.native.v1','SERVICE_REFUND',1,?2,?3,?4,?5,?6,?7,?8,COALESCE((SELECT MAX(local_seq) FROM operation_journal),0)+1,'COMMITTED',?9)",(op,raw.as_bytes(),hash,s(&v["actorId"])?,origin,s(&v["originDeviceId"])?,n(s(&v["writerEpoch"])?)?,s(&v["originAtUtcMs"])?,json!({"remoteStatus":"APPLIED","source":"CURRENT_CAPTURE"}).to_string()))?;
         insert(tx, ctx, &v)?;
         tx.execute("INSERT INTO native_management_records_v1 VALUES(?1,?2,?3,'SERVICE_REFUND',?4,NULL,?5,?6,?7,?8,?9)",(op,&ctx.tenant_id,&sk,v["originalTurnId"].as_str(),s(&doc["method"])?,n(s(&doc["amountCents"])?)?,s(&doc["concept"])?,s(&v["originAtUtcMs"])?,doc.to_string()))?;
+        let (receipt_raw, _) =
+            canonicalize(&serde_json::to_vec(r).map_err(|_| invalid())?).map_err(|_| invalid())?;
+        tx.execute(
+            "INSERT INTO native_sales_receipts_v1 VALUES(?1,?2,?3,?4,?5)",
+            (
+                op,
+                &ctx.tenant_id,
+                &sk,
+                n(s(&r["remoteSequence"])?)?,
+                receipt_raw,
+            ),
+        )?;
     }
     Ok(())
 }

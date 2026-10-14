@@ -195,6 +195,7 @@ export interface PosCashView {
   limitation: "COMMERCIAL_BOOTSTRAP_REQUIRED"|"STAGING_NATIVE_SHARED_TURN";
 }
 export interface PosPort {
+  historyLoadRemote?():Promise<{coverage:string;count:string;watermark:string;capturedAtMs:string}>;
   photos?(productIds:string[]):Promise<{rows:{id:string;version:string;data:string}[]}>;
   printTicket?(operationId:string,snapshotHash:string,attemptId:string,raster?:import("./management").PrintRaster):Promise<{status:string;submitted?:boolean}>;
   management?: import('./management').ManagementPort;
@@ -273,6 +274,8 @@ export const nativePosPort: PosPort = {
   },
 };
 const errors: Record<string, string> = {
+  HISTORY_MIGRATION_REQUIRED:'El servidor necesita habilitar la descarga del historial nativo. Las ventas guardadas se conservan.',
+  HISTORY_SYNC_REQUIRED:'Resuelve los pendientes y completa la sincronización antes de descargar la historia. No se repitieron ventas.',
   PRINT_QUEUE_MISSING:'La cola de impresora ya no está instalada. Revisa la conexión en Ajustes.',
   PRINT_TARGET_CHANGED:'La conexión de impresión cambió. Vuelve a abrir el ticket para usar el destino actual.',
   PRINT_TARGET_INVALID:'Selecciona una conexión de impresora válida en Ajustes.',
@@ -449,6 +452,7 @@ export const nativeOperationalPort:PosPort={
  async load(){const value=await salesAccountPort.read();if(!value)throw{code:"COMMERCIAL_BOOTSTRAP_REQUIRED"};return value;},
  quote:(lines,_tender,options)=>{if(!options)throw{code:"CONTRACT_INVALID"};return salesAccountPort.quote(lines,options);},
  confirm:salesAccountPort.confirm,result:salesAccountPort.result,abandon:salesAccountPort.abandon,
+ historyLoadRemote:salesAccountPort.historyLoadRemote,
  synchronize:salesAccountPort.synchronize,openTurn:salesAccountPort.openTurn,retry:salesAccountPort.retry,
 };
 export function posError(error: unknown): string {

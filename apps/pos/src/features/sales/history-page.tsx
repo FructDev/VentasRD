@@ -33,6 +33,8 @@ function boundary(day: string, next = false): string | null {
   return String(ms);
 }
 export function HistoryPage() {
+  const [loadingHistory,setLoadingHistory]=useState(false),[historyNotice,setHistoryNotice]=useState(''),[historyError,setHistoryError]=useState('');
+  const historyGate=useRef(false);
   const s = useSales(),
     [search, setSearch] = useState(""),
     [method, setMethod] = useState<string | null>(null),
@@ -128,11 +130,11 @@ export function HistoryPage() {
           </div>
         </header>
         <p className="text-xs text-vr-orange border border-gold/20 bg-gold/5 rounded-xl p-3 mb-4">
-          Historial local, no reporte central completo. Incluye ventas nativas
-          locales y las recibidas por sincronización de este ámbito; no importa
-          automáticamente el histórico de la PWA. Cada venta indica si tiene
-          recibo remoto verificado.
+          Ventas nativas guardadas y recibidas de este ámbito, con sus tickets originales.
+          La historia anterior del navegador se consulta en «Historia trasladada».
+          Cada venta indica si tiene recibo remoto verificado.
         </p>
+        {s.historyLoadRemote&&<div className="mb-4"><button type="button" disabled={loadingHistory||s.busy} className="px-4 py-2 rounded-xl border border-navy-3 text-gold font-bold text-sm disabled:opacity-40" onClick={()=>void(async()=>{if(historyGate.current)return;historyGate.current=true;setLoadingHistory(true);setHistoryError('');try{const result=await s.historyLoadRemote!();setHistoryNotice(`Historia descargada: ${result.count} operaciones verificadas. Se conservaron los tickets y saldos actuales.`);setRevision(v=>v+1);await s.refresh();}catch(e){setHistoryError(posError(e));}finally{historyGate.current=false;setLoadingHistory(false);}})()}>{loadingHistory?'Descargando historia…':'Descargar historial de la nube'}</button>{historyNotice&&<p role="status" className="text-sm text-vr-green mt-2">{historyNotice}</p>}{historyError&&<p role="alert" className="text-sm text-vr-red mt-2">{historyError}</p>}</div>}
         <div className="flex gap-2 flex-wrap mb-4">
           {methods.map(([id, label]) => (
             <button

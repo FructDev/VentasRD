@@ -455,6 +455,7 @@ pub fn activate_bootstrap(
     for row in &rows {
         match text(&row["kind"])? {
             "PRODUCT" => {}
+            "HISTORY_EVENT" => {}
             "CUSTOMER" => {
                 let id = text(&row["id"])?;
                 EntityId::parse(id).map_err(|_| invalid())?;
@@ -579,6 +580,51 @@ pub fn activate_bootstrap(
     }
     if m["cashBase"].is_object() {
         store_cash_base(&tx, ctx, &m["cashBase"], integer(&m["watermark"])?)?;
+    }
+    let history = rows
+        .iter()
+        .filter(|r| r["kind"] == "HISTORY_EVENT")
+        .collect::<Vec<_>>();
+    if m["historyCoverage"].is_string() {
+        if m["historyCoverage"] != "NATIVE_LEDGER_THROUGH_WATERMARK"
+            || m["historyCount"] != history.len()
+        {
+            return Err(invalid());
+        }
+    } else if !history.is_empty() {
+        return Err(invalid());
+    }
+    let mut history_ids = HashSet::new();
+    let mut history_sequence = 0;
+    for row in history {
+        let event = &row["event"];
+        let sequence = integer(&event["receipt"]["remoteSequence"])?;
+        if row["id"] != event["receipt"]["operationId"]
+            || !history_ids.insert(text(&row["id"])?)
+            || sequence <= history_sequence
+        {
+            return Err(invalid());
+        }
+        import_history_event(&tx, ctx, event, integer(&m["watermark"])?)?;
+        history_sequence = sequence;
+    }
+    for row in rows
+        .iter()
+        .filter(|r| r["kind"] == "SERIAL" && !r["saleOperationId"].is_null())
+    {
+        let op = text(&row["saleOperationId"])?;
+        EntityId::parse(op).map_err(|_| invalid())?;
+        if row["state"] != "SOLD" {
+            return Err(invalid());
+        }
+        let snapshot = super::history::ticket(&tx, ctx, op)?;
+        if !array(&snapshot["sale"]["serials"])?
+            .iter()
+            .any(|s| s["productId"] == row["productId"] && s["text"] == row["text"])
+        {
+            return Err(invalid());
+        }
+        tx.execute("UPDATE sale_serial_inventory_v1 SET sale_operation_id=?4 WHERE tenant_id=?1 AND scope_key=?2 AND serial=?3 AND state='SOLD'",(&ctx.tenant_id,&sk,text(&row["text"])?,op))?;
     }
     if m["business"].is_object() {
         tx.execute("INSERT INTO native_business_profile_v1 VALUES(?1,?2) ON CONFLICT(tenant_id) DO UPDATE SET profile=excluded.profile",(&ctx.tenant_id,m["business"].to_string()))?;
@@ -1168,7 +1214,7 @@ fn receive_in(tx: &Transaction<'_>, ctx: &CatalogueContext, event: &Value) -> Re
         } else if v["kind"].as_str().is_some_and(super::management::supports) {
             super::management::apply(tx, ctx, &v, true)?;
         } else {
-            import_sale(tx, ctx, &v, event)?;
+            import_sale(tx, ctx, &v, event, true)?;
         }
     }
     if v["kind"].as_str().is_some_and(super::management::supports) {
@@ -1222,6 +1268,7 @@ fn import_sale(
     ctx: &CatalogueContext,
     v: &Value,
     event: &Value,
+    replay_effects: bool,
 ) -> Result<(), AppError> {
     let op = text(&v["operationId"])?;
     let sk = scope_key(ctx)?;
@@ -1267,7 +1314,7 @@ fn import_sale(
             ),
         )?;
     }
-    for e in array(&sale["inventory"])? {
+    for e in array(&sale["inventory"])?.iter().filter(|_| replay_effects) {
         let pid = text(&e["productId"])?;
         tx.execute(
             "INSERT INTO inventory_movements VALUES(?1,?2,?3,?4,'SALE',?5,NULL,NULL,?6)",
@@ -1281,13 +1328,13 @@ fn import_sale(
             ),
         )?;
     }
-    for serial in array(&sale["serials"])? {
+    for serial in array(&sale["serials"])?.iter().filter(|_| replay_effects) {
         let changed=tx.execute("UPDATE sale_serial_inventory_v1 SET state='SOLD',sale_operation_id=?5 WHERE tenant_id=?1 AND scope_key=?2 AND producto_id=?3 AND serial=?4 AND state='AVAILABLE'",(&ctx.tenant_id,&sk,text(&serial["productId"] )?,text(&serial["text"] )?,op))?;
         if changed != 1 {
             return Err(conflict());
         }
     }
-    if p["method"] == "FIADO" {
+    if p["method"] == "FIADO" && replay_effects {
         let cid = text(&p["customerId"])?;
         let before:i64=tx.query_row("SELECT balance_cents FROM sale_customer_accounts_v1 WHERE customer_id=?1 AND tenant_id=?2",(cid,&ctx.tenant_id),|r|r.get(0))?;
         let charge = integer(&p["creditChargeCents"])?;
@@ -1297,7 +1344,7 @@ fn import_sale(
             (op, cid, &ctx.tenant_id, &sk, charge, before, after),
         )?;
         tx.execute("UPDATE sale_customer_accounts_v1 SET balance_cents=?2,revision=revision+1 WHERE customer_id=?1",(cid,after))?;
-    } else {
+    } else if p["method"] != "FIADO" {
         let legs = match text(&p["method"])? {
             "EFECTIVO" => vec![("EFECTIVO", "cashNetCents")],
             "TARJETA" => vec![("TARJETA", "cardCents")],
@@ -1331,7 +1378,7 @@ fn import_sale(
             )?;
         }
     }
-    if matches!(p["method"].as_str(), Some("EFECTIVO" | "MIXTO")) {
+    if replay_effects && matches!(p["method"].as_str(), Some("EFECTIVO" | "MIXTO")) {
         tx.execute(
             "INSERT INTO sale_cash_entries_v1 VALUES(?1,?2,?3,?4,?5)",
             (
@@ -1352,6 +1399,177 @@ fn import_sale(
     tx.execute(
         "UPDATE operation_journal SET result=?2 WHERE operation_id=?1",
         (op, result.to_string()),
+    )?;
+    Ok(())
+}
+
+// Immutable facts at/below the frozen bootstrap watermark. Their stock, debt,
+// services and drawer effects are already represented by the current baseline.
+// Never put them in the outbox or replay them through management::apply.
+/// Add earlier immutable history to an existing installation only after its
+/// live feed has caught up to this snapshot. Mutable projections stay intact.
+pub fn import_history(
+    c: &mut Connection,
+    ctx: &CatalogueContext,
+    m: &Value,
+    pages: &[String],
+    now: u64,
+) -> Result<Value, AppError> {
+    manifest_valid(ctx, m, now)?;
+    if m["historyCoverage"] != "NATIVE_LEDGER_THROUGH_WATERMARK" {
+        return Err(AppError::Business(
+            super::errors::BusinessError::SaleGuard {
+                code: "HISTORY_MIGRATION_REQUIRED".into(),
+            },
+        ));
+    }
+    let sk = scope_key(ctx)?;
+    let tx = c.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let sequence: Option<i64> = tx
+        .query_row(
+            "SELECT sequence FROM native_sales_cursor_v1 WHERE tenant_id=?1 AND scope_key=?2",
+            (&ctx.tenant_id, &sk),
+            |r| r.get(0),
+        )
+        .optional()?;
+    let watermark = integer(&m["watermark"])?;
+    if sequence.is_none_or(|s| s < watermark) {
+        return Err(AppError::Business(
+            super::errors::BusinessError::SaleGuard {
+                code: "HISTORY_SYNC_REQUIRED".into(),
+            },
+        ));
+    }
+    let waiting:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM operation_journal j LEFT JOIN outbox o USING(operation_id) WHERE json_extract(CAST(j.canonical_bytes AS TEXT),'$.negocioId')=?1 AND (j.local_state='PREPARED' OR o.state<>'APPLIED'))",[&ctx.tenant_id],|r|r.get(0))?;
+    if waiting {
+        return Err(AppError::Business(
+            super::errors::BusinessError::SaleGuard {
+                code: "HISTORY_SYNC_REQUIRED".into(),
+            },
+        ));
+    }
+    let descriptors = array(&m["pages"])?;
+    if pages.len() != descriptors.len() {
+        return Err(invalid());
+    }
+    let mut total_bytes = 0usize;
+    let mut count = 0usize;
+    let mut last = 0;
+    let mut ids = HashSet::new();
+    for (raw, d) in pages.iter().zip(descriptors) {
+        total_bytes = total_bytes
+            .checked_add(raw.len())
+            .filter(|n| *n <= 64 * 1024 * 1024)
+            .ok_or_else(invalid)?;
+        let (canonical, h) = canonicalize(raw.as_bytes()).map_err(|_| invalid())?;
+        let rows: Value = serde_json::from_str(raw).map_err(|_| invalid())?;
+        if canonical != *raw
+            || d["sha256"] != h
+            || d["byteLength"] != raw.len()
+            || d["count"] != array(&rows)?.len()
+        {
+            return Err(invalid());
+        }
+        for row in array(&rows)?
+            .iter()
+            .filter(|r| r["kind"] == "HISTORY_EVENT")
+        {
+            let event = &row["event"];
+            let sequence = integer(&event["receipt"]["remoteSequence"])?;
+            if sequence <= last
+                || row["id"] != event["receipt"]["operationId"]
+                || !ids.insert(text(&row["id"])?.to_owned())
+            {
+                return Err(invalid());
+            }
+            import_history_event(&tx, ctx, event, watermark)?;
+            last = sequence;
+            count += 1;
+        }
+    }
+    if m["historyCount"] != count {
+        return Err(invalid());
+    }
+    tx.commit()?;
+    Ok(
+        json!({"coverage":"NATIVE_LEDGER_THROUGH_WATERMARK","count":count.to_string(),"watermark":watermark.to_string(),"capturedAtMs":m["capturedAtMs"],"legacyReplay":false}),
+    )
+}
+fn import_history_event(
+    tx: &Transaction<'_>,
+    ctx: &CatalogueContext,
+    event: &Value,
+    watermark: i64,
+) -> Result<(), AppError> {
+    let intent = text(&event["intent"])?;
+    let (canonical, hash) = canonicalize(intent.as_bytes()).map_err(|_| invalid())?;
+    if canonical != intent {
+        return Err(invalid());
+    }
+    let v: Value = serde_json::from_str(intent).map_err(|_| invalid())?;
+    let receipt = &event["receipt"];
+    validate_event(ctx, &v, event["snapshot"].as_str(), receipt)?;
+    let sequence = integer(&receipt["remoteSequence"])?;
+    if sequence > watermark {
+        return Err(invalid());
+    }
+    let op = text(&v["operationId"])?;
+    let sk = scope_key(ctx)?;
+    let receipt_raw = bytes(receipt)?.0;
+    let old: Option<(Vec<u8>, String)> = tx
+        .query_row(
+            "SELECT canonical_bytes,hash FROM operation_journal WHERE operation_id=?1",
+            [op],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?;
+    if let Some((raw, old_hash)) = old {
+        if raw != intent.as_bytes() || old_hash != hash {
+            return Err(conflict());
+        }
+        let existing:String=tx.query_row("SELECT receipt FROM native_sales_receipts_v1 WHERE operation_id=?1 AND tenant_id=?2 AND scope_key=?3",(op,&ctx.tenant_id,&sk),|r|r.get(0))?;
+        if existing != receipt_raw {
+            return Err(conflict());
+        }
+        return Ok(());
+    }
+    let origin = if ctx.scope_type == "GLOBAL" {
+        "GLOBAL".into()
+    } else {
+        format!("BRANCH:{}", ctx.branch_id.as_deref().ok_or_else(invalid)?)
+    };
+    let kind = text(&v["kind"])?;
+    tx.execute("INSERT INTO operation_journal VALUES(?1,'ventard.native.v1',?2,1,?3,?4,?5,?6,?7,?8,?9,COALESCE((SELECT MAX(local_seq) FROM operation_journal),0)+1,'COMMITTED',?10)",(op,kind,intent.as_bytes(),hash,text(&v["actorId"])?,origin,text(&v["originDeviceId"])?,integer(&v["writerEpoch"])?,text(&v["originAtUtcMs"])?,json!({"remoteStatus":"APPLIED","source":"BOOTSTRAP_HISTORY"}).to_string()))?;
+    if kind == "SALE_CONFIRM" {
+        import_sale(tx, ctx, &v, event, false)?;
+    } else if super::management::supports(kind) {
+        let d = &v["payload"]["document"];
+        tx.execute(
+            "INSERT INTO native_management_records_v1 VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
+            (
+                op,
+                &ctx.tenant_id,
+                &sk,
+                kind,
+                v["originalTurnId"].as_str(),
+                d["customerId"].as_str(),
+                d["method"].as_str(),
+                d["amountCents"]
+                    .as_str()
+                    .map(|s| integer(&json!(s)))
+                    .transpose()?
+                    .unwrap_or(0),
+                d["concept"].as_str().unwrap_or(kind),
+                text(&v["originAtUtcMs"])?,
+                d.to_string(),
+            ),
+        )?;
+    } else if kind != "TURN_OPEN" {
+        return Err(invalid());
+    }
+    tx.execute(
+        "INSERT INTO native_sales_receipts_v1 VALUES(?1,?2,?3,?4,?5)",
+        (op, &ctx.tenant_id, &sk, sequence, receipt_raw),
     )?;
     Ok(())
 }

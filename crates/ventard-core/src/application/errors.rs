@@ -63,6 +63,8 @@ impl AppError {
     pub fn code(&self) -> &'static str {
         match self {
             Self::Business(BusinessError::SaleGuard { code }) => match code.as_str() {
+                "HISTORY_MIGRATION_REQUIRED" => "HISTORY_MIGRATION_REQUIRED",
+                "HISTORY_SYNC_REQUIRED" => "HISTORY_SYNC_REQUIRED",
                 "TURN_REQUIRED" => "TURN_REQUIRED",
                 "TURN_CHANGED" => "TURN_CHANGED",
                 "STOCK_UNVERIFIED" => "STOCK_UNVERIFIED",

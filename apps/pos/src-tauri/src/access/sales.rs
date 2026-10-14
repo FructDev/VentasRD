@@ -1,7 +1,7 @@
 //! Account Sales: typed IPC, fixed Staging host, network outside the vault/UI
 //! mutex. Never mint authority from previews or accept SQL/RPC/URLs from React.
 use super::*;
-#[path="product_media.rs"]
+#[path = "product_media.rs"]
 mod product_media;
 use ventard_core::application::{
     checkout,
@@ -15,7 +15,11 @@ use ventard_core::application::{
     deny_unknown_fields
 )]
 pub enum SalesAction {
-    ProductPhotos { #[serde(rename="productIds")] product_ids:Vec<String> },
+    HistoryLoadRemote {},
+    ProductPhotos {
+        #[serde(rename = "productIds")]
+        product_ids: Vec<String>,
+    },
     PrinterRead {},
     PrinterTest {
         #[serde(rename = "attemptId")]
@@ -478,6 +482,60 @@ impl AccessState {
             .map_err(|e| error(e.code()))?;
         self.sales_local(|c, ctx, _, _, _| sync::read(c, &ctx))
     }
+    fn sales_history_remote(&self) -> Result<Value, AccessError> {
+        self.sales_sync()?;
+        let n = self.sales_network()?;
+        let ctx = n.selected.catalogue_context();
+        let mut request = body(&ctx);
+        let snapshot_id = EntityId::new_random().to_string();
+        request["p_snapshot_id"] = json!(snapshot_id);
+        let manifest =
+            Self::sales_rpc(&n, "native_sales_bootstrap_v1", request).map_err(sales_http)?;
+        if manifest["snapshotId"] != snapshot_id
+            || manifest["historyCoverage"] != "NATIVE_LEDGER_THROUGH_WATERMARK"
+        {
+            return Err(error("HISTORY_MIGRATION_REQUIRED"));
+        }
+        let descriptors = manifest["pages"]
+            .as_array()
+            .filter(|p| p.len() <= 300)
+            .ok_or(error("SALES_EVIDENCE_INVALID"))?;
+        let mut pages = Vec::new();
+        let mut total = 0usize;
+        for (index, _) in descriptors.iter().enumerate() {
+            self.sales_current(&n)?;
+            let mut request = body(&ctx);
+            request["p_snapshot_id"] = json!(snapshot_id);
+            request["p_page_index"] = json!(index);
+            let page = Self::sales_rpc(&n, "native_sales_bootstrap_page_v1", request)
+                .map_err(sales_http)?;
+            if page["snapshotId"] != snapshot_id || page["index"] != index {
+                return Err(error("SALES_EVIDENCE_INVALID"));
+            }
+            let raw = page["payload"]
+                .as_str()
+                .filter(|s| s.len() <= 1_048_576)
+                .ok_or(error("SALES_EVIDENCE_INVALID"))?;
+            total = total
+                .checked_add(raw.len())
+                .filter(|n| *n <= 64 * 1024 * 1024)
+                .ok_or(error("SALES_EVIDENCE_INVALID"))?;
+            pages.push(raw.to_owned());
+        }
+        // Catch up effects that already existed at the snapshot before adding
+        // missing older facts. Do not rewind live stock, debt or drawer state.
+        self.sales_sync()?;
+        self.sales_current(&n)?;
+        self.sales_local(move |c, current, _, _, _| {
+            sync::import_history(
+                c,
+                &current,
+                &manifest,
+                &pages,
+                time().map_err(|_| AppError::Storage("CLOCK".into()))?,
+            )
+        })
+    }
     fn sales_sync(&self) -> Result<Value, AccessError> {
         let n = self.sales_network()?;
         let ctx = n.selected.catalogue_context();
@@ -640,7 +698,7 @@ impl AccessState {
     }
     fn sales_action(&self, action: SalesAction) -> Result<Value, AccessError> {
         match action {
-            SalesAction::ProductPhotos {product_ids}=>self.product_photos(product_ids),
+            SalesAction::ProductPhotos { product_ids } => self.product_photos(product_ids),
             SalesAction::PrinterTest { attempt_id } => {
                 let now = time()?;
                 let a = attempt_id.clone();
@@ -696,6 +754,7 @@ impl AccessState {
                 self.fiscal_settings_send(None, Some(operation_id), true)
             }
             SalesAction::Bootstrap => self.sales_bootstrap(),
+            SalesAction::HistoryLoadRemote {} => self.sales_history_remote(),
             SalesAction::Synchronize => self.sales_sync(),
             SalesAction::Activate {
                 confirmation,

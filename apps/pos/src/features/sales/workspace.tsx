@@ -486,6 +486,7 @@ function useWorkspace(port: PosPort) {
     autoPrintTicket,
     printTicket: port.printTicket,
     historyRead: port.historyRead,
+    historyLoadRemote:port.historyLoadRemote,
     readTicket: port.ticket,
     customerName,
     setCustomerName,

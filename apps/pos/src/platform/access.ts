@@ -116,6 +116,7 @@ export const accountDraftPort = {
 };
 export const cashPort = { read: () => call<PosCashView>("native_cash_read") };
 export const salesAccountPort={
+ historyLoadRemote:()=>call<{coverage:string;count:string;watermark:string;capturedAtMs:string}>('native_sales',{command:{action:'HISTORY_LOAD_REMOTE'}}),
  photos:(productIds:string[])=>call<{rows:{id:string;version:string;data:string}[]}>('native_sales',{command:{action:'PRODUCT_PHOTOS',productIds}}),
  print:(operationId:string,snapshotHash:string,attemptId:string,raster?:import("./management").PrintRaster)=>call<{status:string;submitted?:boolean}>('native_sales',{command:{action:'PRINT',operationId,snapshotHash,attemptId,...(raster?{raster}:{})}}),
  read:()=>call<PosSnapshot|null>("native_sales",{command:{action:"READ"}}),
@@ -183,6 +184,8 @@ const messages: Record<string, string> = {
   SALES_SCOPE_CONFLICT:"El negocio QA ya se adoptó en otro ámbito. Usa la misma sucursal; no se cambiará ni reparará stock automáticamente.",
   SALES_SOURCE_UNVERIFIABLE:"Los datos de origen de Staging no permiten una preparación segura. Hay que revisar el dato incompatible; no se inventarán saldos, precios ni historia.",
   SALES_SCHEMA_INCOMPATIBLE:"La función de Staging no coincide con el esquema desplegado. Se conservan los datos; hace falta corregir la compatibilidad del servidor.",
+  HISTORY_MIGRATION_REQUIRED:'El servidor todavía necesita habilitar la descarga del historial nativo. Tus ventas guardadas se conservan.',
+  HISTORY_SYNC_REQUIRED:'Primero hay que resolver los pendientes y completar la sincronización. La historia se conserva sin repetir ventas.',
   SALES_MIGRATION_REQUIRED:"El servidor Staging todavía no tiene la migración de Ventas. No se usará producción.",
   SALES_REMOTE_DENIED:"El servidor no autorizó esta cuenta o instalación. El trabajo local se conserva.",
   SALES_REMOTE_CONFLICT:"El servidor rechazó la operación o su preparación. Se conserva para revisión, sin repetir efectos.",

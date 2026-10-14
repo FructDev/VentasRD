@@ -13,7 +13,7 @@ use crate::{
     },
     storage::catalogue_preview::CatalogueContext,
 };
-use rusqlite::{Connection, Transaction};
+use rusqlite::{Connection, OptionalExtension, Transaction};
 use serde_json::{json, Value};
 fn invalid() -> AppError {
     AppError::Protocol(ProtocolError::MalformedPayload)
@@ -36,6 +36,34 @@ fn basis(c: &Connection, ctx: &CatalogueContext, sale_id: &str) -> Result<Value,
     )?;
     ticket["printSnapshotHash"] = json!(hash);
     Ok(ticket)
+}
+fn acknowledged_charge(
+    c: &Connection,
+    ctx: &CatalogueContext,
+    sale: &str,
+    customer: &str,
+) -> Result<bool, AppError> {
+    let row:Option<(Vec<u8>,String,Vec<u8>,String)>=c.query_row("SELECT j.canonical_bytes,j.hash,t.snapshot_bytes,r.receipt FROM operation_journal j JOIN sale_ticket_snapshots_v1 t USING(operation_id) JOIN native_sales_receipts_v1 r USING(operation_id) WHERE j.operation_id=?1 AND r.tenant_id=?2 AND r.scope_key=?3",(sale,&ctx.tenant_id,sales::scope_key(ctx)?),|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional()?;
+    let Some((raw, hash, snapshot, receipt)) = row else {
+        return Ok(false);
+    };
+    let (canonical, h) = canonicalize(&raw).map_err(|_| invalid())?;
+    if canonical.as_bytes() != raw || h != hash {
+        return Err(invalid());
+    }
+    let v: Value = serde_json::from_slice(&raw).map_err(|_| invalid())?;
+    let receipt: Value = serde_json::from_str(&receipt).map_err(|_| invalid())?;
+    super::sales_sync::validate_event(
+        ctx,
+        &v,
+        Some(std::str::from_utf8(&snapshot).map_err(|_| invalid())?),
+        &receipt,
+    )?;
+    let p = &v["payload"]["sale"]["payment"];
+    Ok(v["kind"] == "SALE_CONFIRM"
+        && p["method"] == "FIADO"
+        && p["customerId"] == customer
+        && n(&p["creditChargeCents"])? > 0)
 }
 fn prior(
     c: &Connection,
@@ -161,7 +189,8 @@ pub fn document(c: &Connection, ctx: &CatalogueContext, req: &Command) -> Result
         let charge:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM sale_credit_entries_v1 WHERE operation_id=?1 AND tenant_id=?2 AND customer_id=?3 AND amount_cents>0)",(sale_id,&ctx.tenant_id,cid),|r|r.get(0))?;
         let amount = n(&refund["amountCents"])?;
         let before = n(&old["balanceCents"])?;
-        if !charge || old["authority"] != "VERIFIED" {
+        if !(charge || acknowledged_charge(c, ctx, sale_id, cid)?) || old["authority"] != "VERIFIED"
+        {
             return Err(guard("RETURN_CREDIT_UNVERIFIED"));
         }
         if before < amount {

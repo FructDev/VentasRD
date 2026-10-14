@@ -1,5 +1,6 @@
 // Real isolated PostgreSQL engine, synthetic fixtures only.
 import {test} from 'node:test';import assert from 'node:assert/strict';import {readFile} from 'node:fs/promises';
+export {refund};
 import {repairSetup,base,envelope,action,stock,proGrant,repairId} from './repairs-server.test.mjs';
 import {managementCommand,submitManagement,openTurn,context,rpc,id,tenant,actor} from './sales-server.test.mjs';
 import {layawaySetup,layawayCreate,layawayEnvelope,layawayAction,layawayStock} from './layaways-server.test.mjs';
