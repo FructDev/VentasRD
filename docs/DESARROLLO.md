@@ -2,6 +2,8 @@
 
 Actualizado: 2026-10-14. Única fuente de prioridades y estado operativo.
 
+**Alcance vigente solicitado:** terminar la implementación pendiente antes de la revisión integral. NCF/fiscal queda aplazado por decisión del usuario; se conserva lo existente. Las validaciones durante implementación se limitan a integridad de dinero, stock, datos y compatibilidad necesaria. Las migraciones nuevas se preparan con código y pruebas; no se aplican remotamente sin autorización específica.
+
 **Estado de entrega actual:** candidato Windows de desarrollo/QA, integrado y ejecutable, todavía no entrega comercial. El acceso nativo apunta a Staging y admite únicamente QA A/B; el paquete usa identidad QA, emisor local y build debug, sin instalador de distribución. Implementado/probado localmente no significa módulo terminado ni listo para producción. Las entradas de avance inferiores describen estados históricos; la autorización/aplicación fiscal posterior supersede sus notas iniciales de migración pendiente.
 
 **Pendientes de cierre:** receptor fiscal/607 y transición de tipos NCF; recuperación operativa en otra PC y migración de historia/dinero/deuda legacy; detalles de paridad (fotos y merma/conteo serializado, liquidación de depósitos, catálogo público/invitaciones, vendedor verificable); recorridos reales de las extensiones desde las apps QA A/B con roles/planes/recuperación; papel/gaveta/corte/BLE; distribución/provisión/actualizaciones comerciales, revisión y piloto. macOS/Android/iOS siguen sin entrega física validada. Una venta TARJETA A→Staging→B ya fue demostrada en dos instalaciones de esta misma PC; no cierra todos esos recorridos.
@@ -9,6 +11,8 @@ Actualizado: 2026-10-14. Única fuente de prioridades y estado operativo.
 Arquitectura sin cambios: React/Vite + Tauri 2, core Rust, SQLite cifrado y sincronización directa con Supabase. Se conserva la sencillez y el arranque/operación offline autorizados. Documentación anterior = referencia de diseño/evidencia, no workflow obligatorio ni tablero paralelo.
 
 ## Tablero
+
+Avance de implementación 2026-10-14: Inventario incorpora merma de series seleccionadas y conteo físico completo; conserva LOST/RESERVED/SOLD, restaura unidades propias de merma y protege revisión, replay, permisos y rollback. Fotos PNG acotadas guardadas en catálogo cifrado, creación/cambio/quitar en el editor definitivo y presentación en Inventario/Ventas; editar otros campos conserva la foto. Se retienen referencias de fotos legacy externas; su descarga/caché sigue pendiente. Esquema local 28 y migraciones Staging `20261014134601`/`20261014140730` preparadas, sin aplicación remota. Verificación ejecutada: 64 tests de gestión/SQLCipher PASS (5 roundtrips separados ignorados), 2 pruebas PostgreSQL de las extensiones (DDL 2x, replay/CAS/rollback/bootstrap) PASS, typecheck y clippy core PASS. No se declara terminada la paridad ni se ha actualizado todavía el ejecutable abierto. Siguiente implementación: liquidación de depósitos.
 
 Estados: pendiente, en desarrollo, bloqueado, terminado. Una funcionalidad activa a la vez; dependencias técnicas se resuelven dentro de ella.
 

@@ -69,6 +69,7 @@ impl AppError {
                 "STOCK_UNAVAILABLE" => "STOCK_UNAVAILABLE",
                 "VERSION_CONFLICT" => "VERSION_CONFLICT",
                 "SERIAL_CONFLICT" => "SERIAL_CONFLICT",
+                "SERIAL_INVENTORY_DIVERGED" => "SERIAL_INVENTORY_DIVERGED",
                 "CREDIT_LIMIT" => "CREDIT_LIMIT",
                 "CREDIT_OVERPAY" => "CREDIT_OVERPAY",
                 "CREDIT_BALANCE_PENDING" => "CREDIT_BALANCE_PENDING",

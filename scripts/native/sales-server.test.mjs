@@ -216,4 +216,4 @@ test('real Rust checkout bytes are accepted unchanged by PostgreSQL and emit mat
  await writeFile(new URL('../../scratch/native-sale-roundtrip.json',import.meta.url),JSON.stringify({...wire,receipt}));assert.deepEqual(s.sale,v.payload.sale);
  }finally{await db.close();}
 });
-export {inventorySetup,command,managementCommand,submitManagement,openTurn,context,rpc,hash,canon,id,product,tenant,actor,installation,device,branch};
+export {inventorySetup,productCommand,stockCommand,command,managementCommand,submitManagement,openTurn,context,rpc,hash,canon,id,product,tenant,actor,installation,device,branch};

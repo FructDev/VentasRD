@@ -9,6 +9,7 @@ export interface ProductView {
   stock: string;
   available: boolean;
   stockUnknown?: boolean;
+  photo?: string | null;
 }
 export interface TicketLineView {
   id: string;
@@ -40,13 +41,16 @@ export const ProductCard = memo(function ProductCard({
       onClick={() => onSelect(product.id)}
       className="bg-navy-2 p-3 sm:p-4 rounded-xl border border-navy-3 hover:border-gold/40 hover:bg-navy-3 transition-all text-left flex flex-col justify-between h-24 sm:h-28 active:scale-[0.97] group relative overflow-hidden disabled:opacity-40 disabled:cursor-not-allowed"
     >
-      <div className="min-w-0">
+      <div className="min-w-0 flex gap-2 items-start">
+        {product.photo&&<img src={product.photo} alt="" className="w-10 h-10 sm:w-12 sm:h-12 rounded-lg object-cover shrink-0"/>}
+        <div className="min-w-0">
         <span className="font-semibold text-white line-clamp-2 text-xs sm:text-sm group-hover:text-gold-2 block">
           {product.name}
         </span>
         <span className="text-[10px] text-vr-gray font-mono">
           {product.code}
         </span>
+        </div>
       </div>
       <div className="flex justify-between items-end mt-1">
         <span className="text-base sm:text-lg font-bold font-mono text-gold">

@@ -11,7 +11,7 @@ use crate::{
 use rusqlite::{Connection, OptionalExtension, Transaction};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RecipeDefinition {
@@ -34,6 +34,13 @@ pub struct ProductDefinition {
     pub minimum: String,
     pub serial_required: bool,
     pub recipe: Vec<RecipeDefinition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub photo: Option<ProductPhoto>,
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ProductPhoto {
+    pub data: Option<String>,
 }
 fn invalid() -> AppError {
     AppError::Protocol(ProtocolError::MalformedPayload)
@@ -64,6 +71,70 @@ fn text(v: &str, max: usize, empty: bool) -> Result<(), AppError> {
         return Err(invalid());
     }
     Ok(())
+}
+fn serial_adjustments(
+    c: &Connection,
+    ctx: &CatalogueContext,
+    pid: &str,
+    mode: &str,
+    serials: &[String],
+    before: i32,
+) -> Result<Value, AppError> {
+    let sk = sales::scope_key(ctx)?;
+    let mut q=c.prepare("SELECT serial,revision FROM sale_serial_inventory_v1 WHERE tenant_id=?1 AND scope_key=?2 AND producto_id=?3 AND state='AVAILABLE' ORDER BY serial LIMIT 1001")?;
+    let available = q
+        .query_map((&ctx.tenant_id, &sk, pid), |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        })?
+        .collect::<Result<BTreeMap<_, _>, _>>()?;
+    if available.len() > 1000 || available.len() != before as usize {
+        return Err(guard("SERIAL_INVENTORY_DIVERGED"));
+    }
+    let mut changes = BTreeMap::new();
+    let mut selected = HashSet::new();
+    for serial in serials {
+        text(serial, 128, false)?;
+        if !selected.insert(serial.as_str()) {
+            return Err(guard("SERIAL_UNAVAILABLE"));
+        }
+        let mut rows=c.prepare("SELECT scope_key,producto_id,state,revision FROM sale_serial_inventory_v1 WHERE tenant_id=?1 AND serial=?2 LIMIT 2")?;
+        let existing = rows
+            .query_map((&ctx.tenant_id, serial), |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        if existing.len() > 1 {
+            return Err(guard("SERIAL_UNAVAILABLE"));
+        }
+        let (state, revision) = if let Some((scope, product, state, revision)) = existing.first() {
+            if scope != &sk || product != pid || !matches!(state.as_str(), "AVAILABLE" | "LOST") {
+                return Err(guard("SERIAL_UNAVAILABLE"));
+            }
+            (Some(state.as_str()), Some(revision.as_str()))
+        } else {
+            (None, None)
+        };
+        if mode == "LOSS" && state != Some("AVAILABLE") {
+            return Err(guard("SERIAL_UNAVAILABLE"));
+        }
+        let after = if mode == "LOSS" { "LOST" } else { "AVAILABLE" };
+        if state != Some(after) {
+            changes.insert(serial.clone(),json!({"productId":pid,"text":serial,"expectedRevision":revision,"before":state,"after":after}));
+        }
+    }
+    if mode == "COUNT" {
+        for (serial, revision) in available {
+            if !selected.contains(serial.as_str()) {
+                changes.insert(serial.clone(),json!({"productId":pid,"text":serial,"expectedRevision":revision,"before":"AVAILABLE","after":"LOST"}));
+            }
+        }
+    }
+    Ok(json!(changes.into_values().collect::<Vec<_>>()))
 }
 pub fn supports(kind: &str) -> bool {
     matches!(
@@ -104,6 +175,11 @@ pub fn document(
             text(&d.name, 256, false)?;
             text(&d.code, 64, true)?;
             text(&d.location, 256, true)?;
+            if let Some(photo) = &d.photo {
+                if let Some(data) = &photo.data {
+                    super::settings::validate_png(data)?;
+                }
+            }
             if uint(&d.price_cents)? > 999999999999
                 || d.cost_cents.is_none()
                 || uint(d.cost_cents.as_deref().ok_or_else(invalid)?)? > 999999999999
@@ -206,7 +282,15 @@ pub fn document(
             }
             let ratio =
                 Ratio::from_parts((percent as u64).into(), 100u64.into()).map_err(|_| invalid())?;
-            let p = json!({"id":product_id,"name":d.name,"code":d.code,"revision":rev.checked_add(1).ok_or_else(invalid)?.to_string(),"deleted":false,"priceTiers":{"retailCents":d.price_cents,"tier2Cents":d.tier2_cents,"tier3Cents":d.tier3_cents},"metadata":{"costCents":d.cost_cents,"taxRate":{"numerator":ratio.numerator().to_string(),"denominator":ratio.denominator().to_string()},"serialRequired":d.serial_required,"recipe":recipe,"productType":d.product_type,"recipeCostPolicy":if d.product_type=="combo"{"NATIVE_EXACT"}else{"DECLARED"},"location":d.location,"minimum":d.minimum}});
+            let mut p = json!({"id":product_id,"name":d.name,"code":d.code,"revision":rev.checked_add(1).ok_or_else(invalid)?.to_string(),"deleted":false,"priceTiers":{"retailCents":d.price_cents,"tier2Cents":d.tier2_cents,"tier3Cents":d.tier3_cents},"metadata":{"costCents":d.cost_cents,"taxRate":{"numerator":ratio.numerator().to_string(),"denominator":ratio.denominator().to_string()},"serialRequired":d.serial_required,"recipe":recipe,"productType":d.product_type,"recipeCostPolicy":if d.product_type=="combo"{"NATIVE_EXACT"}else{"DECLARED"},"location":d.location,"minimum":d.minimum}});
+            if let Some(photo) = &d.photo {
+                p["metadata"]["photo"] = json!(photo);
+            } else if rev > 0 {
+                let old = product(c, ctx, product_id)?;
+                if let Some(photo) = old["metadata"].get("photo") {
+                    p["metadata"]["photo"] = photo.clone();
+                }
+            }
             Ok((
                 if rev == 0 {
                     "PRODUCT_CREATE"
@@ -272,7 +356,7 @@ pub fn document(
                 .filter(|n| *n >= 0)
                 .ok_or_else(|| guard("STOCK_UNAVAILABLE"))?;
             let serialized = p["metadata"]["serialRequired"] == true;
-            if serialized && (mode != "IN" || serials.len() != n as usize)
+            if serialized && serials.len() != n as usize
                 || !serialized && !serials.is_empty()
                 || serials.len() > 1000
             {
@@ -285,11 +369,16 @@ pub fn document(
                     return Err(guard("SERIAL_UNAVAILABLE"));
                 }
                 let used:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM sale_serial_inventory_v1 WHERE tenant_id=?1 AND serial=?2)",(&ctx.tenant_id,serial),|r|r.get(0))?;
-                if used {
+                if mode == "IN" && used {
                     return Err(guard("SERIAL_UNAVAILABLE"));
                 }
             }
             let (base,seq,pending):(String,i64,String)=c.query_row("SELECT remote_base_qty,remote_seq,pending_coverage FROM stock_projections WHERE producto_id=?1 AND scope_key=?2",(product_id,&sk),|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?;
+            let mut doc = json!({"productId":product_id,"productRevision":p["revision"],"delta":delta.to_string(),"before":before.to_string(),"after":after.to_string(),"mode":mode,"reason":reason,"serials":serials,"stockEvidence":{"productId":product_id,"remoteBaseQty":base,"remoteSequence":seq.to_string(),"pending":serde_json::from_str::<Value>(&pending).map_err(|_|invalid())?,"effectiveQty":before.to_string()}});
+            if serialized && mode != "IN" {
+                doc["serialChanges"] =
+                    serial_adjustments(c, ctx, product_id, mode, serials, before)?;
+            }
             Ok((
                 if mode == "COUNT" {
                     "INVENTORY_COUNT"
@@ -297,7 +386,7 @@ pub fn document(
                     "INVENTORY_DELTA"
                 }
                 .into(),
-                json!({"productId":product_id,"productRevision":p["revision"],"delta":delta.to_string(),"before":before.to_string(),"after":after.to_string(),"mode":mode,"reason":reason,"serials":serials,"stockEvidence":{"productId":product_id,"remoteBaseQty":base,"remoteSequence":seq.to_string(),"pending":serde_json::from_str::<Value>(&pending).map_err(|_|invalid())?,"effectiveQty":before.to_string()}}),
+                doc,
             ))
         }
         _ => Err(invalid()),
@@ -429,7 +518,8 @@ pub fn apply(
         let serialized = p["metadata"]["serialRequired"] == true;
         let serials = d["serials"].as_array().ok_or_else(invalid)?;
         if serialized
-            && (d["mode"] != "IN" || s(&d["delta"])?.parse::<usize>().ok() != Some(serials.len()))
+            && d["mode"] == "IN"
+            && s(&d["delta"])?.parse::<usize>().ok() != Some(serials.len())
             || !serialized && !serials.is_empty()
             || !p["metadata"]["recipe"]
                 .as_array()
@@ -464,15 +554,39 @@ pub fn apply(
             list.push(json!({"operationId":op,"effectId":eid,"delta":delta}));
             tx.execute("UPDATE stock_projections SET effective_stock=?3,pending_coverage=?4 WHERE producto_id=?1 AND scope_key=?2",(pid,&sk,s(&d["after"])?,serde_json::to_string(&list).map_err(|_|invalid())?))?;
         }
-        for serial in d["serials"].as_array().ok_or_else(invalid)? {
-            let used:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM sale_serial_inventory_v1 WHERE tenant_id=?1 AND serial=?2)",(&ctx.tenant_id,s(serial)?),|r|r.get(0))?;
-            if used {
-                return Err(guard("SERIAL_UNAVAILABLE"));
+        if let Some(changes) = d.get("serialChanges") {
+            if !serialized || d["mode"] == "IN" {
+                return Err(invalid());
             }
-            tx.execute(
-                "INSERT INTO sale_serial_inventory_v1 VALUES(?1,?2,?3,?4,'1','AVAILABLE',NULL)",
-                (&ctx.tenant_id, &sk, pid, s(serial)?),
-            )?;
+            for change in changes.as_array().ok_or_else(invalid)? {
+                let serial = s(&change["text"])?;
+                if change["before"].is_null() {
+                    let used: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM sale_serial_inventory_v1 WHERE tenant_id=?1 AND serial=?2)", (&ctx.tenant_id, serial), |r| r.get(0))?;
+                    if used {
+                        return Err(guard("SERIAL_UNAVAILABLE"));
+                    }
+                    tx.execute("INSERT INTO sale_serial_inventory_v1 VALUES(?1,?2,?3,?4,'1','AVAILABLE',NULL)",(&ctx.tenant_id,&sk,pid,serial))?;
+                } else {
+                    let changed=tx.execute("UPDATE sale_serial_inventory_v1 SET state=?5,sale_operation_id=?6 WHERE tenant_id=?1 AND scope_key=?2 AND producto_id=?3 AND serial=?4 AND state=?7 AND revision=?8",(&ctx.tenant_id,&sk,pid,serial,s(&change["after"])?,if change["after"]=="LOST"{Some(op)}else{None},s(&change["before"])?,s(&change["expectedRevision"])?))?;
+                    if changed != 1 {
+                        return Err(guard("SERIAL_UNAVAILABLE"));
+                    }
+                }
+            }
+        } else {
+            if serialized && d["mode"] != "IN" {
+                return Err(invalid());
+            }
+            for serial in d["serials"].as_array().ok_or_else(invalid)? {
+                let used:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM sale_serial_inventory_v1 WHERE tenant_id=?1 AND serial=?2)",(&ctx.tenant_id,s(serial)?),|r|r.get(0))?;
+                if used {
+                    return Err(guard("SERIAL_UNAVAILABLE"));
+                }
+                tx.execute(
+                    "INSERT INTO sale_serial_inventory_v1 VALUES(?1,?2,?3,?4,'1','AVAILABLE',NULL)",
+                    (&ctx.tenant_id, &sk, pid, s(serial)?),
+                )?;
+            }
         }
     }
     Ok(())
@@ -489,6 +603,11 @@ pub fn effects(v: &Value) -> Result<Value, AppError> {
             s(&d["productId"])?
         };
         list.push(json!({"id":sales::effect_id(op,&format!("stock/{pid}")),"kind":"STOCK","payload":{"productId":pid,"delta":if kind=="PRODUCT_CREATE"{"0"}else{s(&d["delta"])?}}}));
+    }
+    if let Some(changes) = d.get("serialChanges") {
+        for change in changes.as_array().ok_or_else(invalid)? {
+            list.push(json!({"id":sales::effect_id(op,&format!("serial/{}",s(&change["text"])?)),"kind":"SERIAL","payload":change}));
+        }
     }
     Ok(json!(list))
 }
@@ -552,6 +671,67 @@ pub fn validate_receipt(v: &Value, r: &Value, snapshot: Option<&str>) -> Result<
             effective = effective.checked_add(delta as i64).ok_or_else(invalid)?;
         }
         if effective != before as i64 {
+            return Err(invalid());
+        }
+        let mut selected = HashSet::new();
+        for serial in serials {
+            text(serial, 128, false)?;
+            if !selected.insert(serial.as_str()) {
+                return Err(invalid());
+            }
+        }
+        if let Some(changes) = d.get("serialChanges") {
+            let changes = changes.as_array().ok_or_else(invalid)?;
+            if !matches!(mode.as_str(), "LOSS" | "COUNT")
+                || serials.len() != n as usize
+                || changes.len() > 2000
+            {
+                return Err(invalid());
+            }
+            let mut last = None;
+            let mut availability_delta = 0i64;
+            let mut removed = HashSet::new();
+            for change in changes {
+                let fields = change.as_object().ok_or_else(invalid)?;
+                let sn = s(&change["text"])?;
+                text(sn, 128, false)?;
+                if fields.len() != 5
+                    || !["productId","text","expectedRevision","before","after"].iter().all(|key| fields.contains_key(*key))
+                    || change["productId"] != *product_id
+                    || last.is_some_and(|previous: &str| previous >= sn)
+                {
+                    return Err(invalid());
+                }
+                last = Some(sn);
+                let before = if change["before"].is_null() {
+                    if !change["expectedRevision"].is_null() {
+                        return Err(invalid());
+                    }
+                    None
+                } else {
+                    if uint(s(&change["expectedRevision"])?)? == 0 {
+                        return Err(invalid());
+                    }
+                    Some(s(&change["before"])?)
+                };
+                match (mode.as_str(), before, s(&change["after"])?) {
+                    ("LOSS", Some("AVAILABLE"), "LOST") if selected.contains(sn) => {
+                        removed.insert(sn);
+                        availability_delta -= 1;
+                    }
+                    ("COUNT", Some("AVAILABLE"), "LOST") if !selected.contains(sn) => {
+                        availability_delta -= 1
+                    }
+                    ("COUNT", None | Some("LOST"), "AVAILABLE") if selected.contains(sn) => {
+                        availability_delta += 1
+                    }
+                    _ => return Err(invalid()),
+                }
+            }
+            if availability_delta != delta as i64 || (mode == "LOSS" && removed != selected) {
+                return Err(invalid());
+            }
+        } else if !serials.is_empty() && (mode != "IN" || serials.len() != n as usize) {
             return Err(invalid());
         }
     }

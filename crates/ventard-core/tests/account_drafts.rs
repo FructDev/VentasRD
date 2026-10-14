@@ -80,7 +80,7 @@ fn additive_v5_to_current_preserves_capture_hash_and_existing_scope() {
     {
         let mut w = VaultWriter::open_encrypted(&path, &key).unwrap();
         let c = w.connection();
-        assert_eq!(migrations::validate_history(c).unwrap(), 27);
+        assert_eq!(migrations::validate_history(c).unwrap(), 28);
         assert_eq!(
             c.query_row(
                 "SELECT manifest FROM catalogue_preview_manifests_v1",

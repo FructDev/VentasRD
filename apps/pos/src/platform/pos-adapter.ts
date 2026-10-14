@@ -26,6 +26,7 @@ export interface PosProduct {
   stock: string;
   revision: string;
   availableSerials?: string[];
+  photo?:string|null;
   stockRevision?:string|null;
   costCents?:string|null;
   tier2Cents?:string|null;
@@ -372,6 +373,7 @@ const errors: Record<string, string> = {
   RECIPE_INVALID: "La receta requiere insumos activos, cantidades exactas y ningún combo anidado.",
   SERIAL_REQUIRED: "Registra una serie única por unidad. El ajuste de productos con seriales necesita selección individual.",
   SERIAL_UNAVAILABLE: "Una serie está repetida o ya registrada en el negocio.",
+  SERIAL_INVENTORY_DIVERGED: "El stock y las series disponibles no coinciden. Sincroniza y revisa las unidades antes de ajustar.",
   OPERATION_ALREADY_APPLIED: "El intento ya tiene efectos. Recupera su resultado; no puede descartarse.",
   OPERATION_ID_CONFLICT:
     "La identidad del intento no coincide con su contenido original.",

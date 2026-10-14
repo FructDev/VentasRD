@@ -101,6 +101,10 @@ pub fn read(c: &Connection, ctx: &CatalogueContext) -> Result<Value, AppError> {
         product["minimum"] = meta["minimum"].clone();
         product["location"] = meta["location"].clone();
         product["locationKnown"] = json!(meta.get("location").is_some());
+        if let Some(data) = meta["photo"]["data"].as_str() {
+            super::settings::validate_png(data)?;
+            product["photo"] = json!(data);
+        }
         if meta["productType"].is_string() {
             product["kind"] = meta["productType"].clone();
         } else if array(&meta["recipe"])?.is_empty() {
@@ -474,7 +478,7 @@ pub fn activate_bootstrap(
                 }
             }
             "SERIAL" => {
-                if !matches!(text(&row["state"])?, "AVAILABLE" | "RESERVED" | "SOLD") {
+                if !matches!(text(&row["state"])?, "AVAILABLE" | "RESERVED" | "SOLD" | "LOST") {
                     return Err(invalid());
                 }
                 tx.execute(

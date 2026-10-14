@@ -123,33 +123,38 @@ pub fn validate(d: &Definition) -> Result<(), AppError> {
         }
     }
     if let Some(logo) = &d.logo {
-        let data = logo
-            .strip_prefix("data:image/png;base64,")
-            .ok_or_else(invalid)?;
-        if data.len() > 131072 {
-            return Err(invalid());
-        }
-        let raw = STANDARD.decode(data).map_err(|_| invalid())?;
-        if raw.len() < 45
-            || raw.len() > 98304
-            || STANDARD.encode(&raw) != data
-            || raw[..8] != [137, 80, 78, 71, 13, 10, 26, 10]
-            || raw[8..16] != [0, 0, 0, 13, 73, 72, 68, 82]
-            || raw[raw.len() - 12..] != [0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130]
-        {
-            return Err(invalid());
-        }
-        let width = u32::from_be_bytes(raw[16..20].try_into().map_err(|_| invalid())?);
-        let height = u32::from_be_bytes(raw[20..24].try_into().map_err(|_| invalid())?);
-        if !(1..=480).contains(&width)
-            || !(1..=480).contains(&height)
-            || raw[24] != 8
-            || !matches!(raw[25], 2 | 6)
-            || raw[26..29] != [0, 0, 0]
-        {
-            return Err(invalid());
-        }
+        validate_png(logo)?;
     }
+    Ok(())
+}
+pub(crate) fn validate_png(logo: &str) -> Result<(), AppError> {
+    let data = logo
+        .strip_prefix("data:image/png;base64,")
+        .ok_or_else(invalid)?;
+    if data.len() > 131072 {
+        return Err(invalid());
+    }
+    let raw = STANDARD.decode(data).map_err(|_| invalid())?;
+    if raw.len() < 45
+        || raw.len() > 98304
+        || STANDARD.encode(&raw) != data
+        || raw[..8] != [137, 80, 78, 71, 13, 10, 26, 10]
+        || raw[8..16] != [0, 0, 0, 13, 73, 72, 68, 82]
+        || raw[raw.len() - 12..] != [0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130]
+    {
+        return Err(invalid());
+    }
+    let width = u32::from_be_bytes(raw[16..20].try_into().map_err(|_| invalid())?);
+    let height = u32::from_be_bytes(raw[20..24].try_into().map_err(|_| invalid())?);
+    if !(1..=480).contains(&width)
+        || !(1..=480).contains(&height)
+        || raw[24] != 8
+        || !matches!(raw[25], 2 | 6)
+        || raw[26..29] != [0, 0, 0]
+    {
+        return Err(invalid());
+    }
+
     Ok(())
 }
 pub fn profile(d: &Definition, revision: &str, op: &str) -> Value {

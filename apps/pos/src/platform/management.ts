@@ -5,7 +5,7 @@ export interface PrinterQueue {name:string;label:string;driver:string;port:strin
 export interface Customer {id:string;name:string;phone:string|null;limitCents:string|null;balanceCents:string;revision:string;balanceRevision:string;active:boolean;authority:string;priceTier:1|2|3;wholesale:boolean}
 export interface Denomination {valueCents:string;count:string}
 type Identity={operationId:string};
-export interface ProductDefinition {name:string;code:string;priceCents:string;tier2Cents:string|null;tier3Cents:string|null;costCents:string|null;taxPercent:string;productType:'simple'|'insumo'|'combo';location:string;minimum:string;serialRequired:boolean;recipe:{productId:string;numerator:string;denominator:string}[]}
+export interface ProductDefinition {name:string;code:string;priceCents:string;tier2Cents:string|null;tier3Cents:string|null;costCents:string|null;taxPercent:string;productType:'simple'|'insumo'|'combo';location:string;minimum:string;serialRequired:boolean;recipe:{productId:string;numerator:string;denominator:string}[];photo?:{data:string|null}}
 export type ManagementCommand = Identity & (
  |{kind:'BUSINESS_SAVE';expectedRevision:string;definition:BusinessDefinition}
  |{kind:'WARRANTY_SAVE';productId:string;serial:string;expectedRevision:string;action:'ADJUST'|'CERTIFY';days:string}

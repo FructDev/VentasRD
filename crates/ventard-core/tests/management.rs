@@ -2165,6 +2165,119 @@ fn inventory_metadata_and_stock_have_separate_versions_and_exact_replay() {
     assert_eq!(inventory_product(&c)["stock"], "4");
 }
 #[test]
+fn inventory_photos_are_bounded_preserved_on_metadata_import_and_received_exactly() {
+    use ventard_core::application::sales_sync;
+    let mut a = db();
+    let mut b = db();
+    let photo = json!({"data":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg=="});
+    let mut req = serde_json::to_value(inventory_save(1300, "0")).unwrap();
+    req["definition"]["photo"] = photo.clone();
+    let command: management::Command = serde_json::from_value(req.clone()).unwrap();
+    let result = run(&mut a, command.clone()).unwrap();
+    assert_eq!(run(&mut a, command).unwrap(), result);
+    sales_sync::receive_event(&mut b, &ctx(), &inventory_event(&a, 1300, 1)).unwrap();
+    assert_eq!(inventory_product(&b)["photo"], photo["data"]);
+    run(&mut a, inventory_save(1301, "1")).unwrap();
+    sales_sync::receive_event(&mut b, &ctx(), &inventory_event(&a, 1301, 2)).unwrap();
+    assert_eq!(inventory_product(&b)["photo"], photo["data"]);
+    req["operationId"] = json!(id(1302));
+    req["expectedRevision"] = json!("2");
+    req["definition"]["photo"]["data"] = json!("data:image/svg+xml,<svg></svg>");
+    assert!(run(&mut a, serde_json::from_value(req.clone()).unwrap()).is_err());
+    req["operationId"] = json!(id(1303));
+    req["definition"]["photo"]["data"] = serde_json::Value::Null;
+    run(&mut a, serde_json::from_value(req).unwrap()).unwrap();
+    sales_sync::receive_event(&mut b, &ctx(), &inventory_event(&a, 1303, 3)).unwrap();
+    assert!(inventory_product(&b)["photo"].is_null());
+}
+#[test]
+fn encrypted_serial_upgrade_preserves_existing_units_and_lost_state_on_reopen() {
+    use ventard_core::storage::{cipher::CipherKey, migrations, writer::VaultWriter};
+    let path = std::env::temp_dir().join(format!(
+        "ventard-serial-upgrade-fixture-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir(&path).unwrap();
+    let key = CipherKey::new([0x6b; 32]);
+    {
+        let mut vault = VaultWriter::create_encrypted(&path, &key).unwrap();
+        let c = vault.connection();
+        c.execute(
+            "INSERT INTO scopes VALUES(?1,'BRANCH',?2,?3)",
+            (sales_key(), id(5), id(1)),
+        )
+        .unwrap();
+        c.execute(
+            "INSERT INTO native_sales_cursor_v1 VALUES(?1,?2,'NATIVE1',0)",
+            (id(1), sales_key()),
+        )
+        .unwrap();
+        let mut req = serde_json::to_value(inventory_save(1350, "0")).unwrap();
+        req["definition"]["serialRequired"] = json!(true);
+        run(c, serde_json::from_value(req).unwrap()).unwrap();
+        let rev = inventory_product(c)["stockRevision"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let mut add = serde_json::to_value(inventory_change(1351, &rev, "IN", "1")).unwrap();
+        add["serials"] = json!(["PRESERVED-001"]);
+        run(c, serde_json::from_value(add).unwrap()).unwrap();
+        // Recreate precisely the former constraint, only in this owned fixture.
+        c.execute_batch("CREATE TABLE serial_old(tenant_id TEXT NOT NULL,scope_key TEXT NOT NULL REFERENCES scopes(scope_key),producto_id TEXT NOT NULL REFERENCES products(producto_id),serial TEXT NOT NULL,revision TEXT NOT NULL,state TEXT NOT NULL CHECK(state IN('AVAILABLE','RESERVED','SOLD')),sale_operation_id TEXT REFERENCES operation_journal(operation_id),PRIMARY KEY(tenant_id,scope_key,serial)) STRICT;INSERT INTO serial_old SELECT * FROM sale_serial_inventory_v1;DROP TABLE sale_serial_inventory_v1;ALTER TABLE serial_old RENAME TO sale_serial_inventory_v1;DELETE FROM migration_history WHERE version=28;PRAGMA user_version=27;").unwrap();
+    }
+    {
+        let mut vault = VaultWriter::open_encrypted(&path, &key).unwrap();
+        let c = vault.connection();
+        assert_eq!(migrations::validate_history(c).unwrap(), 28);
+        assert_eq!(
+            c.query_row::<String, _, _>(
+                "SELECT state FROM sale_serial_inventory_v1 WHERE serial='PRESERVED-001'",
+                [],
+                |r| r.get(0)
+            )
+            .unwrap(),
+            "AVAILABLE"
+        );
+        let rev = inventory_product(c)["stockRevision"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let mut loss = serde_json::to_value(inventory_change(1352, &rev, "LOSS", "1")).unwrap();
+        loss["serials"] = json!(["PRESERVED-001"]);
+        run(c, serde_json::from_value(loss).unwrap()).unwrap();
+        assert_eq!(
+            c.query_row::<i64, _, _>("SELECT count(*) FROM pragma_foreign_key_check", [], |r| r
+                .get(0))
+                .unwrap(),
+            0
+        );
+    }
+    {
+        let mut vault = VaultWriter::open_encrypted(&path, &key).unwrap();
+        let c = vault.connection();
+        assert_eq!(inventory_product(c)["stock"], "0");
+        assert_eq!(
+            c.query_row::<String, _, _>(
+                "SELECT state FROM sale_serial_inventory_v1 WHERE serial='PRESERVED-001'",
+                [],
+                |r| r.get(0)
+            )
+            .unwrap(),
+            "LOST"
+        );
+    }
+    let target = path.canonicalize().unwrap();
+    assert!(
+        target.starts_with(std::env::temp_dir().canonicalize().unwrap())
+            && target
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("ventard-serial-upgrade-fixture-")
+    );
+    std::fs::remove_dir_all(target).unwrap();
+}
+#[test]
 fn inventory_atomic_rollback_keeps_same_prepared_intent_recoverable() {
     let mut c = db();
     run(&mut c, inventory_save(301, "0")).unwrap();
@@ -2275,6 +2388,121 @@ fn inventory_recipe_cost_and_serial_entries_are_exact_and_rollback_on_invalid_in
         run(&mut c, serde_json::from_value(add).unwrap()).unwrap()["document"]["after"],
         "2"
     );
+}
+
+#[test]
+fn serialized_loss_and_count_preserve_identity_reservations_and_rollback() {
+    let mut c = db();
+    c.execute(
+        "INSERT INTO installations VALUES(?1,?2,1,?3,'1000','ACTIVE')",
+        (id(4), id(3), format!("N{}", id(4).replace('-', ""))),
+    )
+    .unwrap();
+    c.execute(
+        "INSERT INTO ticket_sequences VALUES(?1,?2,?3,'1',?5,0,?4,x'7b7d')",
+        (
+            id(1),
+            id(4),
+            id(3),
+            "0".repeat(64),
+            format!("N{}", id(4).replace('-', "")),
+        ),
+    )
+    .unwrap();
+    let mut product = serde_json::to_value(inventory_save(350, "0")).unwrap();
+    product["productId"] = json!(id(351));
+    product["definition"]["code"] = json!("SERIAL-COUNT-QA");
+    product["definition"]["serialRequired"] = json!(true);
+    run(&mut c, serde_json::from_value(product).unwrap()).unwrap();
+    let serial_product = |db: &Connection| {
+        ventard_core::application::sales_sync::read(db, &ctx()).unwrap()["products"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["id"] == id(351))
+            .unwrap()
+            .clone()
+    };
+    let adjust = |db: &Connection, op, mode: &str, serials: Vec<&str>| {
+        serde_json::from_value::<management::Command>(json!({"kind":"INVENTORY_CHANGE","operationId":id(op),"productId":id(351),"expectedStockRevision":serial_product(db)["stockRevision"],"mode":mode,"quantity":serials.len().to_string(),"serials":serials,"reason":"Conteo físico QA"})).unwrap()
+    };
+    let add = adjust(&c, 352, "IN", vec!["QA-001", "QA-002", "QA-003"]);
+    run(&mut c, add).unwrap();
+    let reservation=serde_json::from_value(json!({"kind":"LAYAWAY_CREATE","operationId":id(357),"layawayId":id(358),"definition":{"customerId":null,"customerName":"Cliente serial QA","phone":"","notes":"Reserva física de prueba","items":[{"productId":id(351),"name":serial_product(&c)["name"],"quantity":"1","priceCents":serial_product(&c)["priceCents"],"serial":"QA-003"}]},"initialPaymentCents":"0","method":"EFECTIVO","turnId":null})).unwrap();
+    run_pro(&mut c, reservation).unwrap();
+    let protected = adjust(&c, 353, "LOSS", vec!["QA-003"]);
+    assert!(run(&mut c, protected).is_err());
+    let loss = adjust(&c, 354, "LOSS", vec!["QA-001"]);
+    let result = run(&mut c, loss.clone()).unwrap();
+    assert_eq!(result["document"]["after"], "1");
+    assert_eq!(
+        c.query_row::<String, _, _>(
+            "SELECT state FROM sale_serial_inventory_v1 WHERE serial='QA-001'",
+            [],
+            |r| r.get(0)
+        )
+        .unwrap(),
+        "LOST"
+    );
+    assert_eq!(run(&mut c, loss).unwrap(), result);
+    let count = adjust(&c, 355, "COUNT", vec!["QA-001", "QA-004"]);
+    c.execute_batch("CREATE TRIGGER serial_count_fault BEFORE UPDATE ON sale_serial_inventory_v1 WHEN NEW.state='AVAILABLE' BEGIN SELECT RAISE(ABORT,'owned-count-fault'); END").unwrap();
+    assert!(run(&mut c, count.clone()).is_err());
+    assert_eq!(serial_product(&c)["stock"], "1");
+    c.execute_batch("DROP TRIGGER serial_count_fault").unwrap();
+    run(&mut c, count).unwrap();
+    assert_eq!(serial_product(&c)["stock"], "2");
+    for (serial, state) in [
+        ("QA-001", "AVAILABLE"),
+        ("QA-002", "LOST"),
+        ("QA-003", "RESERVED"),
+        ("QA-004", "AVAILABLE"),
+    ] {
+        assert_eq!(
+            c.query_row::<String, _, _>(
+                "SELECT state FROM sale_serial_inventory_v1 WHERE serial=?1",
+                [serial],
+                |r| r.get(0)
+            )
+            .unwrap(),
+            state
+        );
+    }
+    let duplicate = adjust(&c, 356, "COUNT", vec!["QA-001", "QA-001"]);
+    assert!(run(&mut c, duplicate).is_err());
+    let mut b = db();
+    for (op, sequence) in [(350, 1), (352, 2)] {
+        let event = inventory_event(&c, op, sequence);
+        ventard_core::application::sales_sync::receive_event(&mut b, &ctx(), &event).unwrap();
+    }
+    let reservation = repair_event(&c, 357, 3);
+    ventard_core::application::sales_sync::receive_event(&mut b, &ctx(), &reservation).unwrap();
+    for (op, sequence) in [(354, 4), (355, 5)] {
+        let event = inventory_event(&c, op, sequence);
+        ventard_core::application::sales_sync::receive_event(&mut b, &ctx(), &event).unwrap();
+        ventard_core::application::sales_sync::receive_event(&mut b, &ctx(), &event).unwrap();
+    }
+    assert_eq!(serial_product(&b)["stock"], "2");
+    assert_eq!(
+        b.query_row::<String, _, _>(
+            "SELECT state FROM sale_serial_inventory_v1 WHERE serial='QA-003'",
+            [],
+            |r| r.get(0)
+        )
+        .unwrap(),
+        "RESERVED"
+    );
+    let mut event = inventory_event(&c, 355, 5);
+    let mut intent: serde_json::Value =
+        serde_json::from_str(event["intent"].as_str().unwrap()).unwrap();
+    intent["payload"]["document"]["serialChanges"][0]["before"] = json!("SOLD");
+    event["receipt"]["effects"] = ventard_core::application::inventory::effects(&intent).unwrap();
+    assert!(ventard_core::application::inventory::validate_receipt(
+        &intent,
+        &event["receipt"],
+        None
+    )
+    .is_err());
 }
 #[test]
 fn inventory_history_permissions_and_prepared_abandon_are_scoped() {

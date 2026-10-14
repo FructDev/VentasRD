@@ -426,6 +426,7 @@ pub fn prepare(
                     .unwrap_or("0".into()),
                 serial_required: serialized,
                 recipe: vec![],
+                photo: None,
             };
             if old.is_some()
                 && (meta.is_some_and(|m| m["costCents"].is_null())

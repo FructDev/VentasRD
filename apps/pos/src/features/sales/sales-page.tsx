@@ -37,6 +37,7 @@ export function SalesPage() {
       id: p.id,
       name: p.name,
       code: p.code,
+      photo: p.photo,
       price:
         p.preview?.priceVerifiable === false
           ? "No verificable"
