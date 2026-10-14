@@ -116,6 +116,7 @@ export const accountDraftPort = {
 };
 export const cashPort = { read: () => call<PosCashView>("native_cash_read") };
 export const salesAccountPort={
+ photos:(productIds:string[])=>call<{rows:{id:string;version:string;data:string}[]}>('native_sales',{command:{action:'PRODUCT_PHOTOS',productIds}}),
  print:(operationId:string,snapshotHash:string,attemptId:string,raster?:import("./management").PrintRaster)=>call<{status:string;submitted?:boolean}>('native_sales',{command:{action:'PRINT',operationId,snapshotHash,attemptId,...(raster?{raster}:{})}}),
  read:()=>call<PosSnapshot|null>("native_sales",{command:{action:"READ"}}),
  bootstrap:()=>call<PosSnapshot>("native_sales",{command:{action:"BOOTSTRAP"}}),

@@ -12,6 +12,7 @@ import { useSales } from "./workspace";
 import { CashDialog } from "../cash/cash-dialog";
 import { TicketDialog } from "./ticket-dialog";
 import {QrTransfer} from './qr-transfer';
+import {useProductPhotos} from '../catalog/use-product-photos';
 
 export function SalesPage() {
   const s = useSales();
@@ -47,6 +48,7 @@ export function SalesPage() {
       available: !!s.snapshot?.supportsDrafts || BigInt(p.stock || "0") > 0n,
     }));
   const byId = new Map(s.snapshot?.products.map((p) => [p.id, p]));
+  useProductPhotos(filtered.slice((page-1)*pageSize,page*pageSize),s.loadPhotos);
   const items: TicketLineView[] = s.lines.map((l) => {
     const p = byId.get(l.productId);
     const subtotal = s.quote?.lineTotals.find(

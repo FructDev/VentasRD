@@ -104,6 +104,10 @@ pub fn read(c: &Connection, ctx: &CatalogueContext) -> Result<Value, AppError> {
         if let Some(data) = meta["photo"]["data"].as_str() {
             super::settings::validate_png(data)?;
             product["photo"] = json!(data);
+        } else if let Some(source) = super::product_media::source(c, ctx, &id)? {
+            product["photoVersion"] =
+                json!(crate::domain::canonical::sha256_hex(source.as_bytes()));
+            product["photo"] = json!(super::product_media::cached(c, ctx, &id, &source)?);
         }
         if meta["productType"].is_string() {
             product["kind"] = meta["productType"].clone();
@@ -478,7 +482,10 @@ pub fn activate_bootstrap(
                 }
             }
             "SERIAL" => {
-                if !matches!(text(&row["state"])?, "AVAILABLE" | "RESERVED" | "SOLD" | "LOST") {
+                if !matches!(
+                    text(&row["state"])?,
+                    "AVAILABLE" | "RESERVED" | "SOLD" | "LOST"
+                ) {
                     return Err(invalid());
                 }
                 tx.execute(
@@ -525,7 +532,12 @@ pub fn activate_bootstrap(
         }
     }
     super::layaways::bind_captured_serials(&tx, ctx)?;
-    super::service_refunds::import_capture(&tx,ctx,&m["serviceRefunds"],integer(&m["watermark"])?)?;
+    super::service_refunds::import_capture(
+        &tx,
+        ctx,
+        &m["serviceRefunds"],
+        integer(&m["watermark"])?,
+    )?;
     tx.execute(
         "INSERT INTO sale_free_settings_v1 VALUES(?1,?2,?3)",
         (&ctx.tenant_id, &sk, m["freeTax"].to_string()),

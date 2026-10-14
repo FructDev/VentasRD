@@ -1,6 +1,8 @@
 //! Account Sales: typed IPC, fixed Staging host, network outside the vault/UI
 //! mutex. Never mint authority from previews or accept SQL/RPC/URLs from React.
 use super::*;
+#[path="product_media.rs"]
+mod product_media;
 use ventard_core::application::{
     checkout,
     sales::{self, SaleLine, SaleOptions, SaleRequest},
@@ -13,6 +15,7 @@ use ventard_core::application::{
     deny_unknown_fields
 )]
 pub enum SalesAction {
+    ProductPhotos { #[serde(rename="productIds")] product_ids:Vec<String> },
     PrinterRead {},
     PrinterTest {
         #[serde(rename = "attemptId")]
@@ -637,6 +640,7 @@ impl AccessState {
     }
     fn sales_action(&self, action: SalesAction) -> Result<Value, AccessError> {
         match action {
+            SalesAction::ProductPhotos {product_ids}=>self.product_photos(product_ids),
             SalesAction::PrinterTest { attempt_id } => {
                 let now = time()?;
                 let a = attempt_id.clone();
@@ -728,7 +732,7 @@ impl AccessState {
                         }
                         Ok(view)
                     }
-                    SalesAction::PrinterTest {..}|SalesAction::Print { .. }|SalesAction::PrintCut{..}|SalesAction::PrintRepair{..} => Err(AppError::Protocol(
+                    SalesAction::ProductPhotos{..}|SalesAction::PrinterTest {..}|SalesAction::Print { .. }|SalesAction::PrintCut{..}|SalesAction::PrintRepair{..} => Err(AppError::Protocol(
                         ventard_core::application::errors::ProtocolError::MalformedPayload,
                     )),
                     SalesAction::ManagementRead => {

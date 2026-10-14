@@ -10,6 +10,8 @@ pub mod history;
 #[cfg(feature = "encrypted-storage")]
 pub mod inventory;
 #[cfg(feature = "encrypted-storage")]
+pub mod product_media;
+#[cfg(feature = "encrypted-storage")]
 pub mod inventory_import;
 pub mod layaways;
 #[cfg(feature = "encrypted-storage")]

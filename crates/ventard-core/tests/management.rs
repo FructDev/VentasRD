@@ -2196,6 +2196,81 @@ fn inventory_photos_are_bounded_preserved_on_metadata_import_and_received_exactl
     assert!(inventory_product(&b)["photo"].is_null());
 }
 #[test]
+fn original_product_photos_cache_encrypted_without_rewriting_authority_and_never_reuse_stale_source(
+) {
+    use ventard_core::{
+        application::product_media as media,
+        storage::{cipher::CipherKey, writer::VaultWriter},
+    };
+    let path = std::env::temp_dir().join(format!("ventard-media-fixture-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir(&path).unwrap();
+    let key = CipherKey::new([0x6c; 32]);
+    let url = "https://res.cloudinary.com/demo/image/upload/v1/ventard/productos/qa.jpg";
+    let png="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==";
+    {
+        let mut w = VaultWriter::create_encrypted(&path, &key).unwrap();
+        let c = w.connection();
+        c.execute(
+            "INSERT INTO scopes VALUES(?1,'BRANCH',?2,?3)",
+            (sales_key(), id(5), id(1)),
+        )
+        .unwrap();
+        c.execute(
+            "INSERT INTO native_sales_cursor_v1 VALUES(?1,?2,'NATIVE1',0)",
+            (id(1), sales_key()),
+        )
+        .unwrap();
+        run(c, inventory_save(1380, "0")).unwrap();
+        c.execute("UPDATE products SET metadata=json_set(metadata,'$.photo',json(?2)) WHERE producto_id=?1",(id(300),json!({"data":null,"source":url}).to_string())).unwrap();
+        let before: Vec<u8> = c
+            .query_row(
+                "SELECT canonical_bytes FROM operation_journal WHERE operation_id=?1",
+                [id(1380)],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let requests = media::requests(c, &ctx(), &[id(300)]).unwrap();
+        assert_eq!(requests[0]["source"], url);
+        assert!(media::save(c, &ctx(), &id(300), url, png).unwrap());
+        let mut foreign = ctx();
+        foreign.tenant_id = id(99);
+        assert!(media::save(c, &foreign, &id(300), url, png).is_err());
+        assert_eq!(media::requests(c, &ctx(), &[id(300)]).unwrap().len(), 0);
+        assert_eq!(inventory_product(c)["photo"], png);
+        assert_eq!(
+            before,
+            c.query_row::<Vec<u8>, _, _>(
+                "SELECT canonical_bytes FROM operation_journal WHERE operation_id=?1",
+                [id(1380)],
+                |r| r.get(0)
+            )
+            .unwrap()
+        );
+        assert_eq!(c_record_count(c), 1);
+    }
+    {
+        let mut w = VaultWriter::open_encrypted(&path, &key).unwrap();
+        let c = w.connection();
+        assert_eq!(inventory_product(c)["photo"], png);
+        let next = "https://res.cloudinary.com/demo/image/upload/v2/ventard/productos/qa.jpg";
+        c.execute("UPDATE products SET metadata=json_set(metadata,'$.photo',json(?2)) WHERE producto_id=?1",(id(300),json!({"data":null,"source":next}).to_string())).unwrap();
+        assert!(inventory_product(c)["photo"].is_null());
+        assert!(!media::save(c, &ctx(), &id(300), url, png).unwrap());
+        assert!(media::save(c, &ctx(), &id(300), next, "data:image/svg+xml,<svg/>").is_err());
+        assert_eq!(inventory_product(c)["stock"], "0");
+    }
+    let target = path.canonicalize().unwrap();
+    assert!(
+        target.starts_with(std::env::temp_dir().canonicalize().unwrap())
+            && target
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("ventard-media-fixture-")
+    );
+    std::fs::remove_dir_all(target).unwrap();
+}
+#[test]
 fn cancelled_service_deposits_refund_exactly_once_without_erasing_payments_or_stock() {
     use ventard_core::application::{repairs, sales_sync};
     let mut c = db();
@@ -2335,7 +2410,7 @@ fn encrypted_serial_upgrade_preserves_existing_units_and_lost_state_on_reopen() 
     {
         let mut vault = VaultWriter::open_encrypted(&path, &key).unwrap();
         let c = vault.connection();
-        assert_eq!(migrations::validate_history(c).unwrap(), 29);
+        assert_eq!(migrations::validate_history(c).unwrap(), 30);
         assert_eq!(
             c.query_row::<String, _, _>(
                 "SELECT state FROM sale_serial_inventory_v1 WHERE serial='PRESERVED-001'",

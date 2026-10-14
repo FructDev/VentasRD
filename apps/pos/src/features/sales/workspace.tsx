@@ -4,6 +4,7 @@ import {
   useEffect,
   useRef,
   useState,
+  useCallback,
   type ReactNode,
 } from "react";
 import {
@@ -36,6 +37,15 @@ function editableCents(value: string) {
 function useWorkspace(port: PosPort) {
   const [snapshot, setSnapshot] = useState<PosSnapshot | null>(null),
     [loading, setLoading] = useState(true);
+  const loadPhotos=useCallback(async(requests:{id:string;version:string}[])=>{
+    if(!port.photos)return;
+    const result=await port.photos(requests.map(r=>r.id)).catch(()=>({rows:[]}));
+    setSnapshot(old=>old?{...old,products:old.products.map(p=>{
+      const requested=requests.find(r=>r.id===p.id&&r.version===p.photoVersion);if(!requested||p.photo)return p;
+      const row=result.rows.find(r=>r.id===p.id&&r.version===p.photoVersion);
+      return row?{...p,photo:row.data,photoUnavailable:false}:{...p,photoUnavailable:true};
+    })}:old);
+  },[port]);
   const [lines, setLines] = useState<PosLine[]>([]),
     [query, setQuery] = useState(""),
     [received, setReceived] = useState("");
@@ -501,6 +511,7 @@ function useWorkspace(port: PosPort) {
     fiscalType,
     setFiscalType,
     snapshot,
+    loadPhotos:port.photos?loadPhotos:undefined,
     loading,
     lines,
     query,

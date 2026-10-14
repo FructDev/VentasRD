@@ -229,6 +229,13 @@ pub fn get_embedded_migrations() -> Vec<Migration> {
         sql: sql_0029,
         checksum: Migration::compute_checksum(sql_0029),
     });
+    let sql_0030 = include_str!("../../migrations/0030_product_media_cache.sql");
+    migrations.push(Migration {
+        version: 30,
+        name: "0030_product_media_cache",
+        sql: sql_0030,
+        checksum: Migration::compute_checksum(sql_0030),
+    });
     migrations
 }
 

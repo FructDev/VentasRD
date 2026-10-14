@@ -27,6 +27,8 @@ export interface PosProduct {
   revision: string;
   availableSerials?: string[];
   photo?:string|null;
+  photoVersion?:string;
+  photoUnavailable?:boolean;
   stockRevision?:string|null;
   costCents?:string|null;
   tier2Cents?:string|null;
@@ -193,6 +195,7 @@ export interface PosCashView {
   limitation: "COMMERCIAL_BOOTSTRAP_REQUIRED"|"STAGING_NATIVE_SHARED_TURN";
 }
 export interface PosPort {
+  photos?(productIds:string[]):Promise<{rows:{id:string;version:string;data:string}[]}>;
   printTicket?(operationId:string,snapshotHash:string,attemptId:string,raster?:import("./management").PrintRaster):Promise<{status:string;submitted?:boolean}>;
   management?: import('./management').ManagementPort;
   retry?(operationId:string):Promise<PosSnapshot>;
@@ -440,6 +443,7 @@ export const nativePreviewPort: PosPort = {
 };
 export const nativeOperationalPort:PosPort={
  printTicket:salesAccountPort.print,
+ photos:salesAccountPort.photos,
  management:nativeManagementPort,
  ...nativePreviewPort,
  async load(){const value=await salesAccountPort.read();if(!value)throw{code:"COMMERCIAL_BOOTSTRAP_REQUIRED"};return value;},
