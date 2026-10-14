@@ -198,6 +198,10 @@ const messages: Record<string, string> = {
   ACCESS_ISSUER_UNAVAILABLE:
     "El servicio de preparación no está disponible. No se ha habilitado el cobro.",
   ACCESS_LOGIN_REQUIRED: "Inicia sesión online para preparar esta instalación.",
+  LOGIN_REQUIRED: "Inicia sesión online para continuar el traslado. El PIN desbloquea los datos locales; las copias y los intentos se conservan.",
+  REMOTE_DENIED: "La cuenta no tiene permiso para leer o continuar este traslado. Revisa el negocio y los permisos; las copias se conservan.",
+  NETWORK_UNAVAILABLE: "No se pudo confirmar la respuesta de la nube. Conserva el mismo intento y vuelve a continuar cuando haya conexión.",
+  TABLE_UNAVAILABLE: "Una tabla del historial no está disponible en la nube. No se consideró vacía; las copias anteriores se conservan.",
   ACCESS_TENANT_DENIED:
     "La cuenta no tiene acceso a un negocio de staging autorizado.",
   ACCESS_PROVISION_UNAVAILABLE:
