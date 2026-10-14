@@ -21,6 +21,17 @@ use serde_json::{json, Value};
     deny_unknown_fields
 )]
 pub enum Command {
+    ServiceRefund {
+        operation_id: String,
+        family: String,
+        service_id: String,
+        expected_service_revision: String,
+        expected_refund_revision: String,
+        amount_cents: String,
+        method: String,
+        turn_id: Option<String>,
+        reason: String,
+    },
     BusinessSave {
         operation_id: String,
         expected_revision: String,
@@ -220,6 +231,7 @@ pub fn supports(kind: &str) -> bool {
     matches!(
         kind,
         "PRODUCT_CREATE"
+            | "SERVICE_REFUND"
             | "WARRANTY_PATCH"
             | "CONFIG_PATCH"
             | "LAYAWAY_CREATE"
@@ -640,6 +652,7 @@ pub fn execute_private(
     if matches!(
         req,
         Command::RepairSave { .. }
+            | Command::ServiceRefund { .. }
             | Command::WarrantySave { .. }
             | Command::WarrantyDefault { .. }
             | Command::LayawayCreate { .. }
@@ -694,6 +707,16 @@ pub fn execute_private(
         let mut kind = request["kind"].as_str().ok_or_else(invalid)?.to_owned();
         let mut turn: Option<String> = None;
         match &req {
+            Command::ServiceRefund { turn_id, .. } => {
+                doc = super::service_refunds::document(
+                    c,
+                    &ctx,
+                    &req,
+                    &decision.effective_time_ms,
+                    false,
+                )?;
+                turn = turn_id.clone();
+            }
             Command::BusinessSave { .. } => {
                 kind = "CONFIG_PATCH".into();
                 doc = super::settings::document(c, &ctx, &req)?;
@@ -950,6 +973,9 @@ pub fn effects(v: &Value) -> Result<Value, AppError> {
     )
 }
 pub fn validate_receipt(v: &Value, r: &Value, snapshot: Option<&str>) -> Result<(), AppError> {
+    if v["kind"] == "SERVICE_REFUND" {
+        super::service_refunds::validate(v)?;
+    }
     if super::layaways::supports(v["kind"].as_str().unwrap_or_default()) {
         return super::layaways::validate_receipt(v, r, snapshot);
     }
@@ -1023,6 +1049,9 @@ pub fn apply(
     let d = &v["payload"]["document"];
     let req = &v["payload"]["request"];
     let sk = sales::scope_key(ctx)?;
+    if kind == "SERVICE_REFUND" {
+        super::service_refunds::apply(tx, ctx, v, remote)?;
+    }
     if kind == "SALE_RETURN" {
         super::returns::apply(tx, ctx, v, remote)?;
     }
@@ -1308,6 +1337,7 @@ pub fn report(
     let mut expense = MoneyCents::ZERO;
     let mut abono = MoneyCents::ZERO;
     let mut refunds = MoneyCents::ZERO;
+    let mut service_refunds = MoneyCents::ZERO;
     let mut q=c.prepare("SELECT e.amount_cents FROM sale_credit_entries_v1 e JOIN sales s ON s.operation_id=e.operation_id WHERE e.tenant_id=?1 AND e.scope_key=?2 AND cast(s.created_at AS INTEGER)>=?3 AND cast(s.created_at AS INTEGER)<?4")?;
     for row in q.query_map((&ctx.tenant_id, &sk, start, end), |r| r.get::<_, i64>(0))? {
         credit = credit
@@ -1329,6 +1359,9 @@ pub fn report(
         if k == "SALE_RETURN" {
             refunds = refunds.checked_add(m).map_err(|_| invalid())?;
         }
+        if k == "SERVICE_REFUND" {
+            service_refunds = service_refunds.checked_add(m).map_err(|_| invalid())?;
+        }
     }
     let profit = if missing == 0 && refunds == MoneyCents::ZERO {
         Some(
@@ -1343,7 +1376,7 @@ pub fn report(
         None
     };
     Ok(
-        json!({"fromMs":from,"toMs":to,"coverage":"LOCAL_NATIVE_ONLY","salesCount":count.to_string(),"totalCents":totals[0].to_dto(),"itbisCents":totals[1].to_dto(),"discountCents":totals[2].to_dto(),"creditCents":credit.to_dto(),"expenseCents":expense.to_dto(),"creditPaymentsCents":abono.to_dto(),"refundCents":refunds.to_dto(),"netSalesCents":totals[0].checked_sub(refunds).map_err(|_|invalid())?.to_dto(),"paymentMethods":methods.into_iter().map(|(k,v)|(k,v.to_dto())).collect::<std::collections::BTreeMap<_,_>>(),"salesWithUnknownCost":missing.to_string(),"profitCents":profit,"profitEvidence":if refunds!=MoneyCents::ZERO{"RETURNS_COST_ALLOCATION_PENDING"}else if missing==0{"FROZEN_SALE_COSTS_LESS_TAX_AND_EXPENSES"}else{"COST_UNAVAILABLE"},"fiscalEvidence":"NOT_CERTIFIED"}),
+        json!({"fromMs":from,"toMs":to,"coverage":"LOCAL_NATIVE_ONLY","salesCount":count.to_string(),"totalCents":totals[0].to_dto(),"itbisCents":totals[1].to_dto(),"discountCents":totals[2].to_dto(),"creditCents":credit.to_dto(),"expenseCents":expense.to_dto(),"creditPaymentsCents":abono.to_dto(),"refundCents":refunds.to_dto(),"serviceDepositRefundCents":service_refunds.to_dto(),"netSalesCents":totals[0].checked_sub(refunds).map_err(|_|invalid())?.to_dto(),"paymentMethods":methods.into_iter().map(|(k,v)|(k,v.to_dto())).collect::<std::collections::BTreeMap<_,_>>(),"salesWithUnknownCost":missing.to_string(),"profitCents":profit,"profitEvidence":if refunds!=MoneyCents::ZERO{"RETURNS_COST_ALLOCATION_PENDING"}else if missing==0{"FROZEN_SALE_COSTS_LESS_TAX_AND_EXPENSES"}else{"COST_UNAVAILABLE"},"fiscalEvidence":"NOT_CERTIFIED"}),
     )
 }
 fn snapshot_cost(v: &Value) -> Result<MoneyCents, AppError> {

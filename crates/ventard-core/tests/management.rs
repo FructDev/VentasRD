@@ -1239,6 +1239,11 @@ fn abandoned_equipment_disassembly_creates_parts_and_stock_atomically() {
     assert_eq!(d["document"]["repair"]["paidCents"], "150");
     assert_eq!(d["document"]["repair"]["totalCents"], "50");
     assert_eq!(d["document"]["repair"]["settlementPendingCents"], "100");
+    assert_eq!(
+        ventard_core::application::repairs::read(&c, &ctx()).unwrap()["rows"][0]["settlement"]
+            ["eligibleCents"],
+        "100"
+    );
 }
 #[test]
 fn warranty_reentry_is_linked_free_and_requires_a_current_original_warranty() {
@@ -2191,6 +2196,108 @@ fn inventory_photos_are_bounded_preserved_on_metadata_import_and_received_exactl
     assert!(inventory_product(&b)["photo"].is_null());
 }
 #[test]
+fn cancelled_service_deposits_refund_exactly_once_without_erasing_payments_or_stock() {
+    use ventard_core::application::{repairs, sales_sync};
+    let mut c = db();
+    repair_fixture(&mut c);
+    run_pro(&mut c, repair_save(1400, "0")).unwrap();
+    run_pro(&mut c, repair_action(1401, "1", "CANCEL", "EFECTIVO", "0")).unwrap();
+    let original = repairs::read(&c, &ctx()).unwrap()["rows"][0].clone();
+    let request = |op, revision, amount, method: &str| {
+        serde_json::from_value::<management::Command>(json!({"kind":"SERVICE_REFUND","operationId":id(op),"family":"repair","serviceId":id(700),"expectedServiceRevision":"2","expectedRefundRevision":revision,"amountCents":amount,"method":method,"turnId":if method=="EFECTIVO"{json!(id(90))}else{serde_json::Value::Null},"reason":"Devolución de depósito QA"})).unwrap()
+    };
+    let command = request(1402, "0", "40", "EFECTIVO");
+    c.execute_batch("CREATE TRIGGER service_refund_fault BEFORE INSERT ON sale_cash_entries_v1 BEGIN SELECT RAISE(ABORT,'owned-refund-fault');END;").unwrap();
+    assert!(run_pro(&mut c, command.clone()).is_err());
+    assert_eq!(
+        repairs::read(&c, &ctx()).unwrap()["rows"][0]["settlement"]["pendingCents"],
+        "100"
+    );
+    c.execute_batch("DROP TRIGGER service_refund_fault")
+        .unwrap();
+    let first = run_pro(&mut c, command.clone()).unwrap();
+    assert_eq!(run_pro(&mut c, command).unwrap(), first);
+    assert_eq!(
+        management::drawer(&c, &ctx(), &id(90)).unwrap()["expectedCents"],
+        "50060"
+    );
+    assert!(run_pro(&mut c, request(1403, "0", "60", "EFECTIVO")).is_err());
+    assert!(run_pro(&mut c, request(1404, "1", "61", "EFECTIVO")).is_err());
+    run_pro(&mut c, request(1405, "1", "60", "TARJETA")).unwrap();
+    let updated = repairs::read(&c, &ctx()).unwrap()["rows"][0].clone();
+    assert_eq!(updated["settlement"]["pendingCents"], "0");
+    assert_eq!(updated["payments"], original["payments"]);
+    assert_eq!(updated["paidCents"], "100");
+    assert_eq!(inventory_product(&c)["stock"], "4");
+    let mut b = db();
+    repair_fixture(&mut b);
+    for (op, seq) in [(1400, 1), (1401, 2)] {
+        sales_sync::receive_event(&mut b, &ctx(), &repair_event(&c, op, seq)).unwrap();
+    }
+    for (op, seq) in [(1402, 3), (1405, 4)] {
+        let e = event(&c, op, seq);
+        sales_sync::receive_event(&mut b, &ctx(), &e).unwrap();
+        sales_sync::receive_event(&mut b, &ctx(), &e).unwrap();
+    }
+    assert_eq!(
+        repairs::read(&b, &ctx()).unwrap()["rows"][0]["settlement"],
+        updated["settlement"]
+    );
+    assert_eq!(
+        management::drawer(&b, &ctx(), &id(90)).unwrap()["expectedCents"],
+        "50060"
+    );
+    let mut archive = db();
+    repair_fixture(&mut archive);
+    for (op, seq) in [(1400, 1), (1401, 2)] {
+        sales_sync::receive_event(&mut archive, &ctx(), &repair_event(&c, op, seq)).unwrap();
+    }
+    let events = json!([event(&c, 1402, 3), event(&c, 1405, 4)]);
+    for _ in 0..2 {
+        let tx = archive.transaction().unwrap();
+        ventard_core::application::service_refunds::import_capture(&tx, &ctx(), &events, 4)
+            .unwrap();
+        tx.commit().unwrap();
+    }
+    assert_eq!(
+        repairs::read(&archive, &ctx()).unwrap()["rows"][0]["settlement"]["pendingCents"],
+        "0"
+    );
+    assert_eq!(
+        management::drawer(&archive, &ctx(), &id(90)).unwrap()["expectedCents"],
+        "50100"
+    );
+    assert_eq!(
+        management::report(&c, &ctx(), "1999", "2001").unwrap()["serviceDepositRefundCents"],
+        "100"
+    );
+    assert_eq!(
+        management::report(&c, &ctx(), "1999", "2001").unwrap()["netSalesCents"],
+        "0"
+    );
+}
+#[test]
+fn cancelled_layaway_refund_preserves_reservation_release_and_requires_pro_cash_context() {
+    let mut c = db();
+    repair_fixture(&mut c);
+    let create=serde_json::from_value(json!({"kind":"LAYAWAY_CREATE","operationId":id(1700),"layawayId":id(1701),"definition":{"customerId":null,"customerName":"Ana QA","phone":"","notes":"","items":[{"productId":id(300),"name":"Café QA","quantity":"1","priceCents":"500","serial":null}]},"initialPaymentCents":"100","method":"EFECTIVO","turnId":id(90)})).unwrap();
+    run_pro(&mut c, create).unwrap();
+    let cancel=serde_json::from_value(json!({"kind":"LAYAWAY_ACTION","operationId":id(1702),"layawayId":id(1701),"expectedRevision":"1","action":"CANCEL","amountCents":"0","method":"EFECTIVO","turnId":null,"warrantyDays":"0"})).unwrap();
+    run_pro(&mut c, cancel).unwrap();
+    let request:management::Command=serde_json::from_value(json!({"kind":"SERVICE_REFUND","operationId":id(1703),"family":"layaway","serviceId":id(1701),"expectedServiceRevision":"2","expectedRefundRevision":"0","amountCents":"100","method":"EFECTIVO","turnId":id(90),"reason":"Depósito devuelto"})).unwrap();
+    assert!(run(&mut c, request.clone()).is_err());
+    let r = run_pro(&mut c, request.clone()).unwrap();
+    assert_eq!(run_pro(&mut c, request).unwrap(), r);
+    assert_eq!(inventory_product(&c)["stock"], "4");
+    assert_eq!(
+        management::drawer(&c, &ctx(), &id(90)).unwrap()["expectedCents"],
+        "50000"
+    );
+    let current = ventard_core::application::layaways::read(&c, &ctx()).unwrap();
+    assert_eq!(current["rows"][0]["paidCents"], "100");
+    assert_eq!(current["rows"][0]["settlement"]["pendingCents"], "0");
+}
+#[test]
 fn encrypted_serial_upgrade_preserves_existing_units_and_lost_state_on_reopen() {
     use ventard_core::storage::{cipher::CipherKey, migrations, writer::VaultWriter};
     let path = std::env::temp_dir().join(format!(
@@ -2223,12 +2330,12 @@ fn encrypted_serial_upgrade_preserves_existing_units_and_lost_state_on_reopen() 
         add["serials"] = json!(["PRESERVED-001"]);
         run(c, serde_json::from_value(add).unwrap()).unwrap();
         // Recreate precisely the former constraint, only in this owned fixture.
-        c.execute_batch("CREATE TABLE serial_old(tenant_id TEXT NOT NULL,scope_key TEXT NOT NULL REFERENCES scopes(scope_key),producto_id TEXT NOT NULL REFERENCES products(producto_id),serial TEXT NOT NULL,revision TEXT NOT NULL,state TEXT NOT NULL CHECK(state IN('AVAILABLE','RESERVED','SOLD')),sale_operation_id TEXT REFERENCES operation_journal(operation_id),PRIMARY KEY(tenant_id,scope_key,serial)) STRICT;INSERT INTO serial_old SELECT * FROM sale_serial_inventory_v1;DROP TABLE sale_serial_inventory_v1;ALTER TABLE serial_old RENAME TO sale_serial_inventory_v1;DELETE FROM migration_history WHERE version=28;PRAGMA user_version=27;").unwrap();
+        c.execute_batch("CREATE TABLE serial_old(tenant_id TEXT NOT NULL,scope_key TEXT NOT NULL REFERENCES scopes(scope_key),producto_id TEXT NOT NULL REFERENCES products(producto_id),serial TEXT NOT NULL,revision TEXT NOT NULL,state TEXT NOT NULL CHECK(state IN('AVAILABLE','RESERVED','SOLD')),sale_operation_id TEXT REFERENCES operation_journal(operation_id),PRIMARY KEY(tenant_id,scope_key,serial)) STRICT;INSERT INTO serial_old SELECT * FROM sale_serial_inventory_v1;DROP TABLE sale_serial_inventory_v1;ALTER TABLE serial_old RENAME TO sale_serial_inventory_v1;DELETE FROM migration_history WHERE version>=28;PRAGMA user_version=27;").unwrap();
     }
     {
         let mut vault = VaultWriter::open_encrypted(&path, &key).unwrap();
         let c = vault.connection();
-        assert_eq!(migrations::validate_history(c).unwrap(), 28);
+        assert_eq!(migrations::validate_history(c).unwrap(), 29);
         assert_eq!(
             c.query_row::<String, _, _>(
                 "SELECT state FROM sale_serial_inventory_v1 WHERE serial='PRESERVED-001'",

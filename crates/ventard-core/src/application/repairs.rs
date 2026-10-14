@@ -94,7 +94,11 @@ fn add(a: i64, b: i64) -> Result<i64, AppError> {
 pub fn supports(k: &str) -> bool {
     matches!(k, "REPAIR_CREATE" | "REPAIR_EDIT" | "REPAIR_DISASSEMBLE")
 }
-fn current(c: &Connection, ctx: &CatalogueContext, id: &str) -> Result<Option<Value>, AppError> {
+pub(crate) fn current(
+    c: &Connection,
+    ctx: &CatalogueContext,
+    id: &str,
+) -> Result<Option<Value>, AppError> {
     EntityId::parse(id).map_err(|_| invalid())?;
     let row:Option<(String,String)>=c.query_row("SELECT r.document,coalesce(o.state,'APPLIED') FROM native_management_records_v1 r LEFT JOIN outbox o ON o.operation_id=r.operation_id WHERE r.tenant_id=?1 AND r.scope_key=?2 AND r.kind IN('REPAIR_CREATE','REPAIR_EDIT','REPAIR_DISASSEMBLE') AND json_extract(r.document,'$.repair.id')=?3 ORDER BY cast(json_extract(r.document,'$.repair.revision') AS INTEGER) DESC LIMIT 1",(&ctx.tenant_id,sales::scope_key(ctx)?,id),|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
     row.map(|(raw, status)| {
@@ -130,6 +134,7 @@ pub fn read(c: &Connection, ctx: &CatalogueContext) -> Result<Value, AppError> {
         let mut r = d["repair"].clone();
         r["operationId"] = d["operationId"].clone();
         r["remoteStatus"] = d["remoteStatus"].clone();
+        r["settlement"] = super::service_refunds::summary(c, ctx, "repair", &r)?;
         rows.push(r);
     }
     rows.sort_by(|a, b| {

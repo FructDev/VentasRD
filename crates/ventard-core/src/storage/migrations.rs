@@ -222,6 +222,13 @@ pub fn get_embedded_migrations() -> Vec<Migration> {
         sql: sql_0028,
         checksum: Migration::compute_checksum(sql_0028),
     });
+    let sql_0029 = include_str!("../../migrations/0029_service_refunds.sql");
+    migrations.push(Migration {
+        version: 29,
+        name: "0029_service_refunds",
+        sql: sql_0029,
+        checksum: Migration::compute_checksum(sql_0029),
+    });
     migrations
 }
 

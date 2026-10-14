@@ -158,6 +158,7 @@ fn supported_kind(kind: &str) -> bool {
             | "REPAIR_PAYMENT"
             | "REPAIR_DELIVER"
             | "REPAIR_DISASSEMBLE"
+            | "SERVICE_REFUND"
             | "LAYAWAY_CREATE"
             | "LAYAWAY_PAYMENT"
             | "LAYAWAY_COMPLETE"

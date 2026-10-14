@@ -296,7 +296,7 @@ fn additive_access_upgrade_preserves_v1_rows_and_original_checksum() {
         w.connection()
             .query_row("PRAGMA user_version", [], |r| r.get::<_, u32>(0))
             .unwrap(),
-        28
+        29
     );
     assert_eq!(
         w.connection()

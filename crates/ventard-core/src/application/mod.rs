@@ -31,6 +31,8 @@ pub mod sales;
 #[cfg(feature = "encrypted-storage")]
 pub mod sales_sync;
 #[cfg(feature = "encrypted-storage")]
+pub mod service_refunds;
+#[cfg(feature = "encrypted-storage")]
 pub mod settings;
 #[cfg(feature = "encrypted-storage")]
 pub mod ticket_sequence;

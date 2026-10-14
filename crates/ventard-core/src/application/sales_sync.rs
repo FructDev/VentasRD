@@ -525,6 +525,7 @@ pub fn activate_bootstrap(
         }
     }
     super::layaways::bind_captured_serials(&tx, ctx)?;
+    super::service_refunds::import_capture(&tx,ctx,&m["serviceRefunds"],integer(&m["watermark"])?)?;
     tx.execute(
         "INSERT INTO sale_free_settings_v1 VALUES(?1,?2,?3)",
         (&ctx.tenant_id, &sk, m["freeTax"].to_string()),
@@ -833,6 +834,7 @@ pub fn record_failure_detail(
                     | "AUTHORITY_PROJECTION_DIVERGED"
                     | "SALES_SCHEMA_INCOMPATIBLE"
                     | "SALES_PAYMENT_CONTEXT_INVALID"
+                    | "SALES_HEADER_PROOF_REQUIRED"
             )
         })
         .unwrap_or(code);
