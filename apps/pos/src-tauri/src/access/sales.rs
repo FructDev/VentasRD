@@ -189,10 +189,54 @@ struct NetworkContext {
     token: Zeroizing<String>,
 }
 type SalesHttpFailure = (u16, u64, Option<&'static str>);
+// A metadata snapshot may expire or be removed while the offline document is
+// still valid. Refresh only its server proof; never rewrite the frozen header,
+// import a stock/cash baseline, advance a cursor, or create another operation.
+fn submit_with_header_proof(
+    ctx: &CatalogueContext,
+    submission: Value,
+    mut rpc: impl FnMut(&'static str, Value) -> Result<Value, SalesHttpFailure>,
+) -> Result<Value, SalesHttpFailure> {
+    let original = rpc("native_sales_submit_v1", submission.clone());
+    if !matches!(
+        &original,
+        Err((400 | 409 | 422, _, Some("SALES_HEADER_PROOF_REQUIRED")))
+    ) {
+        return original;
+    }
+    let document = submission["p_snapshot"]
+        .as_str()
+        .or_else(|| submission["p_intent"].as_str())
+        .and_then(|raw| serde_json::from_str::<Value>(raw).ok());
+    let header = document.as_ref().map(|v| {
+        if submission["p_snapshot"].is_string() {
+            &v["business"]
+        } else {
+            &v["payload"]["document"]["business"]
+        }
+    });
+    let Some(header) = header.filter(|h| h.is_object()) else {
+        return original;
+    };
+    let mut request = body(ctx);
+    let snapshot_id = EntityId::new_random().to_string();
+    request["p_snapshot_id"] = json!(snapshot_id);
+    let manifest = rpc("native_sales_bootstrap_v1", request)?;
+    if manifest["version"] != "ventard.native.operational.1"
+        || manifest["namespace"] != "NATIVE1"
+        || manifest["snapshotId"] != snapshot_id
+        || manifest["context"] != serde_json::to_value(ctx).map_err(|_| (503, 3000, None))?
+        || manifest["business"] != *header
+    {
+        return original;
+    }
+    rpc("native_sales_submit_v1", submission)
+}
 // Never forward raw PostgreSQL messages/details (may contain values or secrets).
 fn safe_sales_rejection(bytes: &[u8]) -> Option<&'static str> {
     let value: Value = serde_json::from_slice(bytes).ok()?;
     match value["message"].as_str() {
+        Some("NATIVE_SERVICE_HEADER_INVALID") => Some("SALES_HEADER_PROOF_REQUIRED"),
         Some("FISCAL_SETTINGS_VERSION_CONFLICT") => Some("FISCAL_SETTINGS_VERSION_CONFLICT"),
         Some("FISCAL_SETTINGS_KIND_TRANSITION_REQUIRED") => {
             Some("FISCAL_SETTINGS_KIND_TRANSITION_REQUIRED")
@@ -452,7 +496,7 @@ impl AccessState {
             lookup["p_operation_id"] = json!(d.operation_id);
             lookup["p_hash"] = json!(d.hash);
             let response=Self::sales_rpc(&n,"native_sales_lookup_v1",lookup).and_then(|r|if r["status"]=="NOT_FOUND"{
-    if r!=json!({"status":"NOT_FOUND","operationId":d.operation_id,"intentHash":d.hash}){return Err((503,3000,None))}Self::sales_rpc(&n,"native_sales_submit_v1",json!({"p_intent":d.intent,"p_hash":d.hash,"p_snapshot":d.snapshot,"p_snapshot_hash":d.snapshot_hash}))
+    if r!=json!({"status":"NOT_FOUND","operationId":d.operation_id,"intentHash":d.hash}){return Err((503,3000,None))}submit_with_header_proof(&ctx,json!({"p_intent":d.intent,"p_hash":d.hash,"p_snapshot":d.snapshot,"p_snapshot_hash":d.snapshot_hash}),|rpc,args|{self.sales_current(&n).map_err(|_|(403,0,Some("SALES_REMOTE_DENIED")))?;Self::sales_rpc(&n,rpc,args)})
    }else{Ok(r)});
             self.sales_current(&n)?;
             match response {
@@ -1165,6 +1209,86 @@ pub async fn native_sales(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn header_context() -> CatalogueContext {
+        CatalogueContext {
+            tenant_id: "96000000-0000-4000-8000-000000000001".into(),
+            actor_id: "96000000-0000-4000-8000-000000000011".into(),
+            installation_id: "96000000-0000-4000-8000-000000000012".into(),
+            device_id: "96000000-0000-4000-8000-000000000013".into(),
+            writer_epoch: "1".into(),
+            scope_type: "GLOBAL".into(),
+            branch_id: None,
+        }
+    }
+    #[test]
+    fn header_proof_refresh_retries_the_identical_frozen_submission_only_once() {
+        assert_eq!(
+            safe_sales_rejection(
+                br#"{"message":"NATIVE_SERVICE_HEADER_INVALID","details":"private"}"#
+            ),
+            Some("SALES_HEADER_PROOF_REQUIRED")
+        );
+        let ctx = header_context();
+        let header = json!({"name":"QA","phone":null});
+        let submission = json!({"p_intent":json!({"payload":{"document":{"business":header}}}).to_string(),"p_hash":"original-hash","p_snapshot":null,"p_snapshot_hash":null});
+        let mut calls = Vec::new();
+        let result=submit_with_header_proof(&ctx,submission.clone(),|rpc,args|{calls.push(rpc);if rpc=="native_sales_submit_v1" {assert_eq!(args,submission);if calls.len()==1 {Err((400,0,Some("SALES_HEADER_PROOF_REQUIRED")))}else{Ok(json!({"status":"APPLIED"}))}}else{assert_eq!(args["p_installation_id"],ctx.installation_id);Ok(json!({"version":"ventard.native.operational.1","namespace":"NATIVE1","context":ctx,"snapshotId":args["p_snapshot_id"],"business":header}))}}).unwrap();
+        assert_eq!(result["status"], "APPLIED");
+        assert_eq!(
+            calls,
+            vec![
+                "native_sales_submit_v1",
+                "native_sales_bootstrap_v1",
+                "native_sales_submit_v1"
+            ]
+        );
+    }
+    #[test]
+    fn header_proof_refresh_cannot_replace_a_header_or_accept_a_foreign_snapshot() {
+        for foreign in [false, true] {
+            let ctx = header_context();
+            let header = json!({"name":"QA"});
+            let submission = json!({"p_intent":json!({"payload":{"document":{"business":header}}}).to_string(),"p_snapshot":null});
+            let mut submits = 0;
+            let result = submit_with_header_proof(&ctx, submission, |rpc, args| {
+                if rpc == "native_sales_submit_v1" {
+                    submits += 1;
+                    Err((400, 0, Some("SALES_HEADER_PROOF_REQUIRED")))
+                } else {
+                    let mut m = json!({"version":"ventard.native.operational.1","namespace":"NATIVE1","context":ctx,"snapshotId":args["p_snapshot_id"],"business":header});
+                    if foreign {
+                        m["context"]["actorId"] = json!("another-actor")
+                    } else {
+                        m["business"]["name"] = json!("changed-header")
+                    }
+                    Ok(m)
+                }
+            });
+            assert_eq!(result.unwrap_err().2, Some("SALES_HEADER_PROOF_REQUIRED"));
+            assert_eq!(submits, 1);
+        }
+    }
+    #[test]
+    fn header_proof_refresh_is_bounded_and_does_not_retry_other_rejections() {
+        for reason in [None, Some("SALES_HEADER_PROOF_REQUIRED")] {
+            let ctx = header_context();
+            let submission = json!({"p_intent":json!({"payload":{"document":{"business":{"name":"QA"}}}}).to_string(),"p_snapshot":null});
+            let mut calls = 0;
+            let result = submit_with_header_proof(&ctx, submission, |rpc, args| {
+                calls += 1;
+                if rpc == "native_sales_bootstrap_v1" {
+                    Ok(
+                        json!({"version":"ventard.native.operational.1","namespace":"NATIVE1","context":ctx,"snapshotId":args["p_snapshot_id"],"business":{"name":"QA"}}),
+                    )
+                } else {
+                    Err((400, 0, reason))
+                }
+            });
+            assert!(result.is_err());
+            assert_eq!(calls, if reason.is_some() { 3 } else { 1 });
+        }
+    }
 
     #[test]
     fn server_setup_rejections_are_explicit_without_leaking_details() {

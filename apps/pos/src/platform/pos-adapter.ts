@@ -296,6 +296,7 @@ const errors: Record<string, string> = {
   PRINT_FAILED:'Windows no pudo abrir la impresión. La venta sigue guardada; revisa la solicitud antes de reimprimir.',
   ACCESS_LOGIN_REQUIRED:"Inicia sesión online para sincronizar. Las ventas locales siguen conservadas.",
   SALES_SCHEMA_INCOMPATIBLE:"La función de Staging no coincide con el esquema desplegado. Los datos y pendientes se conservan.",
+  SALES_HEADER_PROOF_REQUIRED:"El servidor no pudo acreditar el encabezado original del comprobante. Se conserva el mismo documento; no se reemplazan sus datos por la configuración actual.",
   SALES_SETUP_REQUIRED:"El negocio QA aún necesita adopción autorizada por dueño/admin antes de preparar Ventas.",
   SALES_SOURCE_UNVERIFIABLE:"Los datos de origen no permiten una preparación segura. No se reconstruirán saldos ni stock.",
   SALES_SCOPE_CONFLICT:"El negocio QA se adoptó en otro ámbito. Usa la sucursal adoptada.",
