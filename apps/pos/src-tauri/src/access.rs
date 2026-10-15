@@ -1,5 +1,6 @@
 //! DEBUG staging access on definitive pages. No commercial activation until
 //! consistent snapshot/recovery/fiscal are ready. Credentials never leave Rust.
+mod account_profile;
 pub mod backup;
 mod printers;
 mod recovery;
@@ -227,6 +228,8 @@ pub struct Tenant {
     id: String,
     name: String,
     branches: Vec<Branch>,
+    #[serde(skip)]
+    presentation: ventard_core::storage::account_presentation::Profile,
 }
 struct Session {
     actor: String,
@@ -258,6 +261,8 @@ pub struct AccessView {
     actor_id: Option<String>,
     tenant_id: Option<String>,
     role: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    presentation: Option<ventard_core::storage::account_presentation::Profile>,
     pin_enrolled: bool,
     tenants: Vec<Tenant>,
     catalogue_ready: bool,
@@ -397,6 +402,7 @@ impl AccessState {
                     actor_id: None,
                     tenant_id: None,
                     role: None,
+                    presentation: None,
                     pin_enrolled: false,
                     tenants: vec![],
                     catalogue_ready: false,
@@ -423,6 +429,7 @@ impl AccessState {
             actor_id: inner.session.as_ref().map(|s| s.actor.clone()),
             tenant_id: None,
             role: None,
+            presentation: None,
             pin_enrolled: false,
             tenants: inner
                 .session
@@ -438,10 +445,12 @@ impl AccessState {
             let keys = config.trust()?;
             let actor = selected.actor_id.clone();
             let preview_context = selected.catalogue_context();
-            let result=inner.writer.as_ref().unwrap().call(move|conn|{Ok((||{let grant=load_grant(conn,&keys,&ctx).map_err(|e|error(e.code()))?;let enrolled:bool=conn.query_row("SELECT EXISTS(SELECT 1 FROM local_pin_credentials_v1 WHERE tenant_id=?1 AND actor_id=?2)",(&ctx.tenant_id,&actor),|r|r.get(0)).map_err(|_|error("ACCESS_STORAGE_UNAVAILABLE"))?;let ready=catalogue::read(conn,&preview_context).map_err(|e|error(e.code()))?.is_some();Ok::<_,AccessError>((grant.payload().role.clone(),enrolled,ready))})())}).map_err(|_|error("ACCESS_STORAGE_UNAVAILABLE"))??;
+            let show_profile = inner.unlocked;
+            let result=inner.writer.as_ref().unwrap().call(move|conn|{Ok((||{let grant=load_grant(conn,&keys,&ctx).map_err(|e|error(e.code()))?;let enrolled:bool=conn.query_row("SELECT EXISTS(SELECT 1 FROM local_pin_credentials_v1 WHERE tenant_id=?1 AND actor_id=?2)",(&ctx.tenant_id,&actor),|r|r.get(0)).map_err(|_|error("ACCESS_STORAGE_UNAVAILABLE"))?;let ready=catalogue::read(conn,&preview_context).map_err(|e|error(e.code()))?.is_some();Ok::<_,AccessError>((grant.payload().role.clone(),enrolled,ready,if show_profile {ventard_core::storage::account_presentation::read(conn,&ctx.tenant_id,&ctx.actor_id).map_err(|_|error("ACCESS_STORAGE_UNAVAILABLE"))?}else{None}))})())}).map_err(|_|error("ACCESS_STORAGE_UNAVAILABLE"))??;
             view.actor_id = Some(selected.actor_id.clone());
             view.tenant_id = Some(selected.identity.tenant_id.clone());
             view.role = Some(result.0);
+            view.presentation = result.3;
             view.pin_enrolled = result.1;
             view.catalogue_ready = inner.unlocked && result.2;
             let context = selected.catalogue_context();
@@ -766,6 +775,7 @@ impl AccessState {
             .ok_or(error("ACCESS_RESPONSE_INVALID"))?
             .to_string();
         id(&actor)?;
+        let actor_name = account_profile::auth_name(&data["user"]);
         if data["user"]["is_anonymous"] == true {
             return Err(error("ACCESS_ACTOR_DENIED"));
         }
@@ -829,15 +839,22 @@ impl AccessState {
                     name: name.into(),
                 });
             }
+            let presentation = Self::tenant_presentation(
+                &client,
+                &config,
+                &token,
+                tenant,
+                &actor,
+                actor_name.clone(),
+            );
             tenants.push(Tenant {
                 id: tenant.into(),
-                name: if tenant == TENANTS[0] {
-                    "Negocio QA A"
-                } else {
-                    "Negocio QA B"
-                }
-                .into(),
+                name: presentation
+                    .business_name
+                    .clone()
+                    .unwrap_or_else(|| format!("Negocio {}", &tenant[tenant.len() - 6..])),
                 branches,
+                presentation,
             });
         }
         if tenants.is_empty() {
@@ -859,6 +876,7 @@ impl AccessState {
             actor_id: inner.session.as_ref().map(|s| s.actor.clone()),
             tenant_id: None,
             role: None,
+            presentation: None,
             pin_enrolled: false,
             tenants: inner.session.as_ref().unwrap().tenants.clone(),
             catalogue_ready: false,
@@ -888,6 +906,7 @@ impl AccessState {
             return Err(error("ACCESS_LOGIN_REQUIRED"));
         }
         let actor = session.actor.clone();
+        let display_profile = allowed.presentation.clone();
         let root = self.root.join(&tenant);
         std::fs::create_dir_all(&root).map_err(|_| error("ACCESS_STORAGE_UNAVAILABLE"))?;
         let ip = root.join("identity.json");
@@ -987,7 +1006,10 @@ impl AccessState {
             .unwrap()
             .call(move |conn| {
                 Ok(save_grant(conn, &wire, &trusted, &ctx)
-                    .map(|_| ())
+                    .and_then(|_| {
+                        ventard_core::storage::account_presentation::save(conn, &display_profile)
+                            .map_err(|_| ventard_core::security::access_cache::CacheError::Storage)
+                    })
                     .map_err(|e| error(e.code())))
             })
             .map_err(|_| error("ACCESS_STORAGE_UNAVAILABLE"))??;

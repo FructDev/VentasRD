@@ -1,4 +1,5 @@
 import {applyBrand} from '../features/settings/brand';
+import {AccountHeader,BusinessIdentity,headerBusiness} from '../features/access/account-header';
 import {BusinessSettings} from '../features/settings/business-settings';
 import {BackupSettings} from '../features/settings/backup-settings';
 import {WebMigrationSettings} from '../features/settings/web-migration-settings';
@@ -25,7 +26,6 @@ const LayawaysPage=lazy(()=>import('../features/services/layaways-page').then(m=
 const RepairsPage=lazy(()=>import('../features/services/repairs-page').then(m=>({default:m.RepairsPage})));
 import {ReportsPage} from '../features/management/reports-page';
 import { SalesProvider, useSales } from "../features/sales/workspace";
-import logo from "../../../../public/icon-192x192.png";
 import { nativePreviewPort,nativeOperationalPort } from "../platform/pos-adapter";
 import {
   LoginPage,
@@ -100,13 +100,17 @@ function Layout({
   readOnly = false,
   explicitSynthetic = false,
   explicitPreview = false,
+  account,
 }: {
   readOnly?: boolean;
   explicitSynthetic?: boolean;
   explicitPreview?: boolean;
+  account?: AccessView|null;
 }) {
   const s = useSales();
-  useEffect(()=>{applyBrand(s.snapshot?.business?.color??"dorado",s.snapshot?.business?.font??"syne")},[s.snapshot?.business?.color,s.snapshot?.business?.font]);
+  const archive=account?.status==='RECOVERY_ARCHIVE'||s.snapshot?.mode==='recovery-readonly';
+  const brand=headerBusiness(s.snapshot?.business,account,archive);
+  useEffect(()=>{applyBrand(brand.color,brand.font)},[brand.color,brand.font]);
   const destination = (path: string) =>
     explicitSynthetic ? `${path}?source=synthetic` : explicitPreview ? `${path}?source=preview` : path;
   useEffect(() => {
@@ -119,14 +123,11 @@ function Layout({
           to={destination("/")}
           className="flex items-center gap-2 shrink-0"
         >
-          <img src={logo} alt="" width="28" height="28" />
-          <span className="font-display font-extrabold text-gold text-lg tracking-tight">
-            VentaRD
-          </span>
+          <BusinessIdentity name={brand.name} logo={brand.logo}/>
         </Link>
         <nav
           aria-label="Navegación principal"
-          className="flex items-center gap-1 mx-1 overflow-x-auto scrollbar-none"
+          className="flex min-w-0 flex-1 items-center gap-1 mx-1 overflow-x-auto scrollbar-none"
         >
           {modules.map((m) => (
             <NavLink
@@ -144,13 +145,7 @@ function Layout({
             </NavLink>
           ))}
         </nav>
-        <Link
-          to="/login"
-          className="text-[11px] text-vr-gray border border-navy-3 rounded px-2 py-1 shrink-0"
-          title="Preparar acceso con una cuenta de staging"
-        >
-          Iniciar sesión
-        </Link>
+        <AccountHeader account={account} businessName={brand.name} actorName={brand.actorName} archive={archive}/>
       </header>
       <div className="bg-gold/10 border-b border-gold/20 px-3 sm:px-4 py-1.5 text-[11px] sm:text-xs text-gold shrink-0">
         Desarrollo nativo ·{" "}
@@ -266,7 +261,7 @@ function NativeEntry() {
         <div className="max-w-3xl mt-6"><BackupSettings recoveryOnly/></div>
       </div>
     );
-  if(view?.status==='RECOVERY_ARCHIVE')return <SalesProvider key="recovery-archive" port={nativeArchivePort}><Layout readOnly/></SalesProvider>;
+  if(view?.status==='RECOVERY_ARCHIVE')return <SalesProvider key="recovery-archive" port={nativeArchivePort}><Layout readOnly account={view}/></SalesProvider>;
   if (view?.status === "AUTHENTICATED")
     return <Navigate to="/preparacion" replace />;
   if (view?.status === "PREPARATION_REQUIRED" && (view.operationalReady || (preview && view.catalogueReady)))
@@ -275,7 +270,7 @@ function NativeEntry() {
         key={`account:${view.tenantId}:${view.actorId}:${view.operationalReady}`}
         port={view.operationalReady?nativeOperationalPort:nativePreviewPort}
       >
-        <Layout readOnly={!view.operationalReady} explicitPreview={preview} />
+        <Layout readOnly={!view.operationalReady} explicitPreview={preview} account={view} />
       </SalesProvider>
     );
   if (view?.tenantId)

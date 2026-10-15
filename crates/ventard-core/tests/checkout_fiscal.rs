@@ -186,7 +186,7 @@ fn v9_to_v10_is_additive_and_preserves_allocated_blocks_and_cursor() {
     c.execute_batch("ALTER TABLE legacy_web_observation_plans_v1 DROP COLUMN source_kind;DROP TABLE fiscal_requests_v2;DELETE FROM migration_history WHERE version>=10;PRAGMA user_version=9;").unwrap();
     assert_eq!(migrations::validate_history(&c).unwrap(), 9);
     migrations::apply(&mut c).unwrap();
-    assert_eq!(migrations::validate_history(&c).unwrap(), 31);
+    assert_eq!(migrations::validate_history(&c).unwrap(), 32);
     assert_eq!(
         c.query_row("SELECT evidence_bytes FROM fiscal_blocks", [], |r| r
             .get::<_, Vec<u8>>(0))
@@ -696,7 +696,7 @@ fn v8_upgrade_and_encrypted_reopen_preserve_pin_cart_and_fiscal_counter() {
     {
         let mut w = VaultWriter::open_encrypted(&path, &key).unwrap();
         let c = w.connection();
-        assert_eq!(migrations::validate_history(c).unwrap(), 31);
+        assert_eq!(migrations::validate_history(c).unwrap(), 32);
         assert!(unlock_pin(c, &g, &pin, 2100).unwrap().allows("READ"));
         assert_eq!(
             read_checkout(c, &g, 2100, 2100, 1, &id(30), &original.hash).unwrap(),

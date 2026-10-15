@@ -73,4 +73,4 @@ export interface WarrantyTicket {printTarget?:PrinterProfile;printLayout?:PrintL
 export interface BusinessDefinition {name:string;whatsapp:string;phone:string;rnc:string;address:string;footer:string;logo:string|null;color:string;font:string;bank:{name:string;account:string;holder:string}|null}
 export interface BusinessSettingsView {supported?:boolean;revision:string;definition:BusinessDefinition;operationId:string|null;remoteStatus:string;canLoadRemote:boolean;canWrite?:boolean;coverage:string}
 
-export interface BusinessHeader {name:string;rnc:string|null;address:string|null;phone:string|null;footer?:string|null;logo?:string|null;color?:string;font?:string;bank?:{name:string;account:string;holder:string}|null}
+export interface BusinessHeader {settingsRevision?:string;name:string;rnc:string|null;address:string|null;phone:string|null;footer?:string|null;logo?:string|null;color?:string;font?:string;bank?:{name:string;account:string;holder:string}|null}

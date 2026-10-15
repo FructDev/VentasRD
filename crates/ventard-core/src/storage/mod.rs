@@ -20,6 +20,8 @@ pub mod legacy_transition;
 pub mod legacy_web;
 pub mod migrations;
 #[cfg(feature = "encrypted-storage")]
+pub mod account_presentation;
+#[cfg(feature = "encrypted-storage")]
 pub mod recovery;
 pub mod vault_lock;
 pub mod writer;

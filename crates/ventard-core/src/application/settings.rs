@@ -192,8 +192,9 @@ pub fn read(c: &Connection, ctx: &CatalogueContext) -> Result<Value, AppError> {
         .map(|s| serde_json::from_str(&s).map_err(|_| invalid()))
         .transpose()?
         .unwrap_or(Value::Null);
+    let display = crate::storage::account_presentation::read(c, &ctx.tenant_id, &ctx.actor_id)?;
     Ok(
-        json!({"revision":"0","definition":{"name":p["name"].as_str().unwrap_or(""),"rnc":p["rnc"].as_str().unwrap_or(""),"address":p["address"].as_str().unwrap_or(""),"phone":p["phone"].as_str().unwrap_or(""),"footer":p["footer"].as_str().unwrap_or(""),"whatsapp":p["whatsapp"].as_str().unwrap_or(""),"logo":null,"color":"dorado","font":"syne","bank":null},"operationId":null,"remoteStatus":"CAPTURED","canLoadRemote":false,"coverage":"CAPTURED_PUBLIC_FIELDS_ONLY"}),
+        json!({"revision":"0","definition":{"name":p["name"].as_str().filter(|s|!s.is_empty()).or_else(||display.as_ref().and_then(|p|p.business_name.as_deref())).unwrap_or(""),"rnc":p["rnc"].as_str().unwrap_or(""),"address":p["address"].as_str().unwrap_or(""),"phone":p["phone"].as_str().unwrap_or(""),"footer":p["footer"].as_str().unwrap_or(""),"whatsapp":p["whatsapp"].as_str().unwrap_or(""),"logo":display.as_ref().and_then(|p|p.logo.as_deref()),"color":display.as_ref().and_then(|p|p.color.as_deref()).unwrap_or("dorado"),"font":display.as_ref().and_then(|p|p.font.as_deref()).unwrap_or("syne"),"bank":null},"operationId":null,"remoteStatus":"CAPTURED","canLoadRemote":false,"coverage":"CAPTURED_PUBLIC_FIELDS_ONLY"}),
     )
 }
 pub fn document(c: &Connection, ctx: &CatalogueContext, req: &Command) -> Result<Value, AppError> {
