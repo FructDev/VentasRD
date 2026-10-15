@@ -3,6 +3,8 @@
 use super::*;
 #[path = "product_media.rs"]
 mod product_media;
+#[path = "team.rs"]
+mod team;
 use ventard_core::application::{
     checkout,
     sales::{self, SaleLine, SaleOptions, SaleRequest},
@@ -15,6 +17,10 @@ use ventard_core::application::{
     deny_unknown_fields
 )]
 pub enum SalesAction {
+    TeamRead {},
+    TeamExecute { input: ventard_core::storage::team::Input },
+    TeamRecover { cancel: bool },
+    TeamShare { #[serde(rename="operationId")] operation_id:String },
     CatalogueRead {},
     CatalogueOpen { share: bool },
     HistoryLoadRemote {},
@@ -201,6 +207,9 @@ struct NetworkContext {
     config: Config,
     token: Zeroizing<String>,
 }
+fn cashier_allowed(action:&SalesAction)->bool{
+ matches!(action,SalesAction::Read|SalesAction::ManagementRead|SalesAction::ProductPhotos{..}|SalesAction::PrinterRead{}|SalesAction::PrintLayoutRead|SalesAction::Print{..}|SalesAction::Quote{..}|SalesAction::Confirm{..}|SalesAction::Result{..}|SalesAction::Abandon{..}|SalesAction::OpenTurn{..}|SalesAction::Bootstrap|SalesAction::Synchronize|SalesAction::Retry{..})
+}
 type SalesHttpFailure = (u16, u64, Option<&'static str>);
 fn recovery_submission(
     current: &CatalogueContext,
@@ -316,6 +325,10 @@ fn submit_with_header_proof(
 fn safe_sales_rejection(bytes: &[u8]) -> Option<&'static str> {
     let value: Value = serde_json::from_slice(bytes).ok()?;
     match value["message"].as_str() {
+        Some("NATIVE_TEAM_ID_CONFLICT")=>Some("TEAM_ID_CONFLICT"),
+        Some("NATIVE_TEAM_VERSION")=>Some("TEAM_VERSION"),
+        Some("NATIVE_TEAM_EMAIL_EXISTS")=>Some("TEAM_EMAIL_EXISTS"),
+        Some("NATIVE_TEAM_PROTECTED")=>Some("TEAM_PROTECTED"),
         Some("NATIVE_SERVICE_HEADER_INVALID") => Some("SALES_HEADER_PROOF_REQUIRED"),
         Some("FISCAL_SETTINGS_VERSION_CONFLICT") => Some("FISCAL_SETTINGS_VERSION_CONFLICT"),
         Some("FISCAL_SETTINGS_KIND_TRANSITION_REQUIRED") => {
@@ -443,6 +456,10 @@ impl AccessState {
                 | "native_fiscal_settings_submit_v1"
                 | "native_fiscal_settings_abandon_v1"
                 | "native_catalogue_settings_v1"
+                | "native_team_read_v1"
+                | "native_team_lookup_v1"
+                | "native_team_submit_v1"
+                | "native_team_cancel_v1"
         ) {
             return Err((403, 0, None));
         }
@@ -817,6 +834,12 @@ impl AccessState {
         self.sales_local(|c, ctx, _, _, _| sync::read(c, &ctx))
     }
     fn sales_action(&self, action: SalesAction) -> Result<Value, AccessError> {
+        // The cashier is the original POS-only role. Enforce at IPC as well as
+        // navigation; a renderer cannot request reports or administration.
+        let allowed=cashier_allowed(&action);
+        self.sales_local(move|_,_,g,_,_|{
+            if g.payload().role=="cashier"&&!allowed{return Err(AppError::Auth(ventard_core::application::errors::AuthError::PermissionDenied{required:"MANAGE".into()}))}Ok(())
+        })?;
         match action {
             SalesAction::ProductPhotos { product_ids } => self.product_photos(product_ids),
             SalesAction::PrinterTest { attempt_id } => {
@@ -863,6 +886,10 @@ impl AccessState {
                 }
                 Ok(json!({"status":"UNKNOWN","submitted":job.fresh}))
             }
+            SalesAction::TeamRead {} => self.team_read(),
+            SalesAction::TeamExecute { input } => self.team_send(Some(input),false),
+            SalesAction::TeamRecover { cancel } => self.team_send(None,cancel),
+            SalesAction::TeamShare { operation_id } => self.team_share(operation_id),
             SalesAction::CatalogueRead {} => self.public_catalogue_read(),
             SalesAction::CatalogueOpen { share } => {
                 let v=self.public_catalogue_read()?;
@@ -933,6 +960,7 @@ impl AccessState {
                     }
                     SalesAction::ManagementRead => {
                         let mut view = ventard_core::application::management::read(c, &ctx)?;
+                        if g.payload().role=="cashier"{view["movements"]=json!([]);view["customers"]=json!([]);view["pending"]=json!([]);}
                         view["canManage"] = json!(g
                             .evaluate(now, high, opens)
                             .map_err(|_| AppError::Auth(
@@ -1266,6 +1294,8 @@ pub async fn native_sales(
     admission(&window, &ipc_version, &request_id)?;
     let s = Arc::clone(state.inner());
     tauri::async_runtime::spawn_blocking(move || {
+        let allowed=cashier_allowed(&command);
+        s.sales_local(move|_,_,g,_,_|{if g.payload().role=="cashier"&&!allowed{return Err(AppError::Auth(ventard_core::application::errors::AuthError::PermissionDenied{required:"MANAGE".into()}))}Ok(())})?;
         let cut = matches!(
             &command,
             SalesAction::PrintCut { .. } | SalesAction::PrintRepair { .. }
@@ -1409,6 +1439,11 @@ pub async fn native_sales(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn cashier_ipc_is_pos_only_even_when_renderer_requests_other_pages(){
+        for action in [SalesAction::Read,SalesAction::PrintLayoutRead,SalesAction::Synchronize]{assert!(cashier_allowed(&action))}
+        for action in [SalesAction::TeamRead{},SalesAction::CatalogueRead{},SalesAction::HistoryLoadRemote{},SalesAction::SettingsRead,SalesAction::RepairsRead,SalesAction::WarrantiesRead,SalesAction::Report{from_ms:"0".into(),to_ms:"1".into()}]{assert!(!cashier_allowed(&action))}
+    }
     #[test]
     fn recovered_native_pending_keeps_origin_bytes_and_refuses_another_actor() {
         let id = |n: u32| format!("96400000-0000-4000-8000-{n:012}");

@@ -1,80 +1,27 @@
-// src/app/api/usuarios/activar/route.ts
-// GET  — verifica el token y devuelve nombre/email del empleado pendiente
-// POST — crea la cuenta con contraseña y la vincula al negocio
-import { NextRequest, NextResponse } from 'next/server';
-import { z } from 'zod';
-import { supabaseAdmin, leerJson, excedeLimite, demasiadasPeticiones } from '@/lib/api/guardia';
-
-const BodySchema = z.object({
-    token: z.string().uuid(),
-    password: z.string().min(6, 'La contraseña debe tener al menos 6 caracteres.').max(200),
-});
-
-// GET /api/usuarios/activar?token=XXX
-export async function GET(req: NextRequest) {
-    // Público (llega por link de invitación): frenar fuerza bruta de tokens
-    if (excedeLimite(req, 'activar-get', 20, 5 * 60 * 1000)) return demasiadasPeticiones();
-    const token = req.nextUrl.searchParams.get('token');
-    if (!token) return NextResponse.json({ error: 'Token requerido' }, { status: 400 });
-
-    const { data, error } = await supabaseAdmin
-        .from('usuarios_negocio')
-        .select('nombre, email')
-        .eq('invite_token', token)
-        .eq('activo', true)
-        .is('user_id', null)
-        .maybeSingle();
-
-    if (error || !data) {
-        return NextResponse.json({ error: 'Token inválido o ya utilizado' }, { status: 404 });
-    }
-
-    return NextResponse.json({ nombre: data.nombre, email: data.email });
+// Existing public activation route. Expiry and single-use binding are atomic in PostgreSQL.
+import {NextRequest,NextResponse} from 'next/server';
+import {z} from 'zod';
+import {supabaseAdmin,leerJson,excedeLimite,demasiadasPeticiones} from '@/lib/api/guardia';
+import {readTeamInvitation,acceptTeamInvitation} from '@/lib/native-access/team-invites';
+const schema=z.object({token:z.string().uuid(),password:z.string().min(6).max(200)}).strict();
+const reply=(status:number,body:unknown)=>NextResponse.json(body,{status,headers:{'Cache-Control':'no-store'}});
+export async function GET(req:NextRequest){
+ if(excedeLimite(req,'activar-get',20,5*60*1000))return demasiadasPeticiones();
+ const token=z.string().uuid().safeParse(req.nextUrl.searchParams.get('token'));
+ if(!token.success)return reply(400,{error:'Token inválido'});
+ try{const result=await readTeamInvitation(token.data);return result.data?reply(200,result.data):reply(result.status,{error:result.status===404?'Token inválido, vencido o ya utilizado':'Activación temporalmente no disponible'});}catch{return reply(503,{error:'Activación temporalmente no disponible'});}
 }
-
-// POST /api/usuarios/activar  { token, password }
-export async function POST(req: NextRequest) {
-    try {
-        if (excedeLimite(req, 'activar-post', 10, 15 * 60 * 1000)) return demasiadasPeticiones();
-        const r = await leerJson(req, BodySchema);
-        if (r.resp) return r.resp;
-        const { token, password } = r.data;
-
-        // 1. Obtener el empleado pendiente
-        const { data: pendiente, error: fetchErr } = await supabaseAdmin
-            .from('usuarios_negocio')
-            .select('id, nombre, email, negocio_id')
-            .eq('invite_token', token)
-            .eq('activo', true)
-            .is('user_id', null)
-            .maybeSingle();
-
-        if (fetchErr || !pendiente) {
-            return NextResponse.json({ error: 'Token inválido o ya utilizado' }, { status: 404 });
-        }
-
-        // 2. Crear usuario en Supabase Auth con email ya confirmado
-        //    is_empleado=true → el trigger handle_new_user omite la creación del negocio
-        const { data: authData, error: createErr } = await supabaseAdmin.auth.admin.createUser({
-            email: pendiente.email,
-            password,
-            email_confirm: true,
-            user_metadata: { nombre_empleado: pendiente.nombre, is_empleado: true },
-        });
-
-        if (createErr) return NextResponse.json({ error: createErr.message }, { status: 500 });
-
-        // 3. Vincular user_id al registro pendiente
-        const { error: updateErr } = await supabaseAdmin
-            .from('usuarios_negocio')
-            .update({ user_id: authData.user.id })
-            .eq('id', pendiente.id);
-
-        if (updateErr) return NextResponse.json({ error: updateErr.message }, { status: 500 });
-
-        return NextResponse.json({ ok: true });
-    } catch (e) {
-        const msg = e instanceof Error ? e.message : 'Error inesperado';
-        return NextResponse.json({ error: msg }, { status: 500 });
-    }
+export async function POST(req:NextRequest){
+ try{
+ if(excedeLimite(req,'activar-post',10,15*60*1000))return demasiadasPeticiones();
+ const parsed=await leerJson(req,schema);if(parsed.resp)return parsed.resp;
+ const {token,password}=parsed.data,invitation=await readTeamInvitation(token);
+ if(!invitation.data)return reply(invitation.status,{error:'Invitación no disponible. Actualiza el enlace o consulta al administrador.'});
+ const {data,error}=await supabaseAdmin.auth.admin.createUser({email:invitation.data.email,password,email_confirm:true,user_metadata:{nombre_empleado:invitation.data.nombre,is_empleado:true}});
+ if(error){if(['email_exists','user_already_exists'].includes(error.code||''))return reply(409,{code:'ACCOUNT_EXISTS',error:'Este correo ya tiene una cuenta. Inicia sesión para aceptar la invitación.'});if(error.code==='weak_password')return reply(400,{error:'La contraseña no cumple los requisitos de la cuenta. Elige una contraseña más segura.'});return reply(503,{error:'No se pudo crear la cuenta. Intenta de nuevo.'});}
+ if(!data.user)return reply(503,{error:'No se pudo comprobar la cuenta creada.'});
+ const result=await acceptTeamInvitation(token,data.user.id);
+ if(!result.ok)return reply(result.status,{code:'SIGN_IN_TO_RECOVER',error:'La cuenta está creada. Inicia sesión para recuperar la activación; si el enlace venció, solicita uno nuevo.'});
+ return reply(200,{ok:true});
+ }catch{return reply(503,{error:'No se pudo completar la activación. Si ya creaste tu cuenta, inicia sesión para recuperar el acceso.'});}
 }

@@ -13,7 +13,7 @@ const receiptSchema = z.object({
   registrationId: uuid, tenantId: uuid, deviceId: uuid, installationId: uuid,
   scopeType: z.enum(['GLOBAL', 'BRANCH']), branchId: uuid.nullable(), actorId: uuid,
   writerEpoch: positive, grantSequence: positive, issuedAtMs: decimal,
-  role: z.enum(['owner', 'admin', 'vendedor']),
+  role: z.enum(['owner', 'admin', 'vendedor', 'cajero']),
   license: z.object({planActive: z.boolean(), planTier: z.enum(['basico', 'pro']).optional(), accessUntilMs: decimal.nullable(), trialUntilMs: decimal.nullable()}).strict(),
 }).strict();
 export interface ProvisionDependencies {
@@ -88,14 +88,14 @@ export function createProvisionHandler(dep: ProvisionDependencies) {
       if (receipt.actorId !== actor.id || Object.keys(input).some(k => receipt[k as keyof RegistrationInput] !== input[k as keyof RegistrationInput])) {
         return reply(403, {code: 'NATIVE_CONTEXT_MISMATCH'});
       }
-      const role = receipt.role === 'vendedor' ? 'seller' : receipt.role;
+      const role = receipt.role === 'vendedor' ? 'seller' : receipt.role === 'cajero' ? 'cashier' : receipt.role;
       const payload = {
         protocol: 'ventard.offline-grant.v1', keyId: dep.keyId, issuer: 'ventard.staging',
         audience: 'ventard.native.staging.v1', grantId: receipt.registrationId,
         grantSequence: receipt.grantSequence, policyVersion: '1', tenantId: receipt.tenantId,
         actorId: receipt.actorId, deviceId: receipt.deviceId, installationId: receipt.installationId,
         writerEpoch: receipt.writerEpoch, scope: {type: receipt.scopeType, branchId: receipt.branchId},
-        role, capabilities: role === 'seller' ? ['READ', 'SELL'] : ['READ', 'SELL', 'INVENTORY_WRITE', 'MANAGE'],
+        role, capabilities: ['seller','cashier'].includes(role) ? ['READ', 'SELL'] : ['READ', 'SELL', 'INVENTORY_WRITE', 'MANAGE'],
         issuedAtMs: receipt.issuedAtMs, actorExpiresAtMs: null,
         license: {...receipt.license, graceDays: '5', warnAfterOpenings: '200', blockAfterOpenings: '300'},
       };

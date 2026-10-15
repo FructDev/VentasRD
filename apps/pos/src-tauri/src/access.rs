@@ -258,6 +258,7 @@ struct Inner {
 pub struct AccessState {
     web_reconcile_gate: Mutex<()>,
     fiscal_settings_gate: Mutex<()>,
+    team_gate: Mutex<()>,
     archive_selection: Mutex<Option<AccessView>>,
     recovery: Mutex<backup::RecoveryState>,
     root: PathBuf,
@@ -338,6 +339,7 @@ impl AccessState {
         Self {
             web_reconcile_gate: Mutex::new(()),
             fiscal_settings_gate: Mutex::new(()),
+            team_gate: Mutex::new(()),
             recovery: Mutex::new(backup::RecoveryState::default()),
             archive_selection: Mutex::new(None),
             root,

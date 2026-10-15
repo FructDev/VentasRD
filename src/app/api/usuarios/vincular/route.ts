@@ -1,32 +1,17 @@
-// src/app/api/usuarios/vincular/route.ts
-// Vincula un user_id al registro pendiente de usuarios_negocio
-import { NextRequest, NextResponse } from 'next/server';
-import { z } from 'zod';
-import { supabaseAdmin, leerJson, excedeLimite, demasiadasPeticiones } from '@/lib/api/guardia';
-
-const BodySchema = z.object({
-    token: z.string().uuid(),
-    userId: z.string().uuid(),
-});
-
-export async function POST(req: NextRequest) {
-    try {
-        if (excedeLimite(req, 'vincular', 10, 15 * 60 * 1000)) return demasiadasPeticiones();
-        const r = await leerJson(req, BodySchema);
-        if (r.resp) return r.resp;
-        const { token, userId } = r.data;
-
-        const { error } = await supabaseAdmin
-            .from('usuarios_negocio')
-            .update({ user_id: userId })
-            .eq('invite_token', token)
-            .is('user_id', null);
-
-        if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-
-        return NextResponse.json({ ok: true });
-    } catch (e) {
-        const msg = e instanceof Error ? e.message : 'Error inesperado';
-        return NextResponse.json({ error: msg }, { status: 500 });
-    }
+// Existing invitation binding route. Never trusts an arbitrary userId from the body.
+import {NextRequest,NextResponse} from 'next/server';
+import {z} from 'zod';
+import {leerJson,usuarioDesdeToken,excedeLimite,demasiadasPeticiones} from '@/lib/api/guardia';
+import {acceptTeamInvitation} from '@/lib/native-access/team-invites';
+const schema=z.object({token:z.string().uuid(),userId:z.string().uuid().optional()}).strict();
+const reply=(status:number,body:unknown)=>NextResponse.json(body,{status,headers:{'Cache-Control':'no-store'}});
+export async function POST(req:NextRequest){
+ try{
+ if(excedeLimite(req,'vincular',10,15*60*1000))return demasiadasPeticiones();
+ const user=await usuarioDesdeToken(req);if(!user)return reply(401,{error:'Inicia sesión para aceptar esta invitación.'});
+ const parsed=await leerJson(req,schema);if(parsed.resp)return parsed.resp;
+ if(!user.email_confirmed_at||(parsed.data.userId&&parsed.data.userId!==user.id))return reply(403,{error:'La cuenta debe estar verificada y pertenecer al destinatario.'});
+ const result=await acceptTeamInvitation(parsed.data.token,user.id);
+ return result.ok?reply(200,{ok:true}):reply(result.status,{error:'No se pudo aceptar la invitación. Comprueba el correo de tu cuenta y la vigencia del enlace.'});
+ }catch{return reply(503,{error:'No se pudo comprobar la invitación. Intenta de nuevo.'});}
 }

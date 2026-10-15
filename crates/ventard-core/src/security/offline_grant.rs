@@ -236,7 +236,7 @@ pub fn verify_grant(
     }
     let permitted: &[&str] = match p.role.as_str() {
         "owner" | "admin" => &["READ", "SELL", "INVENTORY_WRITE", "MANAGE"],
-        "seller" => &["READ", "SELL"],
+        "seller" | "cashier" => &["READ", "SELL"],
         _ => return Err(GrantError::InvalidClaims),
     };
     let mut seen = std::collections::HashSet::new();

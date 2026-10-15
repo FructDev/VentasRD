@@ -144,6 +144,10 @@ export const historyPort = {
 };
 export const managementAccountPort = {
  customerActivity:(customerId:string)=>call<import('./management').CustomerActivity>('native_sales',{command:{action:'CUSTOMER_ACTIVITY',customerId}}),
+ teamShare:(operationId:string)=>call<{status:string}>('native_sales',{command:{action:'TEAM_SHARE',operationId}}),
+ teamRead:()=>call<import('./management').TeamView>('native_sales',{command:{action:'TEAM_READ'}}),
+ teamExecute:(input:import('./management').TeamInput)=>call<import('./management').TeamReceipt>('native_sales',{command:{action:'TEAM_EXECUTE',input}}),
+ teamRecover:(cancel:boolean)=>call<import('./management').TeamReceipt>('native_sales',{command:{action:'TEAM_RECOVER',cancel}}),
  catalogueRead:()=>call<import('./management').CatalogueView>('native_sales',{command:{action:'CATALOGUE_READ'}}),
  catalogueOpen:(share:boolean)=>call<{status:string}>('native_sales',{command:{action:'CATALOGUE_OPEN',share}}),
  settingsRead:()=>call<import('./management').BusinessSettingsView>('native_sales',{command:{action:'SETTINGS_READ'}}),

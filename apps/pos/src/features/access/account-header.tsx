@@ -3,7 +3,7 @@ import {Link,useNavigate} from 'react-router-dom';
 import {accessPort,accessMessage,type AccessView} from '../../platform/access';
 import type {BusinessHeader} from '../../platform/management';
 import {ConfirmModal} from '../management/confirm-modal';
-const roles:Record<string,string>={owner:'Dueño',admin:'Admin',seller:'Vendedor'};
+const roles:Record<string,string>={owner:'Dueño',admin:'Admin',seller:'Vendedor',cashier:'Cajero'};
 export function headerBusiness(business:BusinessHeader|null|undefined,account:AccessView|null|undefined,archive=false){
  const p=!archive&&account?.status==='PREPARATION_REQUIRED'&&account.presentation?.tenantId===account.tenantId&&account.presentation?.actorId===account.actorId?account.presentation:null;
  const edited=business?.settingsRevision!==undefined;

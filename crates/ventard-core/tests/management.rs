@@ -2434,7 +2434,7 @@ fn encrypted_serial_upgrade_preserves_existing_units_and_lost_state_on_reopen() 
     {
         let mut vault = VaultWriter::open_encrypted(&path, &key).unwrap();
         let c = vault.connection();
-        assert_eq!(migrations::validate_history(c).unwrap(), 32);
+        assert_eq!(migrations::validate_history(c).unwrap(), 33);
         assert_eq!(
             c.query_row::<String, _, _>(
                 "SELECT state FROM sale_serial_inventory_v1 WHERE serial='PRESERVED-001'",

@@ -88,7 +88,7 @@ fn schema31_upgrade_preserves_prior_data_and_checksums() {
     )
     .unwrap();
     // Reconstruct only the immediately previous schema in an isolated fixture.
-    c.execute_batch("DROP TABLE native_account_presentation_v1;DELETE FROM migration_history WHERE version=32;PRAGMA user_version=31;").unwrap();
+    c.execute_batch("DROP TABLE native_team_requests_v1;DROP TABLE native_account_presentation_v1;DELETE FROM migration_history WHERE version>=32;PRAGMA user_version=31;").unwrap();
     assert!(profile::read(c, &id(1), &id(2)).unwrap().is_none());
     drop(w);
     let mut w = VaultWriter::open_encrypted(&root, &key).unwrap();
@@ -96,7 +96,7 @@ fn schema31_upgrade_preserves_prior_data_and_checksums() {
     assert_eq!(
         c.query_row::<i64, _, _>("PRAGMA user_version", [], |r| r.get(0))
             .unwrap(),
-        32
+        33
     );
     assert_eq!(
         c.query_row::<String, _, _>(

@@ -1,5 +1,6 @@
 import {applyBrand} from '../features/settings/brand';
 import {AccountHeader,BusinessIdentity,headerBusiness} from '../features/access/account-header';
+import {TeamPage} from '../features/settings/team-page';
 import {PublicCatalogueSettings} from '../features/settings/public-catalogue-settings';
 import {BusinessSettings} from '../features/settings/business-settings';
 import {BackupSettings} from '../features/settings/backup-settings';
@@ -77,7 +78,7 @@ function SettingsPage() {
   return (
     <section className="h-full p-4 sm:p-8 overflow-y-auto">
       <div className="max-w-3xl mx-auto mb-6"><h1 className="text-2xl sm:text-3xl font-display font-black text-white">Configuración del Negocio</h1><p className="text-vr-gray mt-2">Personaliza la información que aparece en los tickets y reportes.</p></div>
-      <div className="grid gap-4 max-w-3xl mx-auto"><BusinessSettings/><PublicCatalogueSettings/>
+      <div className="grid gap-4 max-w-3xl mx-auto"><BusinessSettings/><PublicCatalogueSettings/><Link to="/configuracion/equipo" className="bg-navy-2 border border-navy-3 rounded-2xl p-5 text-gold font-bold">👥 Mi Equipo · Gestiona cajeros y vendedores →</Link>
         <PrintingSettings/>
         <FiscalSettings/>
         <BackupSettings/>
@@ -91,7 +92,7 @@ function SettingsPage() {
             ['Ventas locales confirmadas',s.snapshot?.confirmedSales??'No disponible'],
           ].map(([label,value])=><div key={label} className="flex items-center justify-between gap-3 text-sm py-1.5 border-b border-navy-3/40"><span className="text-vr-gray">{label}</span><span className="font-mono font-bold text-white text-xs text-right">{value}</span></div>)}</div>
           <button type="button" onClick={()=>void s.refresh()} className="mt-3 py-2.5 px-4 bg-navy-3 border border-navy-3 hover:border-gold/40 text-vr-gray hover:text-gold font-bold rounded-xl text-sm transition-all">↻ Actualizar</button>
-          <p className="mt-4 text-xs text-vr-gray">Invitaciones, distribución y comprobación física del hardware continúan pendientes. La continuidad de respaldos se gestiona arriba; fiscal está aplazado.</p>
+          <p className="mt-4 text-xs text-vr-gray">La dirección web de Staging, la distribución y la comprobación física del hardware continúan pendientes. La continuidad de respaldos se gestiona arriba; fiscal está aplazado.</p>
         </div>
       </div>
     </section>
@@ -109,6 +110,8 @@ function Layout({
   account?: AccessView|null;
 }) {
   const s = useSales();
+  const location = useLocation();
+  const cashier = account?.role === 'cashier';
   const archive=account?.status==='RECOVERY_ARCHIVE'||s.snapshot?.mode==='recovery-readonly';
   const brand=headerBusiness(s.snapshot?.business,account,archive);
   useEffect(()=>{applyBrand(brand.color,brand.font)},[brand.color,brand.font]);
@@ -130,7 +133,7 @@ function Layout({
           aria-label="Navegación principal"
           className="flex min-w-0 flex-1 items-center gap-1 mx-1 overflow-x-auto scrollbar-none"
         >
-          {modules.map((m) => (
+          {modules.filter(m=>!cashier||m.path==='/').map((m) => (
             <NavLink
               key={m.path}
               to={destination(m.path)}
@@ -159,7 +162,7 @@ function Layout({
         · {s.snapshot?.mode==='staging-operational'?'Cola durable y recibos remotos · sólo QA':'Sin sincronización remota'}
       </div>
       <main className="flex flex-col flex-1 min-h-0 overflow-hidden">
-        <Routes>
+        {cashier&&location.pathname!=='/'?<Navigate to="/" replace/>:<Routes>
           <Route path="/" element={<SalesPage />} />
           <Route path="/historial" element={<HistoryPage />} />
           <Route path="/inventario" element={<InventoryPage />} />
@@ -171,6 +174,7 @@ function Layout({
           <Route path="/apartados" element={<Suspense fallback={<p className="p-6 text-vr-gray">Cargando Apartados…</p>}><LayawaysPage /></Suspense>} />
           <Route path="/dashboard" element={<ReportsPage summary />} />
           <Route path="/reportes" element={<ReportsPage />} />
+          <Route path="/configuracion/equipo" element={<TeamPage />} />
           <Route path="/configuracion" element={<SettingsPage />} />
           {modules
             .filter((m) => !m.ready)
@@ -201,7 +205,7 @@ function Layout({
               </section>
             }
           />
-        </Routes>
+        </Routes>}
       </main>
     </div>
   );

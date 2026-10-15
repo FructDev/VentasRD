@@ -42,6 +42,12 @@ fn signed(p: Value) -> Vec<u8> {
     serde_json::to_vec(&json!({"payload":p,"signature":hex})).unwrap()
 }
 #[test]
+fn cashier_is_signed_pos_access_without_inventory_or_management(){
+ let mut p=payload();p["role"]=json!("cashier");p["capabilities"]=json!(["READ","SELL"]);
+ let grant=verify_grant(&signed(p.clone()),&[trusted()],&context()).unwrap();let decision=grant.evaluate(2000,2000,1).unwrap();assert!(decision.allows("SELL"));assert!(!decision.allows("MANAGE"));assert!(!decision.allows("INVENTORY_WRITE"));
+ for permission in ["MANAGE","INVENTORY_WRITE"]{p["capabilities"]=json!(["READ","SELL",permission]);assert!(verify_grant(&signed(p.clone()),&[trusted()],&context()).is_err())}
+}
+#[test]
 fn pro_tier_is_signed_optional_and_never_inferred_from_plan_active() {
     let old = verify_grant(&signed(payload()), &[trusted()], &context()).unwrap();
     assert!(
