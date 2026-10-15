@@ -556,6 +556,85 @@ pub(crate) fn customer(
     let row:Option<Value>=c.query_row("SELECT a.name,a.balance_cents,a.limit_cents,a.active,a.authority_state,a.revision,coalesce(m.revision,1),m.phone,coalesce(p.tier,1),coalesce(m.wholesale,0) FROM sale_customer_accounts_v1 a LEFT JOIN native_customer_metadata_v1 m ON m.customer_id=a.customer_id AND m.tenant_id=a.tenant_id LEFT JOIN native_sales_customer_pricing_v1 p ON p.customer_id=a.customer_id AND p.tenant_id=a.tenant_id WHERE a.customer_id=?1 AND a.tenant_id=?2 AND a.scope_key IN(?3,?4)",(cid,&ctx.tenant_id,sales::scope_key(ctx)?,format!("{}/GLOBAL",ctx.tenant_id)),|r|Ok(json!({"id":cid,"name":r.get::<_,String>(0)?,"balanceCents":r.get::<_,i64>(1)?.to_string(),"limitCents":r.get::<_,Option<i64>>(2)?.map(|n|n.to_string()),"active":r.get::<_,bool>(3)?,"authority":r.get::<_,String>(4)?,"balanceRevision":r.get::<_,i64>(5)?.to_string(),"revision":r.get::<_,i64>(6)?.to_string(),"phone":r.get::<_,Option<String>>(7)?,"priceTier":r.get::<_,u8>(8)?,"wholesale":r.get::<_,bool>(9)?}))).optional()?;
     row.ok_or_else(|| guard("VERSION_CONFLICT"))
 }
+/// Scoped customer activity uses saved native facts, including downloaded history.
+/// Current account authority remains independent of the historical sum.
+pub fn customer_activity(
+    c: &Connection,
+    ctx: &CatalogueContext,
+    cid: &str,
+    include_services: bool,
+) -> Result<Value, AppError> {
+    if !sales_sync::operational(c, ctx)? {
+        return Err(guard("LEGACY_NOT_VERIFIABLE"));
+    }
+    let current = customer(c, ctx, cid)?;
+    let sk = sales::scope_key(ctx)?;
+    let mut q=c.prepare("SELECT s.operation_id,s.ticket,s.created_at,s.total_cents,coalesce(o.state,'APPLIED'),CASE WHEN json_extract(CAST(t.snapshot_bytes AS TEXT),'$.sale.payment.method')='FIADO' THEN cast(json_extract(CAST(t.snapshot_bytes AS TEXT),'$.sale.payment.creditChargeCents') AS INTEGER) ELSE 0 END FROM sales s JOIN sale_ticket_snapshots_v1 t USING(operation_id) LEFT JOIN outbox o ON o.operation_id=s.operation_id WHERE s.tenant_id=?1 AND s.scope_key=?2 AND (json_extract(CAST(t.snapshot_bytes AS TEXT),'$.sale.customer.id')=?3 OR json_extract(CAST(t.snapshot_bytes AS TEXT),'$.sale.payment.customerId')=?3) ORDER BY cast(s.created_at AS INTEGER) DESC,s.operation_id DESC LIMIT 60001")?;
+    let sales = q
+        .query_map((&ctx.tenant_id, &sk, cid), |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, i64>(3)?,
+                r.get::<_, String>(4)?,
+                r.get::<_, i64>(5)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    if sales.len() > 60000 {
+        return Err(guard("EXPORT_TOO_LARGE"));
+    }
+    let sales_count = sales.len();
+    let mut credit = MoneyCents::ZERO;
+    let mut rows = Vec::new();
+    for (op, ticket, at, total, status, fiado) in sales {
+        credit = credit
+            .checked_add(MoneyCents::from_cents(fiado).map_err(|_| invalid())?)
+            .map_err(|_| invalid())?;
+        rows.push(json!({"operationId":op,"kind":"SALE_CONFIRM","concept":format!("Venta #{ticket}"),"dateMs":at,"amountCents":total.to_string(),"direction":if fiado>0{"CHARGE"}else{"NEUTRAL"},"remoteStatus":status}));
+    }
+    let mut q=c.prepare("SELECT operation_id,kind,concept,created_at_ms,amount_cents,coalesce(o.state,'APPLIED') FROM native_management_records_v1 r LEFT JOIN outbox o USING(operation_id) WHERE r.tenant_id=?1 AND r.scope_key=?2 AND (r.customer_id=?3 OR json_extract(r.document,'$.credit.customerId')=?3 OR (r.kind='SALE_RETURN' AND EXISTS(SELECT 1 FROM sales s JOIN sale_ticket_snapshots_v1 t ON t.operation_id=s.operation_id WHERE s.operation_id=json_extract(r.document,'$.saleId') AND s.tenant_id=r.tenant_id AND s.scope_key=r.scope_key AND (json_extract(CAST(t.snapshot_bytes AS TEXT),'$.sale.customer.id')=?3 OR json_extract(CAST(t.snapshot_bytes AS TEXT),'$.sale.payment.customerId')=?3)))) AND r.kind IN('CREDIT_PAYMENT','SALE_RETURN') ORDER BY cast(created_at_ms AS INTEGER) DESC,operation_id DESC LIMIT 60001")?;
+    let events=q.query_map((&ctx.tenant_id,&sk,cid),|r|Ok(json!({"operationId":r.get::<_,String>(0)?,"kind":r.get::<_,String>(1)?,"concept":r.get::<_,String>(2)?,"dateMs":r.get::<_,String>(3)?,"amountCents":r.get::<_,i64>(4)?.to_string(),"direction":"PAYMENT","remoteStatus":r.get::<_,String>(5)?})))?.collect::<Result<Vec<_>,_>>()?;
+    if events.len() > 60000 {
+        return Err(guard("EXPORT_TOO_LARGE"));
+    }
+    rows.extend(events);
+    for row in &rows {
+        crate::domain::identity::UtcMillis::parse_dto(s(&row["dateMs"])?).map_err(|_| invalid())?;
+    }
+    rows.sort_by(|a, b| {
+        b["dateMs"]
+            .as_str()
+            .and_then(|s| s.parse::<u64>().ok())
+            .cmp(&a["dateMs"].as_str().and_then(|s| s.parse::<u64>().ok()))
+            .then_with(|| b["operationId"].as_str().cmp(&a["operationId"].as_str()))
+    });
+    let total = rows.len();
+    rows.truncate(100);
+    let count_services = |view: Value| -> Result<Value, AppError> {
+        Ok(json!(view["rows"]
+            .as_array()
+            .ok_or_else(invalid)?
+            .iter()
+            .filter(|r| r["definition"]["customerId"] == cid)
+            .count()
+            .to_string()))
+    };
+    let repairs = if include_services {
+        count_services(super::repairs::read(c, ctx)?)?
+    } else {
+        Value::Null
+    };
+    let layaways = if include_services {
+        count_services(super::layaways::read(c, ctx)?)?
+    } else {
+        Value::Null
+    };
+    Ok(
+        json!({"customer":current,"recordedCreditCents":credit.to_dto(),"salesCount":sales_count.to_string(),"repairs":repairs,"layaways":layaways,"rows":rows,"totalRows":total.to_string(),"rowLimit":100,"coverage":"SAVED_NATIVE_HISTORY_CURRENT_SCOPE","servicesCoverage":if include_services{"CURRENT_NATIVE_AND_ADOPTED_BASELINES"}else{"NOT_REQUESTED"}}),
+    )
+}
 pub fn read(c: &Connection, ctx: &CatalogueContext) -> Result<Value, AppError> {
     if !sales_sync::operational(c, ctx)? {
         return Err(guard("LEGACY_NOT_VERIFIABLE"));

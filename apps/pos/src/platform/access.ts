@@ -142,6 +142,7 @@ export const historyPort = {
     call<PosTicket>("native_history_ticket", { operationId }),
 };
 export const managementAccountPort = {
+ customerActivity:(customerId:string)=>call<import('./management').CustomerActivity>('native_sales',{command:{action:'CUSTOMER_ACTIVITY',customerId}}),
  settingsRead:()=>call<import('./management').BusinessSettingsView>('native_sales',{command:{action:'SETTINGS_READ'}}),
  settingsLoadRemote:()=>call<import('./management').BusinessSettingsView>('native_sales',{command:{action:'SETTINGS_LOAD_REMOTE'}}),
  repairPrivateRead:(repairId:string)=>call<import('./management').RepairPrivateView>('native_sales',{command:{action:'REPAIR_PRIVATE_READ',repairId}}),
@@ -403,6 +404,7 @@ export const backupPort={
  read:()=>call<PosSnapshot>('native_backup',{command:{action:'READ'}}),
  historyRead:(filter:PosHistoryFilter)=>call<PosHistoryPage>('native_backup',{command:{action:'HISTORY_READ',filter}}),
  ticket:(operationId:string)=>call<PosTicket>('native_backup',{command:{action:'TICKET',operationId}}),
+ customerActivity:(customerId:string)=>call<import('./management').CustomerActivity>('native_backup',{command:{action:'CUSTOMER_ACTIVITY',customerId}}),
  managementRead:()=>call<import('./management').ManagementView>('native_backup',{command:{action:'MANAGEMENT_READ'}}),
  reportExport:(kind:import('./management').ExportKind,fromMs:string,toMs:string)=>call<import('./management').ReportBundle>('native_backup',{command:{action:'REPORT_EXPORT',kind,fromMs,toMs}}),
 };

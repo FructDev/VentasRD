@@ -1,8 +1,8 @@
 import {useSales} from '../sales/workspace';
 // Existing VentaRD Clientes & Fiados presentation, native commands only.
-import {useMemo,useState,type FormEvent} from 'react';
+import {useEffect,useMemo,useState,type FormEvent} from 'react';
 import {useManagement} from './workspace';import {ManagementStatus} from './status';import {ConfirmModal} from './confirm-modal';
-import {showCents,inputCents,posError} from '../../platform/pos-adapter';import type {Customer} from '../../platform/management';
+import {showCents,inputCents,posError} from '../../platform/pos-adapter';import type {Customer,CustomerActivity} from '../../platform/management';
 import Pagination from '@ventard/ui/pagination';import {SkeletonTable} from '@ventard/ui/skeleton';
 const norm=(s:string|null|undefined)=>(s??'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
 type FiltroCliente='todos'|'deuda'|'aldia'|'mayor';type OrdenCliente='nombre'|'deuda'|'atraso';type MetodoAbono='efectivo'|'tarjeta'|'transferencia';
@@ -16,12 +16,16 @@ export function CustomersPage(){
  const [isModalClienteOpen,setIsModalClienteOpen]=useState(false),[clienteEditando,setClienteEditando]=useState<ViewCustomer|null>(null),[formDataCliente,setFormDataCliente]=useState({nombre:'',telefono:'',limite_credito:'0',tipo_precio:'1',al_por_mayor:false});
  const [clienteAEliminar,setClienteAEliminar]=useState<ViewCustomer|null>(null),[isModalAbonoOpen,setIsModalAbonoOpen]=useState(false),[clienteParaAbono,setClienteParaAbono]=useState<ViewCustomer|null>(null),[abonoMonto,setAbonoMonto]=useState(''),[abonoConcepto,setAbonoConcepto]=useState('Abono'),[abonoMetodo,setAbonoMetodo]=useState<MetodoAbono>('efectivo'),[abonoTurnId,setAbonoTurnId]=useState<string|null>(null);
  const [fichaCliente,setFichaCliente]=useState<ViewCustomer|null>(null),[busqueda,setBusqueda]=useState(''),[filtro,setFiltro]=useState<FiltroCliente>('todos'),[orden,setOrden]=useState<OrdenCliente>('nombre'),[pagina,setPagina]=useState(1);
- const servicesAvailable=false,cobrosPendientes: {id:string;nombre:string;telefono:string|null;saldo_pendiente:string;diasSinAbonar:number}[]=[];
+ const [activity,setActivity]=useState<CustomerActivity|null>(null),[activityError,setActivityError]=useState('');
+ const fichaId=fichaCliente?.id;
+ useEffect(()=>{let live=true;setActivity(null);setActivityError('');if(fichaId&&s.management)void s.management.customerActivity(fichaId).then(v=>{if(live&&v.customer.id===fichaId)setActivity(v)}).catch(e=>{if(live)setActivityError(posError(e))});return()=>{live=false}},[fichaId,s.management,s.snapshot?.scopeRevision]);
+ const fichaActual=activity?.customer.id===fichaId?activity:null;
+ const servicesAvailable=!!fichaActual&&fichaActual.repairs!==null&&fichaActual.layaways!==null,cobrosPendientes: {id:string;nombre:string;telefono:string|null;saldo_pendiente:string;diasSinAbonar:number}[]=[];
  const totalCuentasPorCobrar=clientesConSaldo.reduce((n,c)=>n+BigInt(c.saldo_pendiente),0n).toString(),clientesConDeuda=clientesConSaldo.filter(c=>BigInt(c.saldo_pendiente)>0n).length;
  const conteos={todos:clientesConSaldo.length,deuda:clientesConDeuda,aldia:clientesConSaldo.length-clientesConDeuda,mayor:clientesConSaldo.filter(c=>c.al_por_mayor).length};
  const clientesFiltrados=clientesConSaldo.filter(c=>{if(filtro==='deuda'&&BigInt(c.saldo_pendiente)<=0n)return false;if(filtro==='aldia'&&BigInt(c.saldo_pendiente)>0n)return false;if(filtro==='mayor'&&!c.al_por_mayor)return false;return norm(c.nombre+' '+(c.telefono??'')).includes(norm(busqueda));}).sort((a,b)=>orden==='deuda'?(BigInt(b.saldo_pendiente)>BigInt(a.saldo_pendiente)?1:BigInt(b.saldo_pendiente)<BigInt(a.saldo_pendiente)?-1:a.nombre.localeCompare(b.nombre)):a.nombre.localeCompare(b.nombre,'es',{sensitivity:'base'}));
  const ITEMS_POR_PAGINA=20,totalPaginas=Math.ceil(clientesFiltrados.length/ITEMS_POR_PAGINA),currentPage=Math.min(pagina,Math.max(1,totalPaginas)),clientesPaginados=clientesFiltrados.slice((currentPage-1)*ITEMS_POR_PAGINA,currentPage*ITEMS_POR_PAGINA);
- const fichaData=fichaCliente?{totalFiado:'0',reparaciones:0,apartados:0,movs:(m.view?.movements??[]).filter(r=>r.customerId===fichaCliente.id).map(r=>({key:r.operationId,icono:'💵',titulo:r.concept,sub:r.method??'',fecha:Number(r.createdAtMs),monto:r.amountCents,signo:'out'}))}:null;
+ const fichaData=fichaCliente?{totalFiado:fichaActual?.recordedCreditCents??null,reparaciones:fichaActual?.repairs,apartados:fichaActual?.layaways,movs:(fichaActual?.rows??[]).map(r=>({key:r.operationId,icono:r.kind==='SALE_CONFIRM'?'🧾':'💵',titulo:r.concept,sub:r.remoteStatus==='APPLIED'?'Confirmado':r.remoteStatus,fecha:Number(r.dateMs),monto:r.amountCents,signo:r.direction==='PAYMENT'?'out':r.direction==='CHARGE'?'in':'neutral'}))}:null;
  const abrirModalNuevoCliente=()=>{setClienteEditando(null);setFormDataCliente({nombre:'',telefono:'',limite_credito:'0',tipo_precio:'1',al_por_mayor:false});setIsModalClienteOpen(true);};
  const abrirModalEditarCliente=(c:ViewCustomer)=>{if(!m.canManage)return;setClienteEditando(c);setFormDataCliente({nombre:c.name,telefono:c.phone??'',limite_credito:editable(c.limitCents??'0'),tipo_precio:String(c.priceTier),al_por_mayor:c.wholesale});setIsModalClienteOpen(true);};
  async function guardarCliente(e:FormEvent){e.preventDefault();try{const ok=await m.execute({kind:'CUSTOMER_SAVE',operationId:crypto.randomUUID(),customerId:clienteEditando?.id??crypto.randomUUID(),expectedRevision:clienteEditando?.revision??'0',name:formDataCliente.nombre.trim(),phone:formDataCliente.telefono||null,limitCents:inputCents(formDataCliente.limite_credito),priceTier:Number(formDataCliente.tipo_precio) as 1|2|3,wholesale:formDataCliente.al_por_mayor});if(ok)setIsModalClienteOpen(false);}catch{setLocalError('Comprueba el importe del límite de crédito.');}}
@@ -31,7 +35,7 @@ export function CustomersPage(){
  async function enviarWhatsApp(id:string){if(!s.management)return;try{await s.management.contactNotice('CREDIT',id);setLocalError('');}catch(e){setLocalError(posError(e));}}
     return (
         <div className="flex-1 min-h-0 overflow-y-auto bg-navy flex flex-col">
-            <div className="px-4 pt-4">{!isModalClienteOpen&&!isModalAbonoOpen&&!clienteAEliminar&&<ManagementStatus {...m}/>}{localError&&<p role="alert" className="text-vr-red">{localError}</p>}<p className="text-xs text-vr-gray">Copia nativa local · el saldo inicial no incluye el historial legacy.</p></div>
+            <div className="px-4 pt-4">{!isModalClienteOpen&&!isModalAbonoOpen&&!clienteAEliminar&&<ManagementStatus {...m}/>}{localError&&<p role="alert" className="text-vr-red">{localError}</p>}<p className="text-xs text-vr-gray">Saldo actual de la cuenta preparada. La ficha consulta la historia nativa guardada; la historia web trasladada se conserva en Historial.</p></div>
 
             <div className="flex-1 p-3 sm:p-6 lg:p-8">
                 <div className="max-w-7xl mx-auto">
@@ -375,7 +379,7 @@ export function CustomersPage(){
                                         <p className="text-sm text-vr-gray mt-0.5">{fichaCliente.telefono || 'Sin teléfono'}</p>
                                     </div>
                                     <div className="flex items-center gap-2 shrink-0">
-                                        {fichaCliente.telefono&&BigInt(fichaCliente.saldo_pendiente)>0n && (
+                                        {fichaCliente.telefono&&BigInt(fichaActual?.customer.balanceCents??fichaCliente.saldo_pendiente)>0n && (
                                             <button disabled={!m.canManage} onClick={() => void enviarWhatsApp(fichaCliente.id)} className="px-3 py-1.5 bg-vr-green/10 text-vr-green font-bold rounded-lg hover:bg-vr-green/20 text-xs border border-vr-green/20 transition-all">📱 WhatsApp</button>
                                         )}
                                         <button aria-label="Cerrar ficha" onClick={() => setFichaCliente(null)} className="text-vr-gray hover:text-white font-bold text-xl transition-colors">✕</button>
@@ -386,11 +390,11 @@ export function CustomersPage(){
                                 <div className="px-4 sm:px-6 pt-4 grid grid-cols-2 sm:grid-cols-4 gap-2">
                                     <div className="bg-navy p-2.5 rounded-xl border border-navy-3">
                                         <p className="text-[10px] font-bold text-vr-gray uppercase tracking-wider">Saldo</p>
-                                        <p className={`text-sm font-black font-mono mt-0.5 ${BigInt(fichaCliente.saldo_pendiente) > 0n ? 'text-vr-red' : 'text-vr-green'}`}>{formatDOP(fichaCliente.saldo_pendiente)}</p>
+                                        <p className={`text-sm font-black font-mono mt-0.5 ${BigInt(fichaActual?.customer.balanceCents??fichaCliente.saldo_pendiente) > 0n ? 'text-vr-red' : 'text-vr-green'}`}>{formatDOP(fichaActual?.customer.balanceCents??fichaCliente.saldo_pendiente)}</p>
                                     </div>
                                     <div className="bg-navy p-2.5 rounded-xl border border-navy-3">
-                                        <p className="text-[10px] font-bold text-vr-gray uppercase tracking-wider">Total fiado</p>
-                                        <p className="text-sm font-black font-mono mt-0.5 text-white">No disponible</p>
+                                        <p className="text-[10px] font-bold text-vr-gray uppercase tracking-wider">Fiado registrado</p>
+                                        <p className="text-sm font-black font-mono mt-0.5 text-white">{fichaData.totalFiado===null?'…':formatDOP(fichaData.totalFiado)}</p>
                                     </div>
                                     {servicesAvailable && (
                                         <div className="bg-navy p-2.5 rounded-xl border border-navy-3">
@@ -406,11 +410,12 @@ export function CustomersPage(){
                                     )}
                                 </div>
 
+                                <p className="px-4 sm:px-6 pt-3 text-xs text-vr-gray">Fiado y actividad de la historia nativa guardada en esta sucursal. El saldo actual puede incluir un saldo inicial anterior; no se calcula sumando esta lista.{fichaActual&&BigInt(fichaActual.totalRows)>BigInt(fichaActual.rows.length)&&` Se muestran ${fichaActual.rows.length} de ${fichaActual.totalRows} movimientos.`}</p>
                                 {/* Movimientos del cliente */}
                                 <div className="flex-1 overflow-y-auto p-4 sm:p-6">
                                     <p className="text-xs font-bold text-vr-gray uppercase tracking-wider mb-2">Actividad</p>
-                                    {fichaData.movs.length === 0 ? (
-                                        <p className="text-sm text-vr-gray text-center py-8">Sin movimientos nativos disponibles. El histórico anterior no está incluido.</p>
+                                    {activityError ? <p role="alert" className="text-sm text-vr-red">{activityError}</p> : !fichaActual ? <p role="status" className="text-sm text-vr-gray py-8">Cargando actividad del cliente…</p> : fichaData.movs.length === 0 ? (
+                                        <p className="text-sm text-vr-gray text-center py-8">Sin movimientos nativos guardados para este cliente en esta sucursal.</p>
                                     ) : (
                                         <div className="space-y-1.5">
                                             {fichaData.movs.map(m => (
@@ -431,7 +436,7 @@ export function CustomersPage(){
 
                                 <div className="p-4 sm:p-6 border-t border-navy-3 flex gap-3">
                                     <button disabled={!m.canManage || ocupado || !!m.pending} onClick={() => { abrirModalEditarCliente(fichaCliente); setFichaCliente(null); }} className="flex-1 py-3 font-bold text-gold border border-gold/30 rounded-xl hover:bg-gold/10 transition-colors">Editar</button>
-                                    {BigInt(fichaCliente.saldo_pendiente) > 0n && (
+                                    {BigInt(fichaActual?.customer.balanceCents??fichaCliente.saldo_pendiente) > 0n && (
                                         <button onClick={() => { abrirModalAbono(fichaCliente); setFichaCliente(null); }} className="flex-1 py-3 bg-vr-green text-white font-extrabold rounded-xl hover:bg-vr-green/90 transition-all">+ Abono</button>
                                     )}
                                 </div>

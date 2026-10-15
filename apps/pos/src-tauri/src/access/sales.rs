@@ -54,6 +54,10 @@ pub enum SalesAction {
     },
     Read,
     ManagementRead,
+    CustomerActivity {
+        #[serde(rename = "customerId")]
+        customer_id: String,
+    },
     RepairsRead,
     LayawaysRead,
     WarrantiesRead,
@@ -891,6 +895,10 @@ impl AccessState {
                     SalesAction::ProductPhotos{..}|SalesAction::PrinterTest {..}|SalesAction::Print { .. }|SalesAction::PrintCut{..}|SalesAction::PrintRepair{..} => Err(AppError::Protocol(
                         ventard_core::application::errors::ProtocolError::MalformedPayload,
                     )),
+                    SalesAction::CustomerActivity{customer_id}=>{
+                        let decision=g.evaluate(now,high,opens).map_err(|_|AppError::Auth(ventard_core::application::errors::AuthError::InvalidSignature))?;
+                        ventard_core::application::management::customer_activity(c,&ctx,&customer_id,decision.allows("MANAGE"))
+                    }
                     SalesAction::ManagementRead => {
                         let mut view = ventard_core::application::management::read(c, &ctx)?;
                         view["canManage"] = json!(g

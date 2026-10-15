@@ -2009,6 +2009,14 @@ fn return_scoped_permissions_credit_and_fiscal_guards_preserve_money() {
     assert_eq!(report["refundCents"], "100");
     assert_eq!(report["netSalesCents"], "0");
     assert_eq!(report["profitCents"], serde_json::Value::Null);
+    let activity = management::customer_activity(&c, &ctx(), &id(30), false).unwrap();
+    assert_eq!(activity["recordedCreditCents"], "100");
+    assert_eq!(activity["customer"]["balanceCents"], "0");
+    assert!(activity["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|r| r["operationId"] == id(992) && r["kind"] == "SALE_RETURN"));
 }
 #[test]
 fn return_receipt_replays_and_remote_import_rederive_original_refund() {
@@ -2928,6 +2936,59 @@ fn module_reads_are_scoped_and_do_not_change_database() {
     let mut other = ctx();
     other.tenant_id = id(99);
     assert!(management::read(&c, &other).is_err());
+}
+#[test]
+fn customer_activity_uses_scoped_actual_payments_and_current_service_revisions() {
+    let mut c = db();
+    run(&mut c, save(20, "0")).unwrap();
+    c.execute(
+        "UPDATE sale_customer_accounts_v1 SET balance_cents=10000",
+        [],
+    )
+    .unwrap();
+    // The balance is the verified current account, not the sum of visible history.
+    let before = c.total_changes();
+    let v = management::customer_activity(&c, &ctx(), &id(30), false).unwrap();
+    assert_eq!(v["customer"]["balanceCents"], "10000");
+    assert_eq!(v["recordedCreditCents"], "0");
+    assert_eq!(v["salesCount"], "0");
+    assert!(v["repairs"].is_null());
+    assert_eq!(v["rows"], json!([]));
+    assert_eq!(c.total_changes(), before);
+    let mut foreign = ctx();
+    foreign.tenant_id = id(99);
+    assert!(management::customer_activity(&c, &foreign, &id(30), true).is_err());
+    let mut branch = ctx();
+    branch.branch_id = Some(id(99));
+    assert!(management::customer_activity(&c, &branch, &id(30), true).is_err());
+    repair_fixture(&mut c);
+    run(
+        &mut c,
+        management::Command::CreditPayment {
+            operation_id: id(81),
+            customer_id: id(30),
+            expected_revision: "1".into(),
+            amount_cents: "1000".into(),
+            method: "TARJETA".into(),
+            concept: "Abono de prueba".into(),
+            turn_id: id(90),
+        },
+    )
+    .unwrap();
+    let mut req = serde_json::to_value(repair_save(701, "0")).unwrap();
+    req["definition"]["customerId"] = json!(id(30));
+    run_pro(&mut c, serde_json::from_value(req).unwrap()).unwrap();
+    run_pro(&mut c, repair_action(702, "1", "PAYMENT", "TARJETA", "100")).unwrap();
+    let before = c.total_changes();
+    let v = management::customer_activity(&c, &ctx(), &id(30), true).unwrap();
+    assert_eq!(v["customer"]["balanceCents"], "9000");
+    assert_eq!(v["repairs"], "1");
+    assert_eq!(v["layaways"], "0");
+    assert_eq!(v["rows"][0]["kind"], "CREDIT_PAYMENT");
+    assert_eq!(v["rows"][0]["amountCents"], "1000");
+    assert_eq!(v["rows"][0]["direction"], "PAYMENT");
+    assert_eq!(c.total_changes(), before);
+    assert!(!v.to_string().contains("diagnosis"));
 }
 #[test]
 fn customer_with_debt_cannot_be_deleted() {

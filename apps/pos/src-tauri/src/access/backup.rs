@@ -144,6 +144,9 @@ pub enum Action {
         operation_id: String,
     },
     ManagementRead {},
+    CustomerActivity {
+        customer_id: String,
+    },
     SettingsRead {},
     PrintLayoutRead {},
     RepairsRead {},
@@ -282,6 +285,7 @@ impl AccessState {
             let ctx = context(source);
             let result = (|| -> Result<Value, AppError> {
                 match action {
+                    Action::CustomerActivity{customer_id}=>ventard_core::application::management::customer_activity(c,&ctx,&customer_id,true),
                     Action::RecoveryArchivedList {} => ventard_core::storage::recovery::archived_list(c,source).map_err(|e|AppError::Storage(e.code().into())),
                     Action::LegacyHistory { filter } => ventard_core::storage::legacy_transition::history(c,&ctx,&filter.search,filter.method.as_deref(),filter.from_ms.as_deref(),filter.to_ms.as_deref(),filter.page).map_err(|e|AppError::Storage(e.code().into())),
                     Action::LegacyTicket { sale_id } => ventard_core::storage::legacy_transition::ticket(c,&ctx,&sale_id).map_err(|e|AppError::Storage(e.code().into())),
@@ -429,6 +433,7 @@ v["mode"] = json!("recovery-readonly");
                 | Action::HistoryRead { .. }
                 | Action::Ticket { .. }
                 | Action::ManagementRead {}
+                | Action::CustomerActivity { .. }
                 | Action::SettingsRead {}
                 | Action::PrintLayoutRead {}
                 | Action::RepairsRead {}

@@ -901,6 +901,20 @@ fn native_mixed_and_credit_persist_exact_breakdown_and_debt() {
             .unwrap(),
         0
     );
+    c.execute(
+        "INSERT INTO native_sales_cursor_v1 VALUES(?1,?2,'NATIVE1',0)",
+        (id(1), format!("{}/BRANCH:{}", id(1), id(5))),
+    )
+    .unwrap();
+    let changes = c.total_changes();
+    let activity =
+        ventard_core::application::management::customer_activity(&c, &ctx(2), &id(96), false)
+            .unwrap();
+    assert_eq!(activity["recordedCreditCents"], "11800");
+    assert_eq!(activity["salesCount"], "1");
+    assert_eq!(activity["rows"][0]["direction"], "CHARGE");
+    assert_eq!(activity["rows"][0]["amountCents"], "11800");
+    assert_eq!(c.total_changes(), changes);
     assert_eq!(
         c.query_row("SELECT count(*) FROM sale_credit_entries_v1", [], |r| r
             .get::<_, u32>(0))
