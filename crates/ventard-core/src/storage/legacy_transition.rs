@@ -225,13 +225,58 @@ pub(crate) fn normalize(v: &Value, depth: u32) -> Result<Value, Error> {
         _ => Ok(v.clone()),
     }
 }
+// Comparison only: leave captured bytes and the PostgreSQL CAS normalization
+// unchanged. Timestamp encodings may differ across browser and database exports.
+fn timestamp(v: &Value) -> Option<String> {
+    if let Some(s) = v.as_str() {
+        let instant =
+            time::OffsetDateTime::parse(s, &time::format_description::well_known::Rfc3339).ok()?;
+        canonical_number(&format!("{}e-6", instant.unix_timestamp_nanos())).ok()
+    } else {
+        canonical_number(&number(v)?).ok()
+    }
+}
+fn equivalent_field(field: &str, a: &Value, b: &Value) -> bool {
+    if matches!(
+        field,
+        "actualizado_en"
+            | "created_at"
+            | "updated_at"
+            | "fecha_creacion"
+            | "fecha_actualizacion"
+            | "fecha"
+    ) {
+        if let (Some(a), Some(b)) = (timestamp(a), timestamp(b)) {
+            return a == b;
+        }
+    }
+    equivalent(a, b)
+}
+pub(crate) fn equivalent(a: &Value, b: &Value) -> bool {
+    if a == b {
+        return true;
+    }
+    match (a, b) {
+        (Value::Object(a), Value::Object(b)) => {
+            a.len() == b.len()
+                && a.iter()
+                    .all(|(k, a)| b.get(k).is_some_and(|b| equivalent_field(k, a, b)))
+        }
+        (Value::Array(a), Value::Array(b)) => {
+            a.len() == b.len() && a.iter().zip(b).all(|(a, b)| equivalent(a, b))
+        }
+        _ => false,
+    }
+}
 // Only absent fields may be complemented. Arrays remain indivisible documents;
 // null is an explicit value, never an absent field or an inferred GLOBAL scope.
 fn complement(a: &mut Value, b: &Value) -> bool {
     let (Some(a), Some(b)) = (a.as_object_mut(), b.as_object()) else {
         return false;
     };
-    if b.iter().any(|(k, v)| a.get(k).is_some_and(|old| old != v)) {
+    if b.iter()
+        .any(|(k, v)| a.get(k).is_some_and(|old| !equivalent_field(k, old, v)))
+    {
         return false;
     }
     for (k, v) in b {
@@ -1710,4 +1755,33 @@ fn project_ticket(
         }
     }
     Ok(ticket)
+}
+
+#[cfg(test)]
+mod timestamp_comparison_tests {
+    use super::*;
+
+    #[test]
+    fn equality_preserves_wire_hashes_explicit_nulls_and_array_order() {
+        let iso = json!({"created_at":"2026-10-02T15:24:39.336454Z"});
+        let database = json!({"created_at":{"$milliseconds":"1790954679336.454000"}});
+        let normalized = normalize(&database, 0).unwrap();
+        assert_eq!(
+            normalized,
+            json!({"created_at":{"$number":"1790954679336.454"}})
+        );
+        assert_eq!(normalize(&iso, 0).unwrap(), iso);
+        assert!(equivalent(&iso, &normalized));
+        assert!(!equivalent(&json!({"created_at":null}), &iso));
+        assert!(!equivalent(&json!({}), &iso));
+        assert!(!equivalent(
+            &json!({"created_at":"not a date"}),
+            &normalized
+        ));
+        assert!(!equivalent(
+            &json!([iso.clone(), null]),
+            &json!([null, normalized.clone()])
+        ));
+        assert!(equivalent(&json!([iso]), &json!([normalized])));
+    }
 }

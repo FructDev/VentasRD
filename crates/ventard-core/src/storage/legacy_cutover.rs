@@ -153,7 +153,11 @@ fn comparison(c: &Connection, ctx: &CatalogueContext, run: &str) -> Result<Compa
             .copied()
             .collect::<std::collections::BTreeSet<_>>()
         {
-            if chosen.get(id) != remote.get(id) {
+            if !match (chosen.get(id), remote.get(id)) {
+                (Some(a), Some(b)) => transition::equivalent(a, b),
+                (None, None) => true,
+                _ => false,
+            } {
                 differences.push(
                     json!({"table":name,"id":id,"preserved":chosen.get(id),"cloud":remote.get(id)}),
                 );

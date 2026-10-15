@@ -124,6 +124,107 @@ fn cloud(id: &str, data: Value) -> String {
     let tables=t::CLOUD_TABLES.iter().map(|name|{let rows=data.get(*name).cloned().unwrap_or(json!([]));json!({"name":name,"count":rows.as_array().unwrap().len(),"rows":rows,"scopeEvidence":[]})}).collect::<Vec<_>>();
     json!({"protocol":"ventard.web.capture.1","captureId":id,"context":ctx(),"capturedAtMs":"1791909600000","coverage":"SCOPE_COMPLETE_SINGLE_SNAPSHOT","decimalEncoding":"TAGGED_NUMBERS_V1","tables":tables}).to_string()
 }
+#[test]
+fn timestamp_encodings_do_not_create_false_conflicts_or_hide_real_changes() {
+    let dir = std::env::temp_dir().join(format!(
+        "ventard-date-merge-fixture-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir(&dir).unwrap();
+    let mut w = VaultWriter::create_encrypted(&dir, &CipherKey::new([97; 32])).unwrap();
+    let export = "96000036-0000-4000-8000-000000000001";
+    let capture = "96000036-0000-4000-8000-000000000002";
+    let run = "96000036-0000-4000-8000-000000000003";
+    let instant = "2026-10-02T15:24:39.336454+00:00";
+    let mut local = vec![];
+    let mut remote = vec![];
+    for name in [
+        "same",
+        "offset",
+        "microsecond_changed",
+        "name_is_not_a_date",
+        "stock_changed",
+    ] {
+        let mut a = json!({"id":name,"negocio_id":TENANT,"nombre":name,"precio_venta":10,"stock_actual":99,"actualizado_en":instant});
+        let mut b = a.clone();
+        b["actualizado_en"] = json!({"$milliseconds":"1790954679336.454000"});
+        if name == "offset" {
+            a["actualizado_en"] = json!("2026-10-02T11:24:39.336454-04:00");
+        }
+        if name == "microsecond_changed" {
+            a["actualizado_en"] = json!("2026-10-02T15:24:39.336455Z");
+        }
+        if name == "name_is_not_a_date" {
+            a["nombre"] = json!(instant);
+            b["nombre"] = json!({"$milliseconds":"1790954679336.454000"});
+        }
+        if name == "stock_changed" {
+            a["stock_actual"] = json!(95);
+        }
+        local.push(a);
+        remote.push(b);
+    }
+    let mut local_sale = sale("same-sale", json!(10.25), "tarjeta");
+    local_sale["created_at"] = json!(instant);
+    let mut remote_sale = local_sale.clone();
+    remote_sale["created_at"] = json!({"$milliseconds":"1790954679336.454000"});
+    let p = package(export, json!({"productos":local,"ventas":[local_sale]}));
+    let original = p.raw_body().to_owned();
+    legacy_web::store(w.connection(), TENANT, &p).unwrap();
+    fn tagged(v: Value) -> Value {
+        match v {
+            Value::Number(n) => json!({"$number":n.to_string()}),
+            Value::Array(a) => Value::Array(a.into_iter().map(tagged).collect()),
+            Value::Object(o) => Value::Object(o.into_iter().map(|(k, v)| (k, tagged(v))).collect()),
+            v => v,
+        }
+    }
+    t::store_capture(
+        w.connection(),
+        &ctx(),
+        capture,
+        &cloud(
+            capture,
+            tagged(json!({"productos":remote,"ventas":[remote_sale]})),
+        ),
+    )
+    .unwrap();
+    let report = t::prepare(
+        w.connection(),
+        &ctx(),
+        run,
+        &[export.into()],
+        Some(capture),
+        "1792080000000",
+    )
+    .unwrap();
+    assert_eq!(
+        report["documentConflicts"], 0,
+        "equivalent timestamps must not split a whole sale"
+    );
+    assert_eq!(
+        report["conflicts"], 3,
+        "stock, microseconds and non-date fields still differ"
+    );
+    assert_eq!(report["counts"]["productos"], 2);
+    assert_eq!(report["counts"]["ventas"], 1);
+    let saved: String = w
+        .connection()
+        .query_row(
+            "SELECT body FROM legacy_web_packages_v1 WHERE export_id=?1",
+            [export],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(saved, original, "original package bytes remain immutable");
+    let differences =
+        ventard_core::storage::legacy_cutover::differences(w.connection(), &ctx(), run, 0).unwrap();
+    assert!(!differences["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|r| r["id"] == "same" || r["id"] == "offset" || r["id"] == "same-sale"));
+}
 fn sale(id: &str, amount: Value, method: &str) -> Value {
     json!({"id":id,"negocio_id":TENANT,"sucursal_id":null,"caja_id":"cash-old","total":amount,"metodo_pago":method,"numero_ticket":7,"ncf":"B0200000007","fecha_creacion":1791909600000i64})
 }
