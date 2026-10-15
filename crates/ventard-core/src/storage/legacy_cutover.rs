@@ -7,6 +7,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
+#[path = "legacy_resolution.rs"]
+mod resolution;
+pub use resolution::*;
 #[derive(Debug)]
 pub struct Error(&'static str);
 impl Error {
@@ -49,6 +52,8 @@ pub struct Input {
     pub service_reservations_confirmed: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub legacy_cash_history_confirmed: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reconcile_selected: Option<bool>,
 }
 #[derive(Clone, Debug)]
 pub struct Pending {
@@ -435,7 +440,7 @@ pub fn load(c: &Connection, ctx: &CatalogueContext, id: &str) -> Result<Pending,
     })
 }
 fn expected_receipt(ctx: &CatalogueContext, id: &str, hash: &str, plan: &Value) -> Value {
-    json!({"protocol":"ventard.web.cutover.receipt.1","status":"BASELINE_ADOPTED","cutoverId":id,"planHash":hash,"context":ctx,"runId":plan["runId"],"revision":plan["revision"],"backupId":plan["backupId"],"coverage":"CLOUD_CONVERGED_BASELINE","legacyReplay":false})
+    json!({"protocol":"ventard.web.cutover.receipt.1","status":"BASELINE_ADOPTED","cutoverId":id,"planHash":hash,"context":ctx,"runId":plan["runId"],"revision":plan["revision"],"backupId":plan["backupId"],"coverage":if plan.get("reconciliation").is_some(){"RECONCILED_SELECTED_BASELINE"}else{"CLOUD_CONVERGED_BASELINE"},"legacyReplay":false})
 }
 pub fn view(c: &Connection, ctx: &CatalogueContext) -> Result<Value, Error> {
     let id:Option<String>=c.query_row("SELECT cutover_id FROM legacy_cutovers_v1 WHERE context=?1 ORDER BY rowid DESC LIMIT 1",[ctx_json(ctx)?],|r|r.get(0)).optional()?;
@@ -481,7 +486,14 @@ pub fn prepare(
         }
         return load(&tx, ctx, &input.cutover_id);
     }
-    let ready = readiness(&tx, ctx, &input.run_id)?;
+    if input.reconcile_selected == Some(false) {
+        return Err(invalid());
+    }
+    let ready = if input.reconcile_selected == Some(true) {
+        selected_readiness(&tx, ctx, &input.run_id)?
+    } else {
+        readiness(&tx, ctx, &input.run_id)?
+    };
     if ready["canPrepare"] != true || ready["revision"] != input.revision {
         return Err(Error("CUTOVER_REVIEW_REQUIRED"));
     }
@@ -490,9 +502,10 @@ pub fn prepare(
     {
         return Err(Error("CUTOVER_SERVICE_RESERVATIONS_REQUIRED"));
     }
-    if ready["legacyCashHistoryWarnings"]
-        .as_array()
-        .is_some_and(|v| !v.is_empty())
+    if (input.reconcile_selected == Some(true)
+        || ready["legacyCashHistoryWarnings"]
+            .as_array()
+            .is_some_and(|v| !v.is_empty()))
         && input.legacy_cash_history_confirmed != Some(true)
     {
         return Err(Error("CUTOVER_CASH_HISTORY_CONFIRMATION_REQUIRED"));
@@ -521,7 +534,15 @@ pub fn prepare(
         return Err(Error("CUTOVER_BACKUP_REQUIRED"));
     }
     let report = transition::report(&tx, ctx, &input.run_id)?;
-    let mut plan = json!({"protocol":"ventard.web.cutover.1","cutoverId":input.cutover_id,"runId":input.run_id,"revision":input.revision,"context":ctx,"backupId":input.backup_id,"backupHash":manifest["databaseHash"],"runHash":fingerprint,"confirmation":input.confirmation,"freeTax":input.free_tax,"sources":report["sources"],"tables":tables(&tx,ctx,&input.run_id)?});
+    let base_tables = if input.reconcile_selected == Some(true) {
+        comparison(&tx, ctx, &input.run_id)?.tables
+    } else {
+        tables(&tx, ctx, &input.run_id)?
+    };
+    let mut plan = json!({"protocol":"ventard.web.cutover.1","cutoverId":input.cutover_id,"runId":input.run_id,"revision":input.revision,"context":ctx,"backupId":input.backup_id,"backupHash":manifest["databaseHash"],"runHash":fingerprint,"confirmation":input.confirmation,"freeTax":input.free_tax,"sources":report["sources"],"tables":base_tables});
+    if input.reconcile_selected == Some(true) {
+        plan["reconciliation"] = resolution_plan(&tx, ctx, &input.run_id)?;
+    }
     if let Some(confirmed) = input.service_reservations_confirmed {
         plan["serviceReservationsConfirmed"] = json!(confirmed);
     }
@@ -529,6 +550,9 @@ pub fn prepare(
         plan["legacyCashHistoryConfirmed"] = json!(confirmed);
     }
     let (intent, hash) = canonical(&plan)?;
+    if intent.len() > transition::MAX_CAPTURE {
+        return Err(Error("RESOLUTION_TOO_LARGE"));
+    }
     tx.execute(
         "INSERT INTO legacy_cutovers_v1 VALUES(?1,?2,?3,?4,?5,?6,'UNKNOWN',NULL,?7)",
         (

@@ -257,6 +257,13 @@ pub fn get_embedded_migrations() -> Vec<Migration> {
         sql: sql_0033,
         checksum: Migration::compute_checksum(sql_0033),
     });
+    let sql_0034 = include_str!("../../migrations/0034_legacy_resolution_history.sql");
+    migrations.push(Migration {
+        version: 34,
+        name: "0034_legacy_resolution_history",
+        sql: sql_0034,
+        checksum: Migration::compute_checksum(sql_0034),
+    });
     migrations
 }
 

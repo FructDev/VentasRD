@@ -231,6 +231,36 @@ const messages: Record<string, string> = {
   CUTOVER_REVIEW_REQUIRED:'Publica la historia y resuelve las observaciones antes de activar el negocio.',
   CUTOVER_CLOUD_REQUIRED:'Falta la captura completa de nube para el corte operativo.',
   CUTOVER_COPIES_NOT_CONVERGED:'Hay diferencias entre el historial conservado y la nube. Revisa ambas versiones y decide la base operativa en esta sección; las ventas antiguas no se reenvían automáticamente.',
+  RESOLUTION_MIGRATION_REQUIRED:'La conciliación todavía necesita su migración autorizada en Staging. Las copias siguen conservadas.',
+  RESOLUTION_BASIS_REQUIRED:'Lee primero la base actual para revisar las existencias y los documentos.',
+  RESOLUTION_SOURCE_CHANGED:'La nube cambió desde la captura. Captura de nuevo la nube y combina otra revisión; el historial ya incorporado se conserva.',
+  RESOLUTION_NATIVE_ALREADY_STARTED:'Esta conciliación inicial no puede reescribir una instalación o negocio que ya opera en modo nativo. Conserva las copias y usa la recuperación o los ajustes operativos correspondientes.',
+  RESOLUTION_OTHER_WRITERS_ACTIVE:'Hay otra instalación nativa registrada sobre la base anterior. Cierra su continuidad mediante el recorrido de recuperación antes de cambiar esta base.',
+  RESOLUTION_DOCUMENTS_REQUIRED:'Quedan documentos inválidos o fuera de ámbito. Elige una versión completa válida o consérvalos sólo en el archivo histórico y recalcula la selección.',
+  RESOLUTION_REVIEW_REQUIRED:'Guarda la revisión de documentos, conteos físicos y saldos actuales antes del corte.',
+  RESOLUTION_STOCK_COVERAGE:'Falta el conteo disponible de un producto, hay IDs repetidos o una cantidad no es un entero válido.',
+  RESOLUTION_DEBT_COVERAGE:'Confirma el saldo actual de cada cliente, incluido cero. No se admite deuda negativa ni fracciones de centavo.',
+  RESOLUTION_HISTORY_REQUIRED:'Falta descargar la historia conservada. Recupera el mismo corte; no se repetirán sus efectos.',
+  RESOLUTION_HISTORY_INVALID:'La historia recibida no coincide con su comprobante, negocio o sucursal. La descarga sigue pendiente.',
+  RESOLUTION_SCHEMA_INCOMPATIBLE:'Un registro no es compatible con el esquema de destino. La transacción se revirtió y las copias se conservan; revisa su versión o archívalo sin aplicarlo.',
+  RESOLUTION_MONEY_INVALID:'Un documento contiene importes o referencias incompatibles. No se aplicó la conciliación.',
+  RESOLUTION_SCOPE:'Un documento no pertenece al negocio o sucursal elegidos. No se aplicó la conciliación.',
+  RESOLUTION_TOO_LARGE:'La conciliación excede el límite completo de transporte. No se envió una versión parcial.',
+  RESOLUTION_PART_INVALID:'Una parte recibida no coincide con el intento conservado. Recupera el mismo corte; no se aplicará una copia incompleta.',
+  RESOLUTION_TRANSPORT_FULL:'El espacio temporal de conciliación del negocio está ocupado por otros intentos. Recupera o descarta esos intentos; sus datos no se sobrescribirán.',
+  RESOLUTION_PATCH_INVALID:'La corrección no es válida. Usa un objeto con campos del producto, cliente o servicio; los valores numéricos se escriben como {"$number":"12.34"}. No se pueden corregir identidades, permisos ni campos fiscales.',
+  RESOLUTION_OTHER_BRANCH_STOCK_UNKNOWN:'Otra sucursal tiene existencias desconocidas de este producto. Confirma ese conteo en el origen antes de adoptar una base global; no se asumirá cero.',
+  RESOLUTION_SOURCE_PARENT_MISSING:'La selección quitaría un registro compartido de la nube. Conserva su versión válida y archiva sólo los documentos operativos correspondientes.',
+  INVALID_MONEY:'El importe falta o no tiene centavos exactos.',
+  DETAIL_AMOUNT_MISMATCH:'La cantidad, el precio y el subtotal del detalle no coinciden.',
+  CUSTOMER_REFERENCE_MISSING:'La transacción no tiene un cliente conservado en esta selección.',
+  SALE_REFERENCE_MISSING:'El detalle no tiene una venta conservada en esta selección.',
+  CREDIT_TYPE_UNKNOWN:'No se conoce si esta transacción es un cargo o un abono.',
+  SCOPE_UNPROVEN:'El origen no demuestra la sucursal. Confirma su ámbito o consérvalo sólo en el archivo.',
+  TENANT_UNPROVEN:'El origen no demuestra el negocio. Conserva el registro sólo en el archivo.',
+  OUTSIDE_SELECTED_SCOPE:'El documento pertenece a otra sucursal y no se incorporará a este ámbito.',
+  PAYMENT_UNKNOWN:'El método de pago del documento no está identificado.',
+  MIXED_PAYMENT_MISMATCH:'Los importes del pago mixto no coinciden con el total de la venta.',
   CUTOVER_SOURCE_CHANGED:'La nube cambió después de la captura. Captura y concilia de nuevo antes de hacer el corte.',
   CUTOVER_CLOSE_WEB_CASH:'Cierra la caja en la versión web y captura su estado final antes del corte. Se conserva su historia y arqueo.',
   CUTOVER_CASH_HISTORY_CONFIRMATION_REQUIRED:'Revisa y confirma la conservación histórica de las ventas antiguas sin caja. Sus cobros no se repetirán ni se reconstruirá una caja.',
@@ -377,6 +407,10 @@ export const backupPort={
  transitionCutoverView:(runId:string)=>call<CutoverView>('native_backup',{command:{action:'TRANSITION_CUTOVER_VIEW',runId}}),
  transitionDifferences:(runId:string,page:number)=>call<TransitionDifferences>('native_backup',{command:{action:'TRANSITION_DIFFERENCES',runId,page}}),
  transitionBaselineReview:(input:BaselineDecision)=>call<TransitionReport>('native_backup',{command:{action:'TRANSITION_BASELINE_REVIEW',input}}),
+ transitionResolutionBasis:(runId:string,revision:number)=>call<TransitionReport>('native_backup',{command:{action:'TRANSITION_RESOLUTION_BASIS',runId,revision}}),
+ transitionResolutionView:(runId:string,page:number)=>call<ResolutionView>('native_backup',{command:{action:'TRANSITION_RESOLUTION_VIEW',runId,page}}),
+ transitionResolutionPreview:(runId:string,page:number,decisions:RowDisposition[])=>call<ResolutionView>('native_backup',{command:{action:'TRANSITION_RESOLUTION_PREVIEW',runId,page,decisions}}),
+ transitionSelectedReview:(input:SelectedReview)=>call<TransitionReport>('native_backup',{command:{action:'TRANSITION_SELECTED_REVIEW',input}}),
  transitionCutover:(input:CutoverInput)=>call<CutoverStatus>('native_backup',{command:{action:'TRANSITION_CUTOVER',input}}),
  transitionCutoverRecover:(cutoverId:string)=>call<CutoverStatus>('native_backup',{command:{action:'TRANSITION_CUTOVER_RECOVER',cutoverId}}),
  transitionCutoverAbandon:(cutoverId:string)=>call<CutoverStatus>('native_backup',{command:{action:'TRANSITION_CUTOVER_ABANDON',cutoverId}}),
@@ -417,12 +451,16 @@ export const backupPort={
  managementRead:()=>call<import('./management').ManagementView>('native_backup',{command:{action:'MANAGEMENT_READ'}}),
  reportExport:(kind:import('./management').ExportKind,fromMs:string,toMs:string)=>call<import('./management').ReportBundle>('native_backup',{command:{action:'REPORT_EXPORT',kind,fromMs,toMs}}),
 };
-export interface TransitionReport {runId:string;revision:number;historyPublished:boolean;createdAtMs:string;sources:{id:string;kind:'BROWSER'|'CLOUD';sha256:string}[];counts:Record<string,number>;conflicts:number;issues:{code:string;table:string;id:string;field:string}[];sales:{totalCents:string|null;byMethodCents:Record<string,string>};debts:{customerId:string;name:string|null;balanceCents:string|null;observedBalanceCents:string;coverage:string}[];cash:{id:string;state:string|null;openingCents:string|null;movementsCents:string;expectedCents:string|null;observedExpectedCents:string|null;coverage:string}[];payments:{id:string;table:string;documentId:string;montoCents:string;method:string|null;cajaId:string|null}[];cloudCoverage:string;effectStatus:'UNKNOWN_LEGACY';canActivate:false}
+export interface TransitionReport {runId:string;revision:number;historyPublished:boolean;createdAtMs:string;sources:{id:string;kind:'BROWSER'|'CLOUD';sha256:string}[];counts:Record<string,number>;conflicts:number;issues:{code:string;table:string;id:string;field:string}[];sales:{totalCents:string|null;byMethodCents:Record<string,string>};debts:{customerId:string;name:string|null;balanceCents:string|null;observedBalanceCents:string;coverage:string}[];cash:{id:string;state:string|null;openingCents:string|null;movementsCents:string;expectedCents:string|null;observedExpectedCents:string|null;coverage:string}[];payments:{id:string;table:string;documentId:string;montoCents:string;method:string|null;cajaId:string|null}[];cloudCoverage:string;effectStatus:'UNKNOWN_LEGACY';canActivate:false;selectedBaselineReview?:{input:SelectedReview}|null}
 export interface BaselineDecision {runId:string;revision:number;differenceHash:string;reason:string;confirmation:'USE_CLOUD_BASELINE_PRESERVE_HISTORY'}
+export interface RowDisposition {table:string;rowId:string;variantId:string|null;archiveOnly:boolean;scopeConfirmed:boolean;patch?:Record<string,unknown>|null;reason:string}
+export interface SelectedReview {runId:string;revision:number;decisions:RowDisposition[];stockCounts:{productId:string;quantity:string}[];debtBalances:{customerId:string;balanceCents:string}[];reason:string;confirmation:'RECONCILE_SELECTED_DOCUMENTS_AND_PRESENT_BALANCES'}
+export interface ResolutionIssue {code:string;table?:string;id?:string;field?:string}
+export interface ResolutionView {runId:string;revision:number;basisReady:boolean;selectedReviewed:boolean;page:number;total:number;rows:{table:string;id:string;preserved:Record<string,unknown>|null;cloud:Record<string,unknown>|null;options:{variantId?:string;sourceIds?:string[];row?:Record<string,unknown>;sourceId?:string;sale?:Record<string,unknown>;details?:unknown[];charges?:unknown[];inventory?:unknown[];journals?:unknown[]}[]}[];products:{productId:string;name:string|null;currentQuantity:string|null;browserQuantity:string|null;serialRequired:boolean|null}[];customers:{customerId:string;name:string|null;ledgerBalanceCents:string|null}[];analysis:{blockers:ResolutionIssue[];warnings:ResolutionIssue[];services:{table:string;id:string;folio:string|null}[]};review:{input:SelectedReview}|null}
 export interface TransitionDifferences {runId:string;revision:number;captureId:string;differenceHash:string;reviewed:boolean;decision?:{reason:string;actorId:string}|null;total:number;counts:Record<string,number>;page:number;rows:{table:string;id:string;preserved:Record<string,unknown>|null;cloud:Record<string,unknown>|null}[]}
-export interface CutoverInput {cutoverId:string;runId:string;revision:number;backupId:string;confirmation:'WEB_WRITERS_CLOSED_BALANCES_REVIEWED';freeTax:'0'|'0.18';serviceReservationsConfirmed?:boolean;legacyCashHistoryConfirmed?:boolean}
+export interface CutoverInput {cutoverId:string;runId:string;revision:number;backupId:string;confirmation:'WEB_WRITERS_CLOSED_BALANCES_REVIEWED';freeTax:'0'|'0.18';serviceReservationsConfirmed?:boolean;legacyCashHistoryConfirmed?:boolean;reconcileSelected?:true}
 export interface CutoverStatus {cutoverId:string;runId:string;backupId:string;state:'UNKNOWN'|'ADOPTED'|'ACTIVE'|'ABANDONED'}
-export interface CutoverView {legacyCashHistoryWarnings?:{code:string;id:string;table:string}[];serviceHistoryWarnings?:{code:string;id:string;table:string}[];services?:{table:string;id:string;folio:string}[];runId:string;revision:number;canPrepare:boolean;blockers:{code:string;id?:string;table?:string}[];pending:CutoverStatus|null;backups:string[];coverage:string;legacyReplay:false}
+export interface CutoverView {selectedBaseline?:Omit<CutoverView,'selectedBaseline'|'pending'|'backups'>;legacyCashHistoryWarnings?:{code:string;id:string;table:string}[];serviceHistoryWarnings?:{code:string;id:string;table:string}[];services?:{table:string;id:string;folio:string}[];runId:string;revision:number;canPrepare:boolean;blockers:{code:string;id?:string;table?:string}[];pending:CutoverStatus|null;backups:string[];coverage:string;legacyReplay:false}
 // A refresh hint carries no authority; the router rereads the native status.
 export const nativeAccessChanged = () => window.dispatchEvent(new Event('ventard:access-changed'));
 export interface TransitionRow {id:string;variants:{variantId:string;sourceIds:string[];row:Record<string,unknown>}[];selected:Record<string,unknown>|null;selectedVariant:string|null;excluded?:boolean;document?:{state:'CONFLICT'|'CONSENSUS'|'CHOSEN';chosenSource:string|null;variants:{sourceId:string;sale:Record<string,unknown>;details:Record<string,unknown>[];charges:Record<string,unknown>[];inventory:Record<string,unknown>[];journals:Record<string,unknown>[]}[]}}

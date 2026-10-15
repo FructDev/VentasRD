@@ -73,6 +73,7 @@ fn input() -> cut::Input {
         free_tax: "0.18".into(),
         service_reservations_confirmed: None,
         legacy_cash_history_confirmed: None,
+        reconcile_selected: None,
     }
 }
 fn browser_copy(w: &mut VaultWriter, data: Value) -> String {
@@ -101,6 +102,532 @@ fn browser_copy(w: &mut VaultWriter, data: Value) -> String {
     id
 }
 #[test]
+fn selected_resolution_requires_explicit_counts_and_balances_before_frozen_recoverable_cutover() {
+    let (dir, mut w) = create();
+    let ctx = context();
+    sources(&mut w, json!({}));
+    let product = "96000016-0000-4000-8000-000000000080";
+    let customer = "96000016-0000-4000-8000-000000000081";
+    let copy = browser_copy(
+        &mut w,
+        json!({"productos":[{"id":product,"negocio_id":ctx.tenant_id,"nombre":"QA","stock_actual":8,"tipo":"simple"}],"clientes":[{"id":customer,"negocio_id":ctx.tenant_id,"nombre":"Cliente QA"}],"ventas":[{"id":"only-local","negocio_id":ctx.tenant_id,"sucursal_id":null,"total":10,"metodo_pago":"fiado","cliente_id":customer}],"venta_detalles":[{"id":"only-local-line","negocio_id":ctx.tenant_id,"sucursal_id":null,"venta_id":"only-local","producto_id":product,"cantidad":1,"precio_unitario":10,"subtotal":10}],"transacciones_fiado":[{"id":"only-local-charge","negocio_id":ctx.tenant_id,"sucursal_id":null,"venta_id":"only-local","cliente_id":customer,"tipo":"cargo","monto":10},{"id":"only-local-payment","negocio_id":ctx.tenant_id,"sucursal_id":null,"cliente_id":customer,"tipo":"abono","monto":2,"metodo_pago":"tarjeta"}]}),
+    );
+    let run = uuid::Uuid::new_v4().to_string();
+    transition::prepare(
+        w.connection(),
+        &ctx,
+        &run,
+        &[copy],
+        Some("96000016-0000-4000-8000-000000000001"),
+        "2000",
+    )
+    .unwrap();
+    transition::publish_history(w.connection(), &ctx, &run, 0).unwrap();
+    let tables = transition::CLOUD_TABLES
+        .iter()
+        .map(|t| json!({"name":t,"count":0,"blocks":[]}))
+        .collect::<Vec<_>>();
+    let basis = json!({"protocol":"ventard.web.resolution.basis.1","context":ctx,"captureId":"96000016-0000-4000-8000-000000000001","tables":tables,"stockBase":[],"stockHash":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","started":false});
+    cut::store_resolution_basis(w.connection(), &ctx, &run, 0, &basis).unwrap();
+    let view = cut::resolution_view(w.connection(), &ctx, &run, 0).unwrap();
+    assert_eq!(view["products"][0]["browserQuantity"], "8");
+    assert_eq!(view["customers"][0]["ledgerBalanceCents"], "800");
+    let mut review = cut::SelectedReview {
+        run_id: run.clone(),
+        revision: 1,
+        decisions: vec![],
+        stock_counts: vec![],
+        debt_balances: vec![cut::DebtBalance {
+            customer_id: customer.into(),
+            balance_cents: "800".into(),
+        }],
+        reason: "Conteo físico y deuda actual confirmados desde las copias".into(),
+        confirmation: "RECONCILE_SELECTED_DOCUMENTS_AND_PRESENT_BALANCES".into(),
+    };
+    assert_eq!(
+        cut::review_selected(w.connection(), &ctx, &review)
+            .unwrap_err()
+            .code(),
+        "RESOLUTION_STOCK_COVERAGE"
+    );
+    review.stock_counts.push(cut::StockCount {
+        product_id: product.into(),
+        quantity: "7".into(),
+    });
+    let mut wrong = ctx.clone();
+    wrong.actor_id = uuid::Uuid::new_v4().to_string();
+    assert!(cut::review_selected(w.connection(), &wrong, &review).is_err());
+    let r = cut::review_selected(w.connection(), &ctx, &review).unwrap();
+    assert_eq!(r["revision"], 2);
+    assert_eq!(
+        cut::review_selected(w.connection(), &ctx, &review).unwrap(),
+        r
+    );
+    assert_eq!(
+        cut::selected_readiness(w.connection(), &ctx, &run).unwrap()["canPrepare"],
+        true
+    );
+    let mut i = input();
+    i.run_id = run.clone();
+    i.revision = 2;
+    i.reconcile_selected = Some(true);
+    i.legacy_cash_history_confirmed = Some(true);
+    verified_backup(&mut w, &dir, &ctx, &i);
+    let p = cut::prepare(w.connection(), &ctx, &i, "3000").unwrap();
+    let intent: Value = serde_json::from_str(&p.intent).unwrap();
+    assert_eq!(intent["reconciliation"]["stockCounts"][0]["quantity"], "7");
+    assert_eq!(
+        intent["reconciliation"]["debtBalances"][0]["balanceCents"],
+        "800"
+    );
+    assert_eq!(
+        transition::history(w.connection(), &ctx, "", None, None, None, 1).unwrap()["total"],
+        "1"
+    );
+    drop(w);
+    let mut w = VaultWriter::open_encrypted(&dir, &CipherKey::new([119; 32])).unwrap();
+    assert_eq!(
+        cut::load(w.connection(), &ctx, &i.cutover_id)
+            .unwrap()
+            .intent,
+        p.intent
+    );
+    let receipt = json!({"protocol":"ventard.web.cutover.receipt.1","status":"BASELINE_ADOPTED","cutoverId":i.cutover_id,"planHash":p.hash,"context":ctx,"runId":run,"revision":2,"backupId":i.backup_id,"coverage":"RECONCILED_SELECTED_BASELINE","legacyReplay":false});
+    cut::accept(w.connection(), &ctx, &i.cutover_id, &receipt).unwrap();
+    assert_eq!(
+        cut::load(w.connection(), &ctx, &i.cutover_id)
+            .unwrap()
+            .state,
+        "ADOPTED"
+    );
+    for t in [
+        "operation_journal",
+        "outbox",
+        "inventory_movements",
+        "sale_cash_entries_v1",
+    ] {
+        assert_eq!(
+            w.connection()
+                .query_row::<i64, _, _>(&format!("SELECT count(*) FROM {t}"), [], |r| r.get(0))
+                .unwrap(),
+            0
+        );
+    }
+}
+fn resolution_basis(w: &mut VaultWriter, ctx: &CatalogueContext, run: &str) -> Value {
+    use ventard_core::domain::canonical::canonicalize;
+    let r = transition::report(w.connection(), ctx, run).unwrap();
+    let source = r["sources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["kind"] == "CLOUD")
+        .unwrap();
+    let raw: String = w
+        .connection()
+        .query_row(
+            "SELECT body FROM legacy_cloud_captures_v1 WHERE capture_id=?1",
+            [source["id"].as_str().unwrap()],
+            |r| r.get(0),
+        )
+        .unwrap();
+    let capture: Value = serde_json::from_str(&raw).unwrap();
+    let tables = capture["tables"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| {
+            let mut rows = t["rows"].as_array().unwrap().clone();
+            rows.sort_by(|a, b| a["id"].as_str().cmp(&b["id"].as_str()));
+            let blocks = rows
+                .chunks(100)
+                .map(|rows| canonicalize(json!(rows).to_string().as_bytes()).unwrap().1)
+                .collect::<Vec<_>>();
+            json!({"name":t["name"],"count":rows.len(),"blocks":blocks})
+        })
+        .collect::<Vec<_>>();
+    json!({"protocol":"ventard.web.resolution.basis.1","context":ctx,"captureId":source["id"],"tables":tables,"stockBase":[],"stockHash":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","started":false})
+}
+#[test]
+fn resolution_can_choose_another_active_service_version_without_rewriting_published_history() {
+    let (dir, mut w) = create();
+    let ctx = context();
+    let service = "96000016-0000-4000-8000-000000000090";
+    let original = json!({"id":service,"negocio_id":ctx.tenant_id,"sucursal_id":null,"folio":"REP-QA","estado":"listo","equipo_modelo":"Original","problema_reportado":"Prueba","repuestos":[],"mano_obra":{"$number":"10"},"total":{"$number":"10"},"abono":{"$number":"2"},"pagos":[],"fecha_creacion":{"$number":"1000"},"fecha_actualizacion":{"$number":"2000"}});
+    sources(&mut w, json!({"reparaciones":[original]}));
+    let mut browser = original.clone();
+    browser["mano_obra"] = json!({"$number":"12"});
+    browser["total"] = json!({"$number":"12"});
+    browser["abono"] = json!({"$number":"4"});
+    let copy = browser_copy(&mut w, json!({"reparaciones":[browser]}));
+    let run = uuid::Uuid::new_v4().to_string();
+    let capture = "96000016-0000-4000-8000-000000000001";
+    transition::prepare(
+        w.connection(),
+        &ctx,
+        &run,
+        std::slice::from_ref(&copy),
+        Some(capture),
+        "2000",
+    )
+    .unwrap();
+    let options = transition::rows(w.connection(), &ctx, &run, "reparaciones", 0).unwrap();
+    let variants = options["rows"][0]["variants"].as_array().unwrap();
+    let local = variants
+        .iter()
+        .find(|r| {
+            r["sourceIds"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|s| s == &json!(copy))
+        })
+        .unwrap()["variantId"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let cloud = variants
+        .iter()
+        .find(|r| {
+            r["sourceIds"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|s| s == &json!(capture))
+        })
+        .unwrap()["variantId"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    transition::resolve(
+        w.connection(),
+        &ctx,
+        &run,
+        transition::Decision {
+            table: "reparaciones",
+            row_id: service,
+            variant_id: &local,
+            revision: 0,
+            reason: "Elegir el documento completo de la copia revisada",
+        },
+    )
+    .unwrap();
+    assert_ne!(cloud, local);
+    let b = resolution_basis(&mut w, &ctx, &run);
+    cut::store_resolution_basis(w.connection(), &ctx, &run, 1, &b).unwrap();
+    let review = cut::SelectedReview {
+        run_id: run.clone(),
+        revision: 2,
+        decisions: vec![cut::RowDisposition {
+            table: "reparaciones".into(),
+            row_id: service.into(),
+            variant_id: Some(local),
+            archive_only: false,
+            scope_confirmed: false,
+            patch: None,
+            reason: "El estado y depósito actual confirmado es la copia local".into(),
+        }],
+        stock_counts: vec![],
+        debt_balances: vec![],
+        reason: "Continuar reparación con el depósito actual revisado".into(),
+        confirmation: "RECONCILE_SELECTED_DOCUMENTS_AND_PRESENT_BALANCES".into(),
+    };
+    cut::review_selected(w.connection(), &ctx, &review).unwrap();
+    let p = cut::resolution_plan(w.connection(), &ctx, &run).unwrap();
+    assert_eq!(
+        p["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["name"] == "reparaciones")
+            .unwrap()["rows"][0]["abono"],
+        json!({"$number":"4"})
+    );
+    assert_eq!(
+        p["history"]["tables"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["name"] == "reparaciones")
+            .unwrap()["rows"][0]["abono"],
+        json!({"$number":"2"})
+    );
+    assert_eq!(
+        transition::rows(w.connection(), &ctx, &run, "reparaciones", 0).unwrap()["rows"][0]
+            ["selected"]["abono"],
+        json!({"$number":"4"})
+    );
+    assert_eq!(
+        cut::selected_readiness(w.connection(), &ctx, &run).unwrap()["canPrepare"],
+        true
+    );
+    let mut changed = review.clone();
+    changed.revision = 3;
+    changed.decisions[0].patch = Some(json!({"actorId":"forbidden"}));
+    assert_eq!(
+        cut::review_selected(w.connection(), &ctx, &changed)
+            .unwrap_err()
+            .code(),
+        "RESOLUTION_PATCH_INVALID"
+    );
+    changed.decisions[0].patch = Some(
+        json!({"mano_obra":{"$number":"15"},"total":{"$number":"15"},"abono":{"$number":"6"}}),
+    );
+    cut::review_selected(w.connection(), &ctx, &changed).unwrap();
+    let fixed = cut::resolution_plan(w.connection(), &ctx, &run).unwrap();
+    assert_eq!(
+        fixed["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["name"] == "reparaciones")
+            .unwrap()["rows"][0]["abono"],
+        json!({"$number":"6"})
+    );
+    assert_eq!(
+        fixed["history"]["tables"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["name"] == "reparaciones")
+            .unwrap()["rows"][0]["abono"],
+        json!({"$number":"2"})
+    );
+    let mut i = input();
+    i.run_id = run;
+    i.revision = 4;
+    i.reconcile_selected = Some(true);
+    i.service_reservations_confirmed = Some(true);
+    i.legacy_cash_history_confirmed = Some(true);
+    verified_backup(&mut w, &dir, &ctx, &i);
+    assert!(cut::prepare(w.connection(), &ctx, &i, "3000").is_ok());
+}
+#[test]
+fn downloaded_history_is_required_before_activation_and_remains_read_only_across_contexts() {
+    use ventard_core::domain::canonical::canonicalize;
+    let (dir, mut w) = create();
+    let ctx = context();
+    let sale = json!({"id":"preserved-only","negocio_id":ctx.tenant_id,"sucursal_id":null,"fecha_creacion":{"$number":"1000"},"total":{"$number":"12.34"},"metodo_pago":"tarjeta","ticket_numero":"WEB-0007"});
+    let body = json!({"protocol":"ventard.web.resolution.history.1","tables":transition::CLOUD_TABLES.iter().map(|t|json!({"name":t,"rows":if *t=="ventas"{json!([sale])}else{json!([])}})).collect::<Vec<_>>(),"tickets":[{"id":"preserved-only","ticket":"WEB-0007","method":"tarjeta","totalCents":"1234","business":{"name":"Nombre original"},"lines":[],"effectStatus":"UNKNOWN_LEGACY","coverage":"PRESERVED_LEGACY_FIELDS"}]});
+    let h = canonicalize(body.to_string().as_bytes()).unwrap().1;
+    let receipt = json!({"protocol":"ventard.web.cutover.receipt.1","status":"BASELINE_ADOPTED","cutoverId":input().cutover_id,"planHash":"a".repeat(64),"context":ctx,"coverage":"RECONCILED_SELECTED_BASELINE","legacyReplay":false});
+    let envelope = json!({"protocol":"ventard.web.resolution.history.envelope.1","context":ctx,"history":body,"historyHash":h,"receipt":receipt});
+    let manifest = json!({"legacyResolutionHistory":{"sha256":h,"cutoverId":input().cutover_id}});
+    assert_eq!(
+        cut::activate_resolution_history(w.connection(), &ctx, &manifest)
+            .unwrap_err()
+            .code(),
+        "RESOLUTION_HISTORY_REQUIRED"
+    );
+    let mut forged = envelope.clone();
+    forged["history"]["tickets"][0]["totalCents"] = json!("99999");
+    assert!(cut::stage_resolution_history(w.connection(), &ctx, &forged).is_err());
+    cut::stage_resolution_history(w.connection(), &ctx, &envelope).unwrap();
+    cut::stage_resolution_history(w.connection(), &ctx, &envelope).unwrap();
+    assert_eq!(
+        transition::history(w.connection(), &ctx, "", None, None, None, 1).unwrap()["total"],
+        "0"
+    );
+    cut::activate_resolution_history(w.connection(), &ctx, &manifest).unwrap();
+    assert_eq!(
+        transition::history(w.connection(), &ctx, "", None, None, None, 1).unwrap()["total"],
+        "1"
+    );
+    assert_eq!(
+        transition::ticket(w.connection(), &ctx, "preserved-only").unwrap()["business"]["name"],
+        "Nombre original"
+    );
+    let mut wrong = ctx.clone();
+    wrong.branch_id = Some(uuid::Uuid::new_v4().to_string());
+    wrong.scope_type = "BRANCH".into();
+    assert!(cut::stage_resolution_history(w.connection(), &wrong, &envelope).is_err());
+    assert_eq!(
+        transition::history(w.connection(), &wrong, "", None, None, None, 1).unwrap()["total"],
+        "0"
+    );
+    drop(w);
+    let mut w = VaultWriter::open_encrypted(&dir, &CipherKey::new([119; 32])).unwrap();
+    assert_eq!(
+        transition::ticket(w.connection(), &ctx, "preserved-only").unwrap()["totalCents"],
+        "1234"
+    );
+    for t in [
+        "operation_journal",
+        "outbox",
+        "offline_grants",
+        "sale_cash_entries_v1",
+    ] {
+        assert_eq!(
+            w.connection()
+                .query_row::<i64, _, _>(&format!("SELECT count(*) FROM {t}"), [], |r| r.get(0))
+                .unwrap(),
+            0
+        );
+    }
+}
+#[test]
+fn resolution_transport_parts_preserve_unicode_bytes_and_never_split_a_character() {
+    let raw = "🧾áñ".repeat(180000);
+    let parts = cut::resolution_upload_parts(&raw).unwrap();
+    assert!(parts.len() > 1);
+    assert!(parts.iter().all(|p| p.len() <= 524288));
+    assert_eq!(parts.concat(), raw);
+    assert_eq!(
+        cut::resolution_part_hash(&parts.concat()),
+        cut::resolution_part_hash(&raw)
+    );
+    assert!(cut::resolution_upload_parts("").is_err());
+}
+#[test]
+#[ignore = "requires explicit isolated PostgreSQL resolution fixture"]
+fn postgres_resolution_prepares_exact_wire_with_current_counts_and_original_history() {
+    let fixture: Value = serde_json::from_str(
+        &std::fs::read_to_string(std::env::var("VENTARD_RESOLUTION_PG_FIXTURE").unwrap()).unwrap(),
+    )
+    .unwrap();
+    let ctx: CatalogueContext =
+        serde_json::from_value(fixture["capture"]["context"].clone()).unwrap();
+    let (dir, mut w) = create();
+    let capture = fixture["capture"]["captureId"].as_str().unwrap();
+    transition::store_capture(
+        w.connection(),
+        &ctx,
+        capture,
+        &fixture["capture"].to_string(),
+    )
+    .unwrap();
+    let mut data = serde_json::Map::new();
+    for table in fixture["plan"]["reconciliation"]["rows"]
+        .as_array()
+        .unwrap()
+    {
+        data.insert(
+            table["name"].as_str().unwrap().into(),
+            table["rows"].clone(),
+        );
+    }
+    let browser = browser_copy(&mut w, Value::Object(data));
+    let mut i = input();
+    transition::prepare(
+        w.connection(),
+        &ctx,
+        &i.run_id,
+        &[browser],
+        Some(capture),
+        "1791700000000",
+    )
+    .unwrap();
+    cut::store_resolution_basis(w.connection(), &ctx, &i.run_id, 0, &fixture["basis"]).unwrap();
+    let review = cut::SelectedReview {
+        run_id: i.run_id.clone(),
+        revision: 1,
+        decisions: vec![],
+        stock_counts: serde_json::from_value(
+            fixture["plan"]["reconciliation"]["stockCounts"].clone(),
+        )
+        .unwrap(),
+        debt_balances: serde_json::from_value(
+            fixture["plan"]["reconciliation"]["debtBalances"].clone(),
+        )
+        .unwrap(),
+        reason: "PG aislado: conteo físico y deuda confirmados con documentos originales".into(),
+        confirmation: "RECONCILE_SELECTED_DOCUMENTS_AND_PRESENT_BALANCES".into(),
+    };
+    cut::review_selected(w.connection(), &ctx, &review).unwrap();
+    i.revision = 2;
+    i.reconcile_selected = Some(true);
+    i.service_reservations_confirmed = Some(true);
+    i.legacy_cash_history_confirmed = Some(true);
+    verified_backup(&mut w, &dir, &ctx, &i);
+    let p = cut::prepare(w.connection(), &ctx, &i, "1791700000100").unwrap();
+    std::fs::write(
+        std::env::var("VENTARD_RESOLUTION_NATIVE_WIRE").unwrap(),
+        json!({"intent":p.intent,"hash":p.hash,"directory":dir}).to_string(),
+    )
+    .unwrap();
+}
+#[test]
+#[ignore = "requires actual Rust intent accepted by isolated PostgreSQL"]
+fn postgres_resolution_receipt_activates_exact_balances_services_and_historical_ticket_without_replay(
+) {
+    let wire: Value = serde_json::from_str(
+        &std::fs::read_to_string(std::env::var("VENTARD_RESOLUTION_NATIVE_WIRE").unwrap()).unwrap(),
+    )
+    .unwrap();
+    let packet: Value = serde_json::from_str(
+        &std::fs::read_to_string(std::env::var("VENTARD_RESOLUTION_NATIVE_RECEIPT").unwrap())
+            .unwrap(),
+    )
+    .unwrap();
+    let ctx: CatalogueContext =
+        serde_json::from_value(packet["receipt"]["context"].clone()).unwrap();
+    let path = std::path::PathBuf::from(wire["directory"].as_str().unwrap());
+    assert_eq!(path.parent().unwrap(), std::env::temp_dir());
+    assert!(path
+        .file_name()
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .starts_with("ventard-cutover-fixture-"));
+    let mut w = VaultWriter::open_encrypted(&path, &CipherKey::new([119; 32])).unwrap();
+    let id = packet["receipt"]["cutoverId"].as_str().unwrap();
+    cut::accept(w.connection(), &ctx, id, &packet["receipt"]).unwrap();
+    use ventard_core::application::sales_sync as sync;
+    let now = packet["manifest"]["capturedAtMs"]
+        .as_str()
+        .unwrap()
+        .parse::<u64>()
+        .unwrap();
+    sync::begin_bootstrap(w.connection(), &ctx, &packet["manifest"], now).unwrap();
+    for (index, page) in packet["pages"].as_array().unwrap().iter().enumerate() {
+        sync::stage_bootstrap_page(w.connection(), &ctx, index, page.as_str().unwrap(), now)
+            .unwrap();
+    }
+    let vault = "96000016-0000-4000-8000-000000000005";
+    assert!(sync::activate_bootstrap(w.connection(), &ctx, now, vault).is_err());
+    assert!(!sync::operational(w.connection(), &ctx).unwrap());
+    assert_eq!(
+        w.connection()
+            .query_row::<i64, _, _>("SELECT count(*) FROM products", [], |r| r.get(0))
+            .unwrap(),
+        0
+    );
+    cut::stage_resolution_history(w.connection(), &ctx, &packet["history"]).unwrap();
+    sync::activate_bootstrap(w.connection(), &ctx, now, vault).unwrap();
+    assert_eq!(
+        cut::mark_active(w.connection(), &ctx, id).unwrap()["state"],
+        "ACTIVE"
+    );
+    let actual = sync::read(w.connection(), &ctx).unwrap();
+    assert_eq!(actual["products"][0]["stock"], "97");
+    assert_eq!(actual["customers"][0]["balanceCents"], "800");
+    assert_eq!(actual["confirmedSales"], "0");
+    assert_eq!(actual["pendingOperations"], "0");
+    let history = transition::history(w.connection(), &ctx, "", None, None, None, 1).unwrap();
+    assert_eq!(history["total"], "1");
+    let old = history["rows"][0]["id"].as_str().unwrap();
+    assert_eq!(
+        transition::ticket(w.connection(), &ctx, old).unwrap()["totalCents"],
+        "1025"
+    );
+    assert_eq!(
+        packet["manifest"]["legacyServices"][0]["document"]["paidCents"],
+        "300"
+    );
+    assert_eq!(
+        w.connection()
+            .query_row::<i64, _, _>("SELECT count(*) FROM operation_journal", [], |r| r.get(0))
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        w.connection()
+            .query_row::<i64, _, _>("SELECT count(*) FROM outbox", [], |r| r.get(0))
+            .unwrap(),
+        0
+    );
+}
+#[test]
 fn divergent_history_can_use_reviewed_cloud_baseline_without_replaying_or_erasing_it() {
     let (dir, mut w) = create();
     let ctx = context();
@@ -114,7 +641,7 @@ fn divergent_history_can_use_reviewed_cloud_baseline_without_replaying_or_erasin
         w.connection(),
         &ctx,
         &run,
-        &[browser.clone()],
+        std::slice::from_ref(&browser),
         Some("96000016-0000-4000-8000-000000000001"),
         "2000",
     )

@@ -725,8 +725,17 @@ fn checkouts(
     }
     Ok(out)
 }
-fn recompute(c: &Connection, ctx: &CatalogueContext, run: &str) -> Result<(), Error> {
-    let data = selected(c, run)?;
+pub(crate) fn analyze(
+    c: &Connection,
+    ctx: &CatalogueContext,
+    run: &str,
+    override_data: Option<BTreeMap<String, Vec<Value>>>,
+) -> Result<Value, Error> {
+    authorize(c, ctx, run)?;
+    let data = match override_data {
+        Some(data) => data,
+        None => selected(c, run)?,
+    };
     let checkouts = checkouts(c, ctx, run, &data)?;
     let (revision, published, sources): (i64, i64, String) = c.query_row(
         "SELECT revision,history_published,sources FROM legacy_transition_runs_v1 WHERE run_id=?1",
@@ -1168,15 +1177,17 @@ fn recompute(c: &Connection, ctx: &CatalogueContext, run: &str) -> Result<(), Er
         });
     let debt_rows=debts.into_iter().map(|(id,balance)|{let incomplete=ledger_incomplete||debt_unknown.contains(&id);json!({"customerId":id,"name":all(data,"clientes").iter().find(|c|c["id"]==id).and_then(|c|c["nombre"].as_str()),"balanceCents":if incomplete{None}else{Some(balance.to_string())},"observedBalanceCents":balance.to_string(),"coverage":if incomplete{"INCOMPLETE_SELECTED_LEDGER"}else{"SELECTED_SCOPED_LEDGER"}})}).collect::<Vec<_>>();
     let report = json!({"runId":run,"revision":revision,"historyPublished":published==1,"createdAtMs":c.query_row("SELECT created_at_ms FROM legacy_transition_runs_v1 WHERE run_id=?1",[run],|r|r.get::<_,String>(0))?,"sources":manifest,"counts":counts,"conflicts":conflicts,"issues":issues,"sales":{"totalCents":if valid_sales{Some(sold.to_string())}else{None},"byMethodCents":by_method.into_iter().map(|(k,v)|(k,v.to_string())).collect::<BTreeMap<_,_>>()},"debts":debt_rows,"cash":cash,"payments":payments,"cloudCoverage":if cloud{"SCOPE_COMPLETE_SINGLE_SNAPSHOT"}else{"BROWSER_COPIES_ONLY"},"effectStatus":"UNKNOWN_LEGACY","canActivate":false});
+    let mut report = report;
+    report["localCheckoutProofs"] =
+        json!(checkouts.values().map(|s| s.proof()).collect::<Vec<_>>());
+    report["documentConflicts"] = json!(document_conflicts);
+    Ok(report)
+}
+fn recompute(c: &Connection, ctx: &CatalogueContext, run: &str) -> Result<(), Error> {
+    let value = analyze(c, ctx, run, None)?;
     c.execute(
         "UPDATE legacy_transition_runs_v1 SET report=?2 WHERE run_id=?1",
-        (run, {
-            let mut report = report;
-            report["localCheckoutProofs"] =
-                json!(checkouts.values().map(|s| s.proof()).collect::<Vec<_>>());
-            report["documentConflicts"] = json!(document_conflicts);
-            report.to_string()
-        }),
+        (run, value.to_string()),
     )?;
     Ok(())
 }
@@ -1482,7 +1493,7 @@ pub fn publish_history(
     tx.commit()?;
     report(c, ctx, run)
 }
-fn history_data(
+pub(crate) fn history_data(
     c: &Connection,
     ctx: &CatalogueContext,
 ) -> Result<Option<BTreeMap<String, Vec<Value>>>, Error> {
@@ -1498,7 +1509,21 @@ fn history_data(
             |r| r.get(0),
         )
         .optional()?;
-    run.map(|id| selected(c, &id)).transpose()
+    let mut data = run.map(|id| selected(c, &id)).transpose()?;
+    if let Some(remote) =
+        super::legacy_cutover::resolution_history_data(c, ctx).map_err(|_| invalid())?
+    {
+        let merged = data.get_or_insert_with(BTreeMap::new);
+        for (table, rows) in remote {
+            let current = merged.entry(table).or_default();
+            for row in rows {
+                if !current.iter().any(|r| r["id"] == row["id"]) {
+                    current.push(row);
+                }
+            }
+        }
+    }
+    Ok(data)
 }
 fn active_run(c: &Connection, ctx: &CatalogueContext) -> Result<Option<String>, Error> {
     encode(ctx)?;
@@ -1615,7 +1640,27 @@ pub fn ticket(c: &Connection, ctx: &CatalogueContext, id: &str) -> Result<Value,
         .map(|run| checkouts(c, ctx, &run, &data))
         .transpose()?
         .unwrap_or_default();
-    let r = all(&data, "ventas")
+    project_ticket(c, ctx, &data, &checkouts, id)
+}
+pub(crate) fn run_ticket(
+    c: &Connection,
+    ctx: &CatalogueContext,
+    run: &str,
+    id: &str,
+) -> Result<Value, Error> {
+    authorize(c, ctx, run)?;
+    let data = selected(c, run)?;
+    let proofs = checkouts(c, ctx, run, &data)?;
+    project_ticket(c, ctx, &data, &proofs, id)
+}
+fn project_ticket(
+    c: &Connection,
+    ctx: &CatalogueContext,
+    data: &BTreeMap<String, Vec<Value>>,
+    checkouts: &BTreeMap<String, super::legacy_checkout::Snapshot>,
+    id: &str,
+) -> Result<Value, Error> {
+    let r = all(data, "ventas")
         .iter()
         .find(|r| {
             r["id"] == id
@@ -1624,7 +1669,16 @@ pub fn ticket(c: &Connection, ctx: &CatalogueContext, id: &str) -> Result<Value,
                     || checkouts.get(id).is_some_and(|s| s.in_scope(ctx)))
         })
         .ok_or_else(invalid)?;
-    let lines=all(&data,"venta_detalles").iter().filter(|l|l["venta_id"]==id&&l["negocio_id"]==ctx.tenant_id).map(|l|json!({"id":l["id"],"name":l["nombre"],"quantity":l.get("cantidad").and_then(number),"unitPriceCents":l.get("precio_unitario").and_then(cents).map(|n|n.to_string()),"subtotalCents":l.get("subtotal").and_then(cents).map(|n|n.to_string())})).collect::<Vec<_>>();
+    if !checkouts.contains_key(id) {
+        if let Some(saved) =
+            super::legacy_cutover::resolution_history_ticket(c, ctx, id).map_err(|_| invalid())?
+        {
+            if saved["totalCents"] == json!(r.get("total").and_then(cents).map(|n| n.to_string())) {
+                return Ok(saved);
+            }
+        }
+    }
+    let lines=all(data,"venta_detalles").iter().filter(|l|l["venta_id"]==id&&l["negocio_id"]==ctx.tenant_id).map(|l|json!({"id":l["id"],"name":l["nombre"],"quantity":l.get("cantidad").and_then(number),"unitPriceCents":l.get("precio_unitario").and_then(cents).map(|n|n.to_string()),"subtotalCents":l.get("subtotal").and_then(cents).map(|n|n.to_string())})).collect::<Vec<_>>();
     let mut ticket = json!({"id":id,"ticket":ticket_number(r),"ncf":r["ncf"],"dateMs":r.get("fecha_creacion").and_then(exact_int).map(|n|n.to_string()),"customerName":r["cliente_nombre"],"actorName":r["vendedor_nombre"],"method":r["metodo_pago"],"totalCents":r.get("total").and_then(cents).map(|n|n.to_string()),"subtotalCents":r.get("subtotal").and_then(cents).map(|n|n.to_string()),"itbisCents":r.get("itbis").and_then(cents).map(|n|n.to_string()),"discountCents":r.get("descuento").and_then(cents).map(|n|n.to_string()),"receivedCents":null,"changeCents":null,"business":null,"lines":lines,"coverage":"PRESERVED_LEGACY_FIELDS","effectStatus":"UNKNOWN_LEGACY"});
     if let Some(s) = checkouts.get(id) {
         let invoice = &s.invoice;

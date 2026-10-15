@@ -93,7 +93,7 @@ fn schema_23_upgrade_preserves_frozen_plan_and_existing_row_checkpoints() {
         w.connection()
             .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
             .unwrap(),
-        32
+        34
     );
 }
 #[test]

@@ -542,6 +542,13 @@ impl AccessState {
                 .map_err(|e| error(e.code()))?;
             m
         };
+        if let Some(meta)=m.get("legacyResolutionHistory").filter(|v|!v.is_null()) {
+            let raw=self.transition_rpc(&ctx,"native_web_resolution_history_v1",json!({"p_context":ctx,"p_cutover_id":meta["cutoverId"]}))?;
+            let envelope:Value=serde_json::from_str(&raw).map_err(|_|error("RESOLUTION_HISTORY_INVALID"))?;
+            if envelope["historyHash"]!=meta["sha256"] {return Err(error("RESOLUTION_HISTORY_INVALID"));}
+            self.sales_current(&n)?;let x=ctx.clone();
+            n.writer.call(move|c|Ok(ventard_core::storage::legacy_cutover::stage_resolution_history(c,&x,&envelope))).map_err(|e|error(e.code()))?.map_err(|e|error(e.code()))?;
+        }
         let x = ctx.clone();
         let missing = n
             .writer

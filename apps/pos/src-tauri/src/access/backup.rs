@@ -61,6 +61,10 @@ pub enum Action {
     TransitionBaselineReview {
         input: ventard_core::storage::legacy_cutover::BaselineDecision,
     },
+    TransitionResolutionBasis {run_id:String,revision:u32},
+    TransitionResolutionView {run_id:String,page:u32},
+    TransitionResolutionPreview {run_id:String,page:u32,decisions:Vec<ventard_core::storage::legacy_cutover::RowDisposition>},
+    TransitionSelectedReview {input:ventard_core::storage::legacy_cutover::SelectedReview},
     TransitionCutover {
         input: ventard_core::storage::legacy_cutover::Input,
     },
@@ -413,6 +417,10 @@ v["mode"] = json!("recovery-readonly");
                 | Action::TransitionCutoverView { .. }
                 | Action::TransitionDifferences { .. }
                 | Action::TransitionBaselineReview { .. }
+                | Action::TransitionResolutionBasis { .. }
+                | Action::TransitionResolutionView { .. }
+                | Action::TransitionResolutionPreview { .. }
+                | Action::TransitionSelectedReview { .. }
                 | Action::TransitionCutover { .. }
                 | Action::TransitionCutoverRecover { .. }
                 | Action::TransitionCutoverAbandon { .. }

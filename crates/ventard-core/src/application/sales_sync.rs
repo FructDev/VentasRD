@@ -396,6 +396,8 @@ pub fn activate_bootstrap(
         ),
     )?;
     crate::storage::legacy_services::import(&tx, ctx, &m["legacyServices"])?;
+    crate::storage::legacy_cutover::activate_resolution_history(&tx, ctx, &m)
+        .map_err(|e| AppError::Storage(e.code().into()))?;
     let mut seen = HashSet::new();
     let mut rows = vec![];
     for i in 0..array(&m["pages"])?.len() {
