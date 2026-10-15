@@ -157,6 +157,17 @@ impl AccessState {
     }
     pub(super) fn transition_action(&self, action: backup::Action) -> Result<Value, AccessError> {
         match action {
+            backup::Action::TransitionDifferences { run_id, page } => {
+                id(&run_id)?;
+                self.cutover_owned(move |c,ctx| cut::differences(c,&ctx,&run_id,page))
+            }
+            backup::Action::TransitionBaselineReview { input } => {
+                id(&input.run_id)?;
+                self.cutover_owned(move |c,ctx| {
+                    cut::review_baseline(c,&ctx,&input)?;
+                    Ok(core::report(c,&ctx,&input.run_id)?)
+                })
+            }
             backup::Action::TransitionCutoverView { run_id } => {
                 id(&run_id)?;
                 self.cutover_owned(move|c,ctx|{let mut value=cut::readiness(c,&ctx,&run_id)?;value["pending"]=cut::view(c,&ctx)?;
@@ -366,6 +377,8 @@ mod tests {
         let state = AccessState::new(std::env::temp_dir().join("unused-transition-fixture"));
         for action in [
             backup::Action::TransitionView {},
+            backup::Action::TransitionDifferences {run_id:TENANTS[0].into(),page:0},
+            backup::Action::TransitionBaselineReview { input:cut::BaselineDecision {run_id:TENANTS[0].into(),revision:0,difference_hash:"a".repeat(64),reason:"Revisión sintética de las copias".into(),confirmation:"USE_CLOUD_BASELINE_PRESERVE_HISTORY".into()} },
             backup::Action::TransitionCutoverView {
                 run_id: TENANTS[0].into(),
             },

@@ -230,7 +230,7 @@ const messages: Record<string, string> = {
   CUTOVER_BACKUP_REQUIRED:'Crea y verifica un respaldo nuevo después de incorporar esta conciliación. El respaldo anterior no contiene exactamente sus decisiones.',
   CUTOVER_REVIEW_REQUIRED:'Publica la historia y resuelve las observaciones antes de activar el negocio.',
   CUTOVER_CLOUD_REQUIRED:'Falta la captura completa de nube para el corte operativo.',
-  CUTOVER_COPIES_NOT_CONVERGED:'Hay datos elegidos que todavía difieren de la nube. Completa su conciliación; no se volverán a enviar ventas antiguas automáticamente.',
+  CUTOVER_COPIES_NOT_CONVERGED:'Hay diferencias entre el historial conservado y la nube. Revisa ambas versiones y decide la base operativa en esta sección; las ventas antiguas no se reenvían automáticamente.',
   CUTOVER_SOURCE_CHANGED:'La nube cambió después de la captura. Captura y concilia de nuevo antes de hacer el corte.',
   CUTOVER_CLOSE_WEB_CASH:'Cierra la caja en la versión web y captura su estado final antes del corte. Se conserva su historia y arqueo.',
   CUTOVER_CASH_HISTORY_CONFIRMATION_REQUIRED:'Revisa y confirma la conservación histórica de las ventas antiguas sin caja. Sus cobros no se repetirán ni se reconstruirá una caja.',
@@ -375,6 +375,8 @@ export const backupPort={
  recoveryOpen:(recoveryId:string)=>call('native_backup',{command:{action:'RECOVERY_OPEN',recoveryId}}),
  transitionView:()=>call<{report:TransitionReport|null;capture:{captureId:string;capturedAtMs:string}|null}>('native_backup',{command:{action:'TRANSITION_VIEW'}}),
  transitionCutoverView:(runId:string)=>call<CutoverView>('native_backup',{command:{action:'TRANSITION_CUTOVER_VIEW',runId}}),
+ transitionDifferences:(runId:string,page:number)=>call<TransitionDifferences>('native_backup',{command:{action:'TRANSITION_DIFFERENCES',runId,page}}),
+ transitionBaselineReview:(input:BaselineDecision)=>call<TransitionReport>('native_backup',{command:{action:'TRANSITION_BASELINE_REVIEW',input}}),
  transitionCutover:(input:CutoverInput)=>call<CutoverStatus>('native_backup',{command:{action:'TRANSITION_CUTOVER',input}}),
  transitionCutoverRecover:(cutoverId:string)=>call<CutoverStatus>('native_backup',{command:{action:'TRANSITION_CUTOVER_RECOVER',cutoverId}}),
  transitionCutoverAbandon:(cutoverId:string)=>call<CutoverStatus>('native_backup',{command:{action:'TRANSITION_CUTOVER_ABANDON',cutoverId}}),
@@ -416,6 +418,8 @@ export const backupPort={
  reportExport:(kind:import('./management').ExportKind,fromMs:string,toMs:string)=>call<import('./management').ReportBundle>('native_backup',{command:{action:'REPORT_EXPORT',kind,fromMs,toMs}}),
 };
 export interface TransitionReport {runId:string;revision:number;historyPublished:boolean;createdAtMs:string;sources:{id:string;kind:'BROWSER'|'CLOUD';sha256:string}[];counts:Record<string,number>;conflicts:number;issues:{code:string;table:string;id:string;field:string}[];sales:{totalCents:string|null;byMethodCents:Record<string,string>};debts:{customerId:string;name:string|null;balanceCents:string|null;observedBalanceCents:string;coverage:string}[];cash:{id:string;state:string|null;openingCents:string|null;movementsCents:string;expectedCents:string|null;observedExpectedCents:string|null;coverage:string}[];payments:{id:string;table:string;documentId:string;montoCents:string;method:string|null;cajaId:string|null}[];cloudCoverage:string;effectStatus:'UNKNOWN_LEGACY';canActivate:false}
+export interface BaselineDecision {runId:string;revision:number;differenceHash:string;reason:string;confirmation:'USE_CLOUD_BASELINE_PRESERVE_HISTORY'}
+export interface TransitionDifferences {runId:string;revision:number;captureId:string;differenceHash:string;reviewed:boolean;decision?:{reason:string;actorId:string}|null;total:number;counts:Record<string,number>;page:number;rows:{table:string;id:string;preserved:Record<string,unknown>|null;cloud:Record<string,unknown>|null}[]}
 export interface CutoverInput {cutoverId:string;runId:string;revision:number;backupId:string;confirmation:'WEB_WRITERS_CLOSED_BALANCES_REVIEWED';freeTax:'0'|'0.18';serviceReservationsConfirmed?:boolean;legacyCashHistoryConfirmed?:boolean}
 export interface CutoverStatus {cutoverId:string;runId:string;backupId:string;state:'UNKNOWN'|'ADOPTED'|'ACTIVE'|'ABANDONED'}
 export interface CutoverView {legacyCashHistoryWarnings?:{code:string;id:string;table:string}[];serviceHistoryWarnings?:{code:string;id:string;table:string}[];services?:{table:string;id:string;folio:string}[];runId:string;revision:number;canPrepare:boolean;blockers:{code:string;id?:string;table?:string}[];pending:CutoverStatus|null;backups:string[];coverage:string;legacyReplay:false}

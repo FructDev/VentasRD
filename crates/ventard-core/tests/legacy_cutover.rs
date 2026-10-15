@@ -75,6 +75,219 @@ fn input() -> cut::Input {
         legacy_cash_history_confirmed: None,
     }
 }
+fn browser_copy(w: &mut VaultWriter, data: Value) -> String {
+    use sha2::{Digest, Sha256};
+    use ventard_core::storage::legacy_web;
+    let original = legacy_web::decrypt(
+        include_bytes!("fixtures/legacy-web-v1.vrweb"),
+        include_bytes!("fixtures/legacy-web-v1.vrwebkey"),
+    )
+    .unwrap();
+    let mut p: Value = serde_json::from_str(original.raw_body()).unwrap();
+    let id = uuid::Uuid::new_v4().to_string();
+    p["exportId"] = json!(id);
+    for table in p["tables"].as_array_mut().unwrap() {
+        let rows = data
+            .get(table["name"].as_str().unwrap())
+            .cloned()
+            .unwrap_or(json!([]));
+        let raw = rows.to_string();
+        table["rowsJson"] = json!(raw);
+        table["count"] = json!(rows.as_array().unwrap().len());
+        table["sha256"] = json!(format!("{:x}", Sha256::digest(raw.as_bytes())));
+    }
+    let package = legacy_web::parse(p.to_string()).unwrap();
+    legacy_web::store(w.connection(), &context().tenant_id, &package).unwrap();
+    id
+}
+#[test]
+fn divergent_history_can_use_reviewed_cloud_baseline_without_replaying_or_erasing_it() {
+    let (dir, mut w) = create();
+    let ctx = context();
+    sources(&mut w, json!({}));
+    let browser = browser_copy(
+        &mut w,
+        json!({"ventas":[{"id":"browser-sale","negocio_id":ctx.tenant_id,"sucursal_id":null,"total":10,"metodo_pago":"tarjeta","fecha":1000}],"venta_detalles":[{"id":"browser-detail","negocio_id":ctx.tenant_id,"sucursal_id":null,"venta_id":"browser-sale","producto_id":null,"producto_nombre":"Libre QA","cantidad":1,"precio_unitario":10,"subtotal":10}]}),
+    );
+    let run = uuid::Uuid::new_v4().to_string();
+    transition::prepare(
+        w.connection(),
+        &ctx,
+        &run,
+        &[browser.clone()],
+        Some("96000016-0000-4000-8000-000000000001"),
+        "2000",
+    )
+    .unwrap();
+    transition::publish_history(w.connection(), &ctx, &run, 0).unwrap();
+    let comparison = cut::differences(w.connection(), &ctx, &run, 0).unwrap();
+    assert_eq!(comparison["total"], 2);
+    assert_eq!(comparison["rows"][1]["id"], "browser-sale");
+    assert_eq!(comparison["rows"][1]["cloud"], Value::Null);
+    assert_eq!(
+        cut::readiness(w.connection(), &ctx, &run).unwrap()["canPrepare"],
+        false
+    );
+    let d = cut::BaselineDecision {
+        run_id: run.clone(),
+        revision: 0,
+        difference_hash: comparison["differenceHash"].as_str().unwrap().into(),
+        reason: "Revisé saldo y stock actual, conservar copia histórica sin aplicar sus efectos"
+            .into(),
+        confirmation: "USE_CLOUD_BASELINE_PRESERVE_HISTORY".into(),
+    };
+    let mut i = input();
+    i.run_id = run.clone();
+    verified_backup(&mut w, &dir, &ctx, &i);
+    let before = cut::fingerprints(w.connection()).unwrap()[&run].clone();
+    let mut wrong = ctx.clone();
+    wrong.actor_id = uuid::Uuid::new_v4().to_string();
+    assert!(cut::review_baseline(w.connection(), &wrong, &d).is_err());
+    let mut stale = d.clone();
+    stale.difference_hash = "0".repeat(64);
+    assert!(cut::review_baseline(w.connection(), &ctx, &stale).is_err());
+    w.connection().execute_batch("CREATE TRIGGER review_fault BEFORE UPDATE ON legacy_transition_runs_v1 BEGIN SELECT RAISE(ABORT,'fixture');END;").unwrap();
+    assert!(cut::review_baseline(w.connection(), &ctx, &d).is_err());
+    assert_eq!(
+        transition::report(w.connection(), &ctx, &run).unwrap()["revision"],
+        0
+    );
+    assert_eq!(
+        w.connection()
+            .query_row::<i64, _, _>(
+                "SELECT count(*) FROM legacy_transition_decisions_v1",
+                [],
+                |r| r.get(0)
+            )
+            .unwrap(),
+        0
+    );
+    w.connection()
+        .execute_batch("DROP TRIGGER review_fault")
+        .unwrap();
+    let reviewed = cut::review_baseline(w.connection(), &ctx, &d).unwrap();
+    assert_eq!(reviewed["canPrepare"], true);
+    assert_eq!(reviewed["revision"], 1);
+    assert_eq!(
+        cut::review_baseline(w.connection(), &ctx, &d).unwrap(),
+        reviewed
+    );
+    assert_ne!(cut::fingerprints(w.connection()).unwrap()[&run], before);
+    let mut changed = d.clone();
+    changed.reason.push_str(" distinto");
+    assert!(cut::review_baseline(w.connection(), &ctx, &changed).is_err());
+    i.revision = 1;
+    assert_eq!(
+        cut::prepare(w.connection(), &ctx, &i, "3000")
+            .unwrap_err()
+            .code(),
+        "CUTOVER_BACKUP_REQUIRED"
+    );
+    i.backup_id = uuid::Uuid::new_v4().to_string();
+    let after_review = dir.join("after-review");
+    std::fs::create_dir(&after_review).unwrap();
+    verified_backup(&mut w, &after_review, &ctx, &i);
+    let p = cut::prepare(w.connection(), &ctx, &i, "3000").unwrap();
+    let wire: Value = serde_json::from_str(&p.intent).unwrap();
+    assert!(wire["tables"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|t| t["count"] == 0));
+    assert_eq!(
+        transition::history(w.connection(), &ctx, "", None, None, None, 1).unwrap()["total"],
+        "1"
+    );
+    assert_eq!(
+        transition::report(w.connection(), &ctx, &run).unwrap()["effectStatus"],
+        "UNKNOWN_LEGACY"
+    );
+    for t in [
+        "outbox",
+        "operation_journal",
+        "inventory_movements",
+        "sale_cash_entries_v1",
+    ] {
+        assert_eq!(
+            w.connection()
+                .query_row::<i64, _, _>(&format!("SELECT count(*) FROM {t}"), [], |r| r.get(0))
+                .unwrap(),
+            0
+        );
+    }
+    drop(w);
+    let mut w = VaultWriter::open_encrypted(&dir, &CipherKey::new([119; 32])).unwrap();
+    assert_eq!(
+        cut::load(w.connection(), &ctx, &i.cutover_id).unwrap().hash,
+        p.hash
+    );
+    assert!(cut::review_baseline(w.connection(), &ctx, &d).is_ok());
+    assert_eq!(
+        ventard_core::storage::legacy_web::rows(
+            w.connection(),
+            &ctx.tenant_id,
+            &browser,
+            "ventas",
+            0
+        )
+        .unwrap()["rows"][0]["id"],
+        "browser-sale"
+    );
+}
+#[test]
+fn reviewed_difference_never_overrides_invalid_money_or_active_service_version() {
+    for (table, row, code) in [
+        (
+            "ventas",
+            json!({"id":"invalid-sale","negocio_id":context().tenant_id,"sucursal_id":null,"total":-1,"metodo_pago":"tarjeta"}),
+            "INVALID_MONEY",
+        ),
+        (
+            "reparaciones",
+            json!({"id":"96000016-0000-4000-8000-000000000099","negocio_id":context().tenant_id,"sucursal_id":null,"estado":"pendiente"}),
+            "CUTOVER_SERVICE_BASELINE_CONFLICT",
+        ),
+        (
+            "cajas",
+            json!({"id":"browser-open-turn","negocio_id":context().tenant_id,"sucursal_id":null,"estado":"abierta","monto_apertura":10}),
+            "CUTOVER_CLOSE_WEB_CASH",
+        ),
+    ] {
+        let (_, mut w) = create();
+        let ctx = context();
+        sources(&mut w, json!({}));
+        let copy = browser_copy(&mut w, json!({table:[row]}));
+        let run = uuid::Uuid::new_v4().to_string();
+        transition::prepare(
+            w.connection(),
+            &ctx,
+            &run,
+            &[copy],
+            Some("96000016-0000-4000-8000-000000000001"),
+            "2000",
+        )
+        .unwrap();
+        transition::publish_history(w.connection(), &ctx, &run, 0).unwrap();
+        let diff = cut::differences(w.connection(), &ctx, &run, 0).unwrap();
+        let d = cut::BaselineDecision {
+            run_id: run.clone(),
+            revision: 0,
+            difference_hash: diff["differenceHash"].as_str().unwrap().into(),
+            reason: "Revisión de la base actual sintética".into(),
+            confirmation: "USE_CLOUD_BASELINE_PRESERVE_HISTORY".into(),
+        };
+        let ready = cut::review_baseline(w.connection(), &ctx, &d).unwrap();
+        assert_eq!(ready["canPrepare"], false);
+        assert!(
+            ready["blockers"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|v| v["code"] == code),
+            "{ready}"
+        );
+    }
+}
 fn sources(w: &mut VaultWriter, data: Value) {
     let ctx = context();
     let capture = "96000016-0000-4000-8000-000000000001";
@@ -402,19 +615,43 @@ fn postgres_capture_prepares_native_wire_with_real_verified_backup() {
     .unwrap();
     let ctx: CatalogueContext = serde_json::from_value(v["capture"]["context"].clone()).unwrap();
     let (dir, mut w) = create();
-    let i = input();
+    let mut i = input();
     let cid = v["capture"]["captureId"].as_str().unwrap();
     transition::store_capture(w.connection(), &ctx, cid, &v["capture"].to_string()).unwrap();
+    let copies = if std::env::var("VENTARD_CUTOVER_DIVERGENT").as_deref() == Ok("1") {
+        vec![browser_copy(
+            &mut w,
+            json!({"ventas":[{"id":"browser-only-sale","negocio_id":ctx.tenant_id,"sucursal_id":ctx.branch_id,"total":10,"metodo_pago":"tarjeta","fecha":1000}],"venta_detalles":[{"id":"browser-only-line","negocio_id":ctx.tenant_id,"sucursal_id":ctx.branch_id,"venta_id":"browser-only-sale","producto_id":null,"producto_nombre":"Libre QA","cantidad":1,"precio_unitario":10,"subtotal":10}]}),
+        )]
+    } else {
+        vec![]
+    };
     transition::prepare(
         w.connection(),
         &ctx,
         &i.run_id,
-        &[],
+        &copies,
         Some(cid),
         "1791909600000",
     )
     .unwrap();
     transition::publish_history(w.connection(), &ctx, &i.run_id, 0).unwrap();
+    if !copies.is_empty() {
+        let diff = cut::differences(w.connection(), &ctx, &i.run_id, 0).unwrap();
+        cut::review_baseline(
+            w.connection(),
+            &ctx,
+            &cut::BaselineDecision {
+                run_id: i.run_id.clone(),
+                revision: 0,
+                difference_hash: diff["differenceHash"].as_str().unwrap().into(),
+                reason: "PG aislado: base nube revisada, copia exclusiva conservada".into(),
+                confirmation: "USE_CLOUD_BASELINE_PRESERVE_HISTORY".into(),
+            },
+        )
+        .unwrap();
+        i.revision = 1;
+    }
     let ready = cut::readiness(w.connection(), &ctx, &i.run_id).unwrap();
     assert_eq!(ready["blockers"], json!([]));
     verified_backup(&mut w, &dir, &ctx, &i);
@@ -479,6 +716,24 @@ fn postgres_receipt_activates_same_cutover_and_bootstrap_without_replaying_legac
     assert_eq!(snapshot["products"][0]["stock"], "100");
     assert_eq!(snapshot["confirmedSales"], "0");
     assert_eq!(snapshot["pendingOperations"], "0");
+    let plan: Value = serde_json::from_str(packet["intent"].as_str().unwrap()).unwrap();
+    if plan["sources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|s| s["kind"] == "BROWSER")
+    {
+        let preserved = transition::history(w.connection(), &ctx, "", None, None, None, 1).unwrap();
+        assert_eq!(preserved["total"], "1");
+        assert_eq!(preserved["rows"][0]["id"], "browser-only-sale");
+        assert_eq!(preserved["rows"][0]["effectStatus"], "UNKNOWN_LEGACY");
+        assert_eq!(
+            w.connection()
+                .query_row::<i64, _, _>("SELECT count(*) FROM outbox", [], |r| r.get(0))
+                .unwrap(),
+            0
+        );
+    }
     assert_eq!(
         cut::load(w.connection(), &ctx, id).unwrap().hash,
         receipt["planHash"]

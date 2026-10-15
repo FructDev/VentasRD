@@ -1,4 +1,4 @@
-//! Explicit adoption of a converged cloud baseline. Legacy intentions remain
+//! Explicit adoption of a reviewed cloud baseline. Legacy intentions remain
 //! preserved and never enter NATIVE1 outbox or acquire fabricated receipts.
 use super::{catalogue_preview::CatalogueContext, legacy_transition as transition};
 use crate::domain::canonical::canonicalize;
@@ -88,7 +88,13 @@ pub fn fingerprints(c: &Connection) -> Result<BTreeMap<String, String>, Error> {
     }
     Ok(out)
 }
-fn tables(c: &Connection, ctx: &CatalogueContext, run: &str) -> Result<Value, Error> {
+struct Comparison {
+    tables: Value,
+    rows: Vec<Value>,
+    capture_id: String,
+    difference_hash: String,
+}
+fn comparison(c: &Connection, ctx: &CatalogueContext, run: &str) -> Result<Comparison, Error> {
     let report = transition::report(c, ctx, run)?;
     let source = report["sources"]
         .as_array()
@@ -107,6 +113,7 @@ fn tables(c: &Connection, ctx: &CatalogueContext, run: &str) -> Result<Value, Er
     let cloud: Value = serde_json::from_str(&raw).map_err(|_| invalid())?;
     let data = transition::selected(c, run)?;
     let mut out = vec![];
+    let mut differences = vec![];
     for name in transition::CLOUD_TABLES {
         let rows = data
             .get(*name)
@@ -127,16 +134,150 @@ fn tables(c: &Connection, ctx: &CatalogueContext, run: &str) -> Result<Value, Er
             .map(|v| transition::normalize(v, 0).map_err(Error::from))
             .collect::<Result<Vec<_>, _>>()?;
         current.sort_by(|a, b| a["id"].as_str().cmp(&b["id"].as_str()));
-        if current != rows {
-            return Err(Error("CUTOVER_COPIES_NOT_CONVERGED"));
+        let chosen = rows
+            .iter()
+            .map(|r| (r["id"].as_str().unwrap_or(""), r))
+            .collect::<BTreeMap<_, _>>();
+        let remote = current
+            .iter()
+            .map(|r| (r["id"].as_str().unwrap_or(""), r))
+            .collect::<BTreeMap<_, _>>();
+        for id in chosen
+            .keys()
+            .chain(remote.keys())
+            .copied()
+            .collect::<std::collections::BTreeSet<_>>()
+        {
+            if chosen.get(id) != remote.get(id) {
+                differences.push(
+                    json!({"table":name,"id":id,"preserved":chosen.get(id),"cloud":remote.get(id)}),
+                );
+            }
         }
         let blocks = current
             .chunks(100)
             .map(|rows| canonical(&json!(rows)).map(|(_, h)| h))
             .collect::<Result<Vec<_>, _>>()?;
-        out.push(json!({"name":name,"count":rows.len(),"blocks":blocks}));
+        out.push(json!({"name":name,"count":current.len(),"blocks":blocks}));
     }
-    Ok(json!(out))
+    let capture_id = source["id"].as_str().ok_or_else(invalid)?.to_owned();
+    let (_, difference_hash) = canonical(&json!([capture_id, stored_hash, differences]))?;
+    Ok(Comparison {
+        tables: json!(out),
+        rows: differences,
+        capture_id,
+        difference_hash,
+    })
+}
+fn reviewed(
+    c: &Connection,
+    ctx: &CatalogueContext,
+    run: &str,
+    diff: &Comparison,
+) -> Result<bool, Error> {
+    let report = transition::report(c, ctx, run)?;
+    let saved = &report["cloudBaselineReview"];
+    if saved["differenceHash"] != diff.difference_hash || saved["captureId"] != diff.capture_id {
+        return Ok(false);
+    }
+    Ok(c.query_row("SELECT EXISTS(SELECT 1 FROM legacy_transition_decisions_v1 WHERE run_id=?1 AND revision=?2 AND table_name='CLOUD_BASELINE' AND row_id=?3 AND variant_id=?4 AND actor_id=?5 AND reason=?6)",
+        (run,report["revision"].as_u64().ok_or_else(invalid)?,&diff.capture_id,&diff.difference_hash,&ctx.actor_id,saved["reason"].as_str().ok_or_else(invalid)?),|r|r.get(0))?)
+}
+fn tables(c: &Connection, ctx: &CatalogueContext, run: &str) -> Result<Value, Error> {
+    let diff = comparison(c, ctx, run)?;
+    if !diff.rows.is_empty() && !reviewed(c, ctx, run, &diff)? {
+        return Err(Error("CUTOVER_COPIES_NOT_CONVERGED"));
+    }
+    Ok(diff.tables)
+}
+/// Both versions are evidence only. Pagination never alters the source material.
+pub fn differences(
+    c: &Connection,
+    ctx: &CatalogueContext,
+    run: &str,
+    page: u32,
+) -> Result<Value, Error> {
+    if page > 60_000 {
+        return Err(invalid());
+    }
+    let report = transition::report(c, ctx, run)?;
+    let diff = comparison(c, ctx, run)?;
+    let is_reviewed = reviewed(c, ctx, run, &diff)?;
+    let mut counts = BTreeMap::<String, usize>::new();
+    for row in &diff.rows {
+        *counts
+            .entry(row["table"].as_str().ok_or_else(invalid)?.into())
+            .or_default() += 1;
+    }
+    Ok(
+        json!({"runId":run,"revision":report["revision"],"captureId":diff.capture_id,"differenceHash":diff.difference_hash,"reviewed":is_reviewed,"decision":if is_reviewed {report["cloudBaselineReview"].clone()}else{Value::Null},"total":diff.rows.len(),"counts":counts,"page":page,"rows":diff.rows.iter().skip(page as usize*10).take(10).collect::<Vec<_>>()}),
+    )
+}
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BaselineDecision {
+    pub run_id: String,
+    pub revision: u32,
+    pub difference_hash: String,
+    pub reason: String,
+    pub confirmation: String,
+}
+/// Local audited decision, not an APPLIED receipt. The server still verifies
+/// the entire current cloud snapshot atomically before adopting its balances.
+pub fn review_baseline(
+    c: &mut Connection,
+    ctx: &CatalogueContext,
+    d: &BaselineDecision,
+) -> Result<Value, Error> {
+    let reason = d.reason.trim();
+    if d.confirmation != "USE_CLOUD_BASELINE_PRESERVE_HISTORY"
+        || reason.chars().count() < 10
+        || reason.chars().count() > 500
+        || reason.chars().any(char::is_control)
+    {
+        return Err(invalid());
+    }
+    let tx = c.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let mut report = transition::report(&tx, ctx, &d.run_id)?;
+    let diff = comparison(&tx, ctx, &d.run_id)?;
+    if diff.difference_hash != d.difference_hash
+        || diff.rows.is_empty()
+        || report["historyPublished"] != true
+        || report["conflicts"] != 0
+    {
+        return Err(Error("CUTOVER_REVIEW_REQUIRED"));
+    }
+    let next = d.revision.checked_add(1).ok_or_else(invalid)?;
+    if report["revision"] == next
+        && reviewed(&tx, ctx, &d.run_id, &diff)?
+        && report["cloudBaselineReview"]["reason"] == reason
+    {
+        return readiness(&tx, ctx, &d.run_id);
+    }
+    let pending:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM legacy_cutovers_v1 WHERE context=?1 AND state IN('UNKNOWN','ADOPTED','ACTIVE'))",[ctx_json(ctx)?],|r|r.get(0))?;
+    if report["revision"] != d.revision || pending {
+        return Err(Error("CUTOVER_REVIEW_REQUIRED"));
+    }
+    report["revision"] = json!(next);
+    report["cloudBaselineReview"] = json!({"captureId":diff.capture_id,"differenceHash":diff.difference_hash,"reason":reason,"actorId":ctx.actor_id,"coverage":"CLOUD_BASELINE_PRESERVED_HISTORY","legacyReplay":false});
+    tx.execute(
+        "INSERT INTO legacy_transition_decisions_v1 VALUES(?1,?2,'CLOUD_BASELINE',?3,?4,?5,?6)",
+        (
+            &d.run_id,
+            next,
+            &diff.capture_id,
+            &diff.difference_hash,
+            &ctx.actor_id,
+            reason,
+        ),
+    )?;
+    tx.execute(
+        "UPDATE legacy_transition_runs_v1 SET revision=?2,report=?3 WHERE run_id=?1",
+        (&d.run_id, next, report.to_string()),
+    )?;
+    let view = readiness(&tx, ctx, &d.run_id)?;
+    tx.commit()?;
+    Ok(view)
 }
 pub fn readiness(c: &Connection, ctx: &CatalogueContext, run: &str) -> Result<Value, Error> {
     let report = transition::report(c, ctx, run)?;
@@ -146,6 +287,30 @@ pub fn readiness(c: &Connection, ctx: &CatalogueContext, run: &str) -> Result<Va
     }
     if let Err(e) = tables(c, ctx, run) {
         blockers.push(json!({"code":e.code()}))
+    }
+    let diff = comparison(c, ctx, run).ok();
+    // An active service must continue the exact adopted document. A baseline
+    // acknowledgement cannot silently replace its deposit or reservation.
+    if let Some(diff) = &diff {
+        for row in &diff.rows {
+            if row["table"] == "cajas"
+                && !row["cloud"].is_null()
+                && row["cloud"]["estado"] != "cerrada"
+            {
+                blockers.push(json!({"code":"CUTOVER_CLOSE_WEB_CASH","id":row["id"]}));
+            }
+            if matches!(row["table"].as_str(), Some("reparaciones" | "apartados"))
+                && ["preserved", "cloud"].iter().any(|key| {
+                    !row[key].is_null()
+                        && super::legacy_services::active(
+                            row["table"].as_str().unwrap_or(""),
+                            &row[key],
+                        )
+                })
+            {
+                blockers.push(json!({"code":"CUTOVER_SERVICE_BASELINE_CONFLICT","table":row["table"],"id":row["id"]}));
+            }
+        }
     }
     // A source turn is closed deliberately before handing its writer over.
     // Its original cash/history remain preserved; no synthetic TURN_OPEN.
@@ -225,7 +390,7 @@ pub fn readiness(c: &Connection, ctx: &CatalogueContext, run: &str) -> Result<Va
         }
     }
     Ok(
-        json!({"runId":run,"revision":report["revision"],"canPrepare":blockers.is_empty(),"blockers":blockers,"services":services,"serviceHistoryWarnings":service_history_warnings,"legacyCashHistoryWarnings":legacy_cash_history_warnings,"coverage":"CONVERGED_CLOSED_WEB_BASELINE","legacyReplay":false}),
+        json!({"runId":run,"revision":report["revision"],"canPrepare":blockers.is_empty(),"blockers":blockers,"services":services,"serviceHistoryWarnings":service_history_warnings,"legacyCashHistoryWarnings":legacy_cash_history_warnings,"differences":diff.as_ref().map(|d|d.rows.len()),"baselineReviewed":diff.as_ref().map(|d|reviewed(c,ctx,run,d)).transpose()?.unwrap_or(false),"coverage":"REVIEWED_CLOSED_CLOUD_BASELINE","legacyReplay":false}),
     )
 }
 pub fn load(c: &Connection, ctx: &CatalogueContext, id: &str) -> Result<Pending, Error> {

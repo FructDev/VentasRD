@@ -54,6 +54,13 @@ pub enum Action {
     TransitionCutoverView {
         run_id: String,
     },
+    TransitionDifferences {
+        run_id: String,
+        page: u32,
+    },
+    TransitionBaselineReview {
+        input: ventard_core::storage::legacy_cutover::BaselineDecision,
+    },
     TransitionCutover {
         input: ventard_core::storage::legacy_cutover::Input,
     },
@@ -404,6 +411,8 @@ v["mode"] = json!("recovery-readonly");
             &action,
             Action::TransitionView {}
                 | Action::TransitionCutoverView { .. }
+                | Action::TransitionDifferences { .. }
+                | Action::TransitionBaselineReview { .. }
                 | Action::TransitionCutover { .. }
                 | Action::TransitionCutoverRecover { .. }
                 | Action::TransitionCutoverAbandon { .. }
