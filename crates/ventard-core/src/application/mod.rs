@@ -10,8 +10,6 @@ pub mod history;
 #[cfg(feature = "encrypted-storage")]
 pub mod inventory;
 #[cfg(feature = "encrypted-storage")]
-pub mod product_media;
-#[cfg(feature = "encrypted-storage")]
 pub mod inventory_import;
 pub mod layaways;
 #[cfg(feature = "encrypted-storage")]
@@ -20,6 +18,10 @@ pub mod notices;
 pub mod operations;
 #[cfg(feature = "encrypted-storage")]
 pub mod printing;
+#[cfg(feature = "encrypted-storage")]
+pub mod product_media;
+#[cfg(feature = "encrypted-storage")]
+pub mod public_catalogue;
 #[cfg(feature = "encrypted-storage")]
 pub mod repair_private;
 #[cfg(feature = "encrypted-storage")]

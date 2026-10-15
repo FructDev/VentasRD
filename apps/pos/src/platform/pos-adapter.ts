@@ -313,6 +313,10 @@ const errors: Record<string, string> = {
   SALES_REMOTE_CONFLICT:"Hay un conflicto remoto. La venta permanece visible; no se repara automáticamente.",
   SALES_MIGRATION_REQUIRED:"Falta aplicar la migración de Ventas en Staging.",
   BACKUP_ARCHIVE_READ_ONLY: 'Esta copia es de sólo lectura. Vuelve a tu cuenta para operar.',
+  PUBLIC_CATALOGUE_MIGRATION_REQUIRED:'El servidor necesita habilitar el catálogo público nativo.',
+  CATALOGUE_WEB_REQUIRED:'La dirección de la web de Staging todavía no está configurada.',
+  CATALOGUE_NOT_CONFIRMED:'Actualiza el catálogo y espera su confirmación antes de compartirlo.',
+  CATALOGUE_RESPONSE_INVALID:'No se pudo verificar la respuesta del catálogo de este negocio.',
   SETTINGS_MIGRATION_REQUIRED:"Falta aplicar la migración de Ajustes y actualizar los datos de la cuenta.",
   HISTORY_SNAPSHOT_UNAVAILABLE:
     "Esta venta no tiene un ticket histórico verificable. No se reconstruirá con datos actuales.",

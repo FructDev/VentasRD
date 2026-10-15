@@ -803,6 +803,7 @@ mod tests {
             .map(|b| format!("{b:02x}"))
             .collect::<String>();
         let config = Config {
+            web_origin: None,
             publishable_key: "sb_publishable_synthetic_fixture_only".into(),
             key_id: "backup-fixture-key".into(),
             public_hex,

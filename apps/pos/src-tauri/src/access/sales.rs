@@ -15,6 +15,8 @@ use ventard_core::application::{
     deny_unknown_fields
 )]
 pub enum SalesAction {
+    CatalogueRead {},
+    CatalogueOpen { share: bool },
     HistoryLoadRemote {},
     ProductPhotos {
         #[serde(rename = "productIds")]
@@ -376,6 +378,22 @@ impl AccessState {
    f(c,ctx,grant,high,opens)
   }).map_err(|e|error(e.code()))
     }
+    fn public_catalogue_read(&self)->Result<Value,AccessError>{
+        self.deny_archive()?;
+        let mut cached=self.sales_local(|c,ctx,g,high,opens|{
+            if !g.evaluate(time().map_err(|_|AppError::Protocol(ventard_core::application::errors::ProtocolError::MalformedPayload))?,high,opens).map_err(|_|AppError::Protocol(ventard_core::application::errors::ProtocolError::MalformedPayload))?.allows("MANAGE"){return Err(AppError::Auth(ventard_core::application::errors::AuthError::PermissionDenied{required:"MANAGE".into()}))}
+            ventard_core::application::public_catalogue::view(c,&ctx)
+        })?;
+        let n=match self.sales_network(){Ok(n)=>n,Err(e) if e.code=="ACCESS_LOGIN_REQUIRED"=>{cached["remoteError"]=json!(e.code);return Ok(cached)},Err(e)=>return Err(e)};
+        cached["webOrigin"]=json!(n.config.web_origin);
+        let remote=Self::sales_rpc(&n,"native_catalogue_settings_v1",body(&n.selected.catalogue_context()));
+        self.sales_current(&n)?;
+        match remote{
+            Ok(v)=>cached["remote"]=super::public_catalogue::validate_remote(v,&n.selected.identity.tenant_id)?,
+            Err((status,_,_))=>cached["remoteError"]=json!(match status{401=>"ACCESS_LOGIN_REQUIRED",403=>"PERMISSION_DENIED",404=>"PUBLIC_CATALOGUE_MIGRATION_REQUIRED",_=>"NETWORK_UNAVAILABLE"})
+        }
+        Ok(cached)
+    }
     fn sales_network(&self) -> Result<NetworkContext, AccessError> {
         let mut i = self.inner.lock().map_err(|_| error("ACCESS_BUSY"))?;
         let selected = self.catalogue_authorize(&mut i)?;
@@ -424,6 +442,7 @@ impl AccessState {
                 | "native_fiscal_settings_lookup_v1"
                 | "native_fiscal_settings_submit_v1"
                 | "native_fiscal_settings_abandon_v1"
+                | "native_catalogue_settings_v1"
         ) {
             return Err((403, 0, None));
         }
@@ -844,6 +863,19 @@ impl AccessState {
                 }
                 Ok(json!({"status":"UNKNOWN","submitted":job.fresh}))
             }
+            SalesAction::CatalogueRead {} => self.public_catalogue_read(),
+            SalesAction::CatalogueOpen { share } => {
+                let v=self.public_catalogue_read()?;
+                let origin=v["webOrigin"].as_str().ok_or(error("CATALOGUE_WEB_REQUIRED"))?;
+                if v["remote"]["enabled"]!=true || v["pending"].as_array().is_none_or(|p|!p.is_empty()){return Err(error("CATALOGUE_NOT_CONFIRMED"))}
+                let path=v["remote"]["publicPath"].as_str().ok_or(error("CATALOGUE_RESPONSE_INVALID"))?;
+                let link=format!("{origin}{path}");
+                let mut url=reqwest::Url::parse(if share{"https://wa.me/"}else{&link}).map_err(|_|error("CATALOGUE_RESPONSE_INVALID"))?;
+                if share{url.query_pairs_mut().append_pair("text",&format!("Mira nuestro catálogo: {link}"));}
+                use std::os::windows::process::CommandExt;
+                std::process::Command::new("rundll32.exe").arg("url.dll,FileProtocolHandler").arg(url.as_str()).creation_flags(0x08000000).spawn().map_err(|_|error("CONTACT_OPEN_FAILED"))?;
+                Ok(json!({"status":"OPEN_REQUESTED"}))
+            },
             SalesAction::FiscalSettingsRead {} => self.fiscal_settings_read(),
             SalesAction::FiscalSettingsSave { request } => {
                 self.fiscal_settings_send(Some(request), None, false)

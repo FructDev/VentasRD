@@ -3,7 +3,7 @@
 // WhatsApp al negocio. Cada pedido lleva branding "Hecho con VentaRD".
 'use client';
 
-import { useEffect, useMemo, useState, use } from 'react';
+import { useEffect, useMemo, useState, use, useRef } from 'react';
 import { formatDOP } from '@/lib/utils';
 import { linkWhatsApp } from '@/lib/whatsapp';
 import { PALETAS, PALETA_DEFAULT } from '@/lib/marca';
@@ -12,27 +12,55 @@ interface ProdPub { id: string; nombre: string; precio_venta: number; imagen_url
 interface CatData {
     negocio: { nombre: string; whatsapp: string | null; direccion: string | null; logo_url: string | null; color_marca: string };
     productos: ProdPub[];
+    nextId?: string | null;
 }
 
 export default function CatalogoPublico({ params }: { params: Promise<{ negocioId: string }> }) {
     const { negocioId } = use(params);
+    return <CatalogueContent key={negocioId} negocioId={negocioId} />;
+}
+
+function CatalogueContent({ negocioId }: { negocioId: string }) {
     const [data, setData] = useState<CatData | null>(null);
     const [estado, setEstado] = useState<'cargando' | 'ok' | 'error'>('cargando');
     const [busqueda, setBusqueda] = useState('');
     const [cant, setCant] = useState<Record<string, number>>({});
+    const [loadingMore, setLoadingMore] = useState(false);
+    const [pageError, setPageError] = useState('');
+    const generation = useRef(0);
 
     useEffect(() => {
-        fetch(`/api/catalogo/${negocioId}`)
+        const controller = new AbortController();
+        const currentGeneration = ++generation.current;
+        fetch(`/api/catalogo/${negocioId}`, { cache: 'no-store', signal: controller.signal })
             .then(r => r.ok ? r.json() : Promise.reject())
             .then((d: CatData) => {
+                if (controller.signal.aborted) return;
                 setData(d);
                 setEstado('ok');
                 const p = PALETAS[d.negocio.color_marca] || PALETAS[PALETA_DEFAULT];
                 document.documentElement.style.setProperty('--color-gold', p.gold);
                 document.documentElement.style.setProperty('--color-gold-2', p.gold2);
             })
-            .catch(() => setEstado('error'));
+            .catch(() => { if (!controller.signal.aborted) setEstado('error'); });
+        return () => { controller.abort(); generation.current = currentGeneration + 1; };
     }, [negocioId]);
+
+    async function loadMore() {
+        if (!data?.nextId || loadingMore) return;
+        const current = generation.current;
+        setLoadingMore(true); setPageError('');
+        try {
+            const response = await fetch(`/api/catalogo/${negocioId}?after=${encodeURIComponent(data.nextId)}`, { cache: 'no-store' });
+            if (current !== generation.current) return;
+            if (response.status === 404) { setData(null); setCant({}); setEstado('error'); return; }
+            if (!response.ok) throw Error('PAGE_UNAVAILABLE');
+            const next: CatData = await response.json();
+            if (current !== generation.current) return;
+            setData(old => old ? { ...next, productos: [...new Map([...old.productos, ...next.productos].map(p => [p.id, p])).values()] } : old);
+        } catch { if (current === generation.current) setPageError('No se pudieron cargar más productos. Intenta de nuevo.'); }
+        finally { if (current === generation.current) setLoadingMore(false); }
+    }
 
     const productos = useMemo(() => {
         if (!data) return [];
@@ -101,7 +129,7 @@ export default function CatalogoPublico({ params }: { params: Promise<{ negocioI
                     <input
                         value={busqueda}
                         onChange={e => setBusqueda(e.target.value)}
-                        placeholder="Buscar producto…"
+                        placeholder={data.nextId ? 'Buscar en productos cargados…' : 'Buscar producto…'}
                         className="w-full bg-navy-3 border border-navy-3 rounded-xl px-4 py-2.5 text-white placeholder-vr-gray text-sm focus:border-gold outline-none"
                     />
                 </div>
@@ -147,6 +175,8 @@ export default function CatalogoPublico({ params }: { params: Promise<{ negocioI
                         })}
                     </div>
                 )}
+                {data.nextId && <div className="mt-5 text-center"><p className="text-xs text-vr-gray mb-3">{data.productos.length} productos cargados. Hay más productos disponibles para consultar y buscar.</p><button type="button" disabled={loadingMore} onClick={() => void loadMore()} className="px-5 py-3 bg-navy-3 rounded-xl text-gold font-bold disabled:opacity-50">{loadingMore ? 'Cargando…' : 'Cargar más productos'}</button></div>}
+                {pageError && <p role="alert" className="text-center text-sm text-vr-red mt-3">{pageError}</p>}
             </main>
 
             {/* Barra de pedido */}

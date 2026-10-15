@@ -144,6 +144,8 @@ export const historyPort = {
 };
 export const managementAccountPort = {
  customerActivity:(customerId:string)=>call<import('./management').CustomerActivity>('native_sales',{command:{action:'CUSTOMER_ACTIVITY',customerId}}),
+ catalogueRead:()=>call<import('./management').CatalogueView>('native_sales',{command:{action:'CATALOGUE_READ'}}),
+ catalogueOpen:(share:boolean)=>call<{status:string}>('native_sales',{command:{action:'CATALOGUE_OPEN',share}}),
  settingsRead:()=>call<import('./management').BusinessSettingsView>('native_sales',{command:{action:'SETTINGS_READ'}}),
  settingsLoadRemote:()=>call<import('./management').BusinessSettingsView>('native_sales',{command:{action:'SETTINGS_LOAD_REMOTE'}}),
  repairPrivateRead:(repairId:string)=>call<import('./management').RepairPrivateView>('native_sales',{command:{action:'REPAIR_PRIVATE_READ',repairId}}),

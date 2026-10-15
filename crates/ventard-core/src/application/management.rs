@@ -21,6 +21,12 @@ use serde_json::{json, Value};
     deny_unknown_fields
 )]
 pub enum Command {
+    CataloguePublish {
+        operation_id: String,
+        expected_revision: String,
+        expected_enabled: bool,
+        enabled: bool,
+    },
     ServiceRefund {
         operation_id: String,
         family: String,
@@ -786,6 +792,10 @@ pub fn execute_private(
         let mut kind = request["kind"].as_str().ok_or_else(invalid)?.to_owned();
         let mut turn: Option<String> = None;
         match &req {
+            Command::CataloguePublish { .. } => {
+                kind = "CONFIG_PATCH".into();
+                doc = super::public_catalogue::document(&ctx.tenant_id, &req)?;
+            }
             Command::ServiceRefund { turn_id, .. } => {
                 doc = super::service_refunds::document(
                     c,
@@ -1052,6 +1062,9 @@ pub fn effects(v: &Value) -> Result<Value, AppError> {
     )
 }
 pub fn validate_receipt(v: &Value, r: &Value, snapshot: Option<&str>) -> Result<(), AppError> {
+    if v["payload"]["request"]["kind"] == "CATALOGUE_PUBLISH" {
+        super::public_catalogue::validate(v)?;
+    }
     if v["kind"] == "SERVICE_REFUND" {
         super::service_refunds::validate(v)?;
     }
@@ -1134,7 +1147,9 @@ pub fn apply(
     if kind == "SALE_RETURN" {
         super::returns::apply(tx, ctx, v, remote)?;
     }
-    if kind == "CONFIG_PATCH" && req["kind"] == "BUSINESS_SAVE" {
+    if kind == "CONFIG_PATCH" && req["kind"] == "CATALOGUE_PUBLISH" {
+        super::public_catalogue::validate(v)?;
+    } else if kind == "CONFIG_PATCH" && req["kind"] == "BUSINESS_SAVE" {
         super::settings::apply(tx, ctx, v, remote)?;
     } else if matches!(kind, "WARRANTY_PATCH" | "CONFIG_PATCH") {
         super::warranties::apply(tx, ctx, v, remote)?;

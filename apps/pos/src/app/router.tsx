@@ -1,5 +1,6 @@
 import {applyBrand} from '../features/settings/brand';
 import {AccountHeader,BusinessIdentity,headerBusiness} from '../features/access/account-header';
+import {PublicCatalogueSettings} from '../features/settings/public-catalogue-settings';
 import {BusinessSettings} from '../features/settings/business-settings';
 import {BackupSettings} from '../features/settings/backup-settings';
 import {WebMigrationSettings} from '../features/settings/web-migration-settings';
@@ -76,7 +77,7 @@ function SettingsPage() {
   return (
     <section className="h-full p-4 sm:p-8 overflow-y-auto">
       <div className="max-w-3xl mx-auto mb-6"><h1 className="text-2xl sm:text-3xl font-display font-black text-white">Configuración del Negocio</h1><p className="text-vr-gray mt-2">Personaliza la información que aparece en los tickets y reportes.</p></div>
-      <div className="grid gap-4 max-w-3xl mx-auto"><BusinessSettings/>
+      <div className="grid gap-4 max-w-3xl mx-auto"><BusinessSettings/><PublicCatalogueSettings/>
         <PrintingSettings/>
         <FiscalSettings/>
         <BackupSettings/>
@@ -90,7 +91,7 @@ function SettingsPage() {
             ['Ventas locales confirmadas',s.snapshot?.confirmedSales??'No disponible'],
           ].map(([label,value])=><div key={label} className="flex items-center justify-between gap-3 text-sm py-1.5 border-b border-navy-3/40"><span className="text-vr-gray">{label}</span><span className="font-mono font-bold text-white text-xs text-right">{value}</span></div>)}</div>
           <button type="button" onClick={()=>void s.refresh()} className="mt-3 py-2.5 px-4 bg-navy-3 border border-navy-3 hover:border-gold/40 text-vr-gray hover:text-gold font-bold rounded-xl text-sm transition-all">↻ Actualizar</button>
-          <p className="mt-4 text-xs text-vr-gray">Catálogo público, invitaciones, distribución y comprobación física del hardware continúan pendientes. La continuidad de respaldos se gestiona arriba; fiscal está aplazado.</p>
+          <p className="mt-4 text-xs text-vr-gray">Invitaciones, distribución y comprobación física del hardware continúan pendientes. La continuidad de respaldos se gestiona arriba; fiscal está aplazado.</p>
         </div>
       </div>
     </section>

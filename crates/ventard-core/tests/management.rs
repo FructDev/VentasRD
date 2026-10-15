@@ -1,4 +1,20 @@
 #![cfg(feature = "encrypted-storage")]
+#[test]
+fn catalogue_publication_replays_without_claiming_remote_success_or_changing_money(){
+ use ventard_core::application::{public_catalogue,sales_sync};
+ let mut a=db();let mut b=db();
+ let command:management::Command=serde_json::from_value(json!({"kind":"CATALOGUE_PUBLISH","operationId":id(850),"expectedRevision":"0","expectedEnabled":false,"enabled":true})).unwrap();
+ assert!(management::execute(&mut a,&grant(9,5,false),2000,2000,1,command.clone()).is_err());
+ a.execute_batch("CREATE TRIGGER fail_catalogue BEFORE INSERT ON native_management_records_v1 BEGIN SELECT RAISE(ABORT,'fixture rollback');END;").unwrap();
+ assert!(run(&mut a,command.clone()).is_err());assert_eq!(public_catalogue::view(&a,&ctx()).unwrap()["pending"],json!([]));
+ a.execute_batch("DROP TRIGGER fail_catalogue;").unwrap();
+ let first=run(&mut a,command.clone()).unwrap();assert_eq!(run(&mut a,command).unwrap(),first);
+ let v=public_catalogue::view(&a,&ctx()).unwrap();assert!(v["lastConfirmed"].is_null());assert_eq!(v["pending"].as_array().unwrap().len(),1);
+ let receipt=event(&a,850,1);sales_sync::receive_event(&mut a,&ctx(),&receipt).unwrap();sales_sync::receive_event(&mut b,&ctx(),&receipt).unwrap();sales_sync::receive_event(&mut b,&ctx(),&receipt).unwrap();
+ assert_eq!(public_catalogue::view(&a,&ctx()).unwrap()["lastConfirmed"]["enabled"],true);assert_eq!(public_catalogue::view(&b,&ctx()).unwrap()["lastConfirmed"]["revision"],"1");
+ for c in [&a,&b]{for table in ["payments","inventory_movements","sale_cash_entries_v1"]{assert_eq!(c.query_row(&format!("SELECT count(*) FROM {table}"),[],|r|r.get::<_,i64>(0)).unwrap(),0)}}
+ let mut other=ctx();other.tenant_id=id(999);assert!(public_catalogue::view(&a,&other).unwrap()["lastConfirmed"].is_null());
+}
 use rusqlite::Connection;
 use serde_json::json;
 fn business_save(op: u32, revision: &str, name: &str) -> management::Command {

@@ -1,6 +1,8 @@
 //! DEBUG staging access on definitive pages. No commercial activation until
 //! consistent snapshot/recovery/fiscal are ready. Credentials never leave Rust.
 mod account_profile;
+mod public_catalogue;
+use public_catalogue::valid_web_origin;
 pub mod backup;
 mod printers;
 mod recovery;
@@ -86,6 +88,8 @@ fn public_key(k: &str) -> bool {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Config {
+    #[serde(default)]
+    web_origin: Option<String>,
     publishable_key: String,
     key_id: String,
     public_hex: String,
@@ -93,6 +97,13 @@ struct Config {
 }
 impl Config {
     fn validate(&self) -> Result<(), AccessError> {
+        if self
+            .web_origin
+            .as_ref()
+            .is_some_and(|s| !valid_web_origin(s))
+        {
+            return Err(error("ACCESS_CONFIG_INVALID"));
+        }
         if !public_key(&self.publishable_key) || self.issuer_url != ISSUER {
             return Err(error("ACCESS_CONFIG_INVALID"));
         }
@@ -350,6 +361,7 @@ impl AccessState {
             read_json::<Config>(&p)?
         } else {
             let c = Config {
+                web_origin: std::env::var("VENTARD_NATIVE_WEB_ORIGIN").ok(),
                 publishable_key: std::env::var("VENTARD_NATIVE_STAGING_PUBLISHABLE_KEY")
                     .map_err(|_| error("ACCESS_NOT_CONFIGURED"))?,
                 key_id: std::env::var("VENTARD_NATIVE_GRANT_KEY_ID")
@@ -1455,6 +1467,7 @@ mod tests {
     }
     fn config() -> Config {
         Config {
+            web_origin: None,
             publishable_key: "sb_publishable_fixture".into(),
             key_id: "fixture-only".into(),
             public_hex: "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a".into(),
