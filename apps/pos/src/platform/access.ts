@@ -282,6 +282,21 @@ const messages: Record<string, string> = {
   BACKUP_CURRENT_DATABASE_REQUIRED:'La base original debe permanecer en este equipo. La copia se puede consultar; no reemplaza automáticamente la base activa.',
   BACKUP_CLOSE_ACTIVE_REQUIRED:'Cierra y vuelve a abrir VentaRD antes de recuperar una llave local perdida. Los datos actuales se conservan.',
   BACKUP_NOT_OPEN:'Vuelve a elegir y verificar el respaldo y su llave.',
+  RECOVERY_REVIEW_REQUIRED:'Este equipo está revisando un respaldo. Confirma o cancela esa recuperación antes de guardar cambios nuevos.',
+  RECOVERY_NEW_IDENTITY_REQUIRED:'Para continuar usa una instalación nueva del mismo negocio y sucursal. La identidad del equipo anterior se conserva únicamente como origen histórico.',
+  RECOVERY_FRESH_INSTALLATION_REQUIRED:'Esta recuperación necesita una instalación nueva que todavía no haya creado operaciones propias. No se reemplazarán sus datos actuales.',
+  RECOVERY_PENDING_UNVERIFIED:'Quedan operaciones del respaldo sin comprobante remoto completo. Se conservan y no se habilita otra copia del escritor.',
+  RECOVERY_ORIGINAL_USER_REQUIRED:'Inicia sesión con el usuario que creó esos pendientes. No se enviarán con la identidad de otra persona.',
+  RECOVERY_SOURCE_NOT_ACTIVE:'El origen ya está retirado o cambió de identidad. Conserva el intento y revisa qué instalación recibió su continuidad.',
+  RECOVERY_SNAPSHOT_EXPIRED:'La captura de este intento caducó. Cancélalo conservando el respaldo y prepara uno nuevo; si el retiro ya se aplicó se recuperará su recibo.',
+  RECOVERY_CONFIRMATION_REQUIRED:'Confirma primero que el equipo anterior dejó de usarse.',
+  RECOVERY_CONTEXT:'Cambió la cuenta durante la recuperación. Vuelve a su negocio y usuario para continuar.',
+  RECOVERY_ID_CONFLICT:'El intento pertenece a otro respaldo o contexto. Se conservó el original.',
+  RECOVERY_RECEIPT_CONFLICT:'El resultado recibido difiere del guardado. Se conservó el primero para revisión.',
+  RECOVERY_STORAGE:'No se pudo guardar la recuperación. Conserva el mismo intento y vuelve a consultarlo.',
+  RECOVERY_MIGRATION_REQUIRED:'El servidor necesita habilitar la continuidad de respaldos. La copia cifrada y los datos activos se conservan.',
+  RECOVERY_INVALID:'El respaldo o su comprobación no pasó la validación. Los datos activos se conservan.',
+  RECOVERY_TOO_LARGE:'Este respaldo supera el límite de recuperación automática. La copia sigue disponible para consulta.',
   BACKUP_ARCHIVE_READ_ONLY:'El respaldo permite consulta. No puede cobrar, sincronizar, cambiar datos ni emitir comprobantes.',
   BACKUP_TOO_MANY_CANDIDATES:'Cierra y abre VentaRD para verificar más copias. Los archivos se conservan.',
   ACCESS_KEY_UNAVAILABLE:
@@ -334,11 +349,22 @@ export function accessMessage(e: unknown) {
 
 export interface BackupSummary {backupId:string;state:string;capturedAtMs?:string;databaseBytes?:string;counts?:Record<string,string>;handle?:string}
 export interface BackupView {rows:BackupSummary[];canCreate:boolean;archive?:BackupSummary}
+export interface RecoveryPlan {recoveryId:string;backupId:string;capturedAtMs:string;state:'REVIEW'|'BLOCKED'|'PREPARED'|'ACTIVE'|'ABANDONED';review:{total:string;verified:string;unresolved:string;canTransfer:boolean;replay:false;issues:{operationId:string;code:string;pendingInBackup:boolean}[]}}
 export interface WebMigrationSummary {exportId:string;tenantId:string;origin:string;profileAlias:string;capturedAtMs:string;state:'PRESERVED_REVIEW_REQUIRED';writersStopped:false;counts:Record<string,number>;pendingRows:number;remoteUnverifiedRows:number;unknownScopeRows:number;foreignTenantRows:number;unknownTenantRows:number;missingReferences:number;externalImageReferences:number;canActivate:false}
 export interface WebReconcileReport {reportId:string;exportId:string;state:'PENDING'|'PENDING_ERROR'|'REVIEW_REQUIRED';lastError:string|null;totalBatches:number;completedBatches:number;createdAtMs:string;counts:Record<string,number>;inventoryEffectCounts?:Record<string,number>;canActivate:false;coverage:'REQUESTED_IDS_ONLY_WINDOWED';effectStatus:'UNKNOWN_LEGACY'}
 export interface WebInventoryEvidence {status:'PENDING_LOOKUP'|'APPLIED_VERIFIED'|'UNKNOWN_LEGACY'|'CONFLICT';code:string;receipt?:{operationId:string;payloadHash:string;authority:'GLOBAL'|'BRANCH';sucursalId:string|null;stockBefore:string;stockAfter:string;remoteSequence:string;appliedAt:string}}
 export interface WebComparisonRow {id:string;table:string;status:string;effectStatus:'UNKNOWN_LEGACY';matchedFields?:string[];differentFields?:string[];unverifiableFields?:string[];reviewFields?:{field:string;local:string;remote:string}[];limitations:string[];observedAtMs?:string;inventoryEvidence?:WebInventoryEvidence;inventoryReceivedAtMs?:string}
 export const backupPort={
+ recoveryArchivedList:()=>call<{rows:{recoveryId:string;backupId:string;capturedAtMs:string}[]}>('native_backup',{command:{action:'RECOVERY_ARCHIVED_LIST'}}),
+ recoveryOpenNested:(recoveryId:string)=>call('native_backup',{command:{action:'RECOVERY_OPEN_NESTED',recoveryId}}),
+ recoveryList:()=>call<{rows:RecoveryPlan[]}>('native_backup',{command:{action:'RECOVERY_LIST'}}),
+ recoveryPrepare:(handle:string,recoveryId:string)=>call<RecoveryPlan>('native_backup',{command:{action:'RECOVERY_PREPARE',handle,recoveryId}}),
+ recoveryReview:(recoveryId:string)=>call<RecoveryPlan>('native_backup',{command:{action:'RECOVERY_REVIEW',recoveryId}}),
+ recoverySendPending:(recoveryId:string,originalStopped:boolean)=>call<RecoveryPlan>('native_backup',{command:{action:'RECOVERY_SEND_PENDING',recoveryId,originalStopped}}),
+ recoveryConfirm:(recoveryId:string,originalStopped:boolean)=>call<RecoveryPlan>('native_backup',{command:{action:'RECOVERY_CONFIRM',recoveryId,originalStopped}}),
+ recoveryRecover:(recoveryId:string)=>call<RecoveryPlan>('native_backup',{command:{action:'RECOVERY_RECOVER',recoveryId}}),
+ recoveryAbandon:(recoveryId:string)=>call<RecoveryPlan>('native_backup',{command:{action:'RECOVERY_ABANDON',recoveryId}}),
+ recoveryOpen:(recoveryId:string)=>call('native_backup',{command:{action:'RECOVERY_OPEN',recoveryId}}),
  transitionView:()=>call<{report:TransitionReport|null;capture:{captureId:string;capturedAtMs:string}|null}>('native_backup',{command:{action:'TRANSITION_VIEW'}}),
  transitionCutoverView:(runId:string)=>call<CutoverView>('native_backup',{command:{action:'TRANSITION_CUTOVER_VIEW',runId}}),
  transitionCutover:(input:CutoverInput)=>call<CutoverStatus>('native_backup',{command:{action:'TRANSITION_CUTOVER',input}}),

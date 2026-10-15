@@ -568,7 +568,98 @@ pub struct Archive {
     pub manifest: Manifest,
     key: CipherKey,
 }
+/// Native-only custody metadata. The original database remains encrypted and
+/// query-only; its key is wrapped under the destination vault's secret.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PreservedArchive {
+    pub manifest: Manifest,
+    pub envelope: String,
+}
 impl Archive {
+    pub fn encrypted_bytes(&self) -> Result<Vec<u8>, BackupError> {
+        if self.manifest.database_bytes>128*1024*1024{return Err(err("RECOVERY_TOO_LARGE"));}
+        let path = self.connection.path().ok_or_else(invalid)?;
+        let mut file = regular(Path::new(path), 128 * 1024 * 1024)?;
+        let mut bytes = vec![];
+        file.read_to_end(&mut bytes)?;
+        if bytes.len() as u64 != self.manifest.database_bytes
+            || format!("{:x}", Sha256::digest(&bytes)) != self.manifest.database_hash
+        {
+            return Err(err("BACKUP_SOURCE_CHANGED"));
+        }
+        Ok(bytes)
+    }
+    pub fn nested(&self, directory: &Path, recovery_id: &str) -> Result<Archive, BackupError> {
+        EntityId::parse(recovery_id).map_err(|_| invalid())?;
+        let (custody,bytes):(String,Vec<u8>)=self.connection.query_row("SELECT p.custody_json,a.ciphertext FROM native_recovery_plans_v1 p JOIN native_recovery_assets_v1 a USING(custody_directory) WHERE p.recovery_id=?1 AND p.tenant_id=?2",(recovery_id,&self.manifest.source.tenant_id),|r|Ok((r.get(0)?,r.get(1)?)))?;
+        let custody: PreservedArchive = serde_json::from_str(&custody).map_err(|_| invalid())?;
+        if custody.manifest.source.tenant_id != self.manifest.source.tenant_id
+            || custody.manifest.source.scope_type != self.manifest.source.scope_type
+            || custody.manifest.source.branch_id != self.manifest.source.branch_id
+        {
+            return Err(err("BACKUP_CONTEXT_MISMATCH"));
+        }
+        materialize_preserved(directory, &custody, &bytes)?;
+        open_preserved(
+            directory,
+            &custody,
+            &RecoverySecret::from_cipher_key(&self.key),
+        )
+    }
+    pub fn preserve(
+        &self,
+        directory: &Path,
+        secret: &RecoverySecret,
+    ) -> Result<PreservedArchive, BackupError> {
+        match fs::create_dir(directory) {
+            Ok(()) => (),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => (),
+            Err(e) => return Err(e.into()),
+        }
+        if !fs::symlink_metadata(directory)?.file_type().is_dir() {
+            return Err(invalid());
+        }
+        let path = directory.join("archive.cipher");
+        if path.exists() {
+            let (len, hash) = digest(regular(&path, MAX_DB)?)?;
+            if len != self.manifest.database_bytes || hash != self.manifest.database_hash {
+                return Err(err("BACKUP_SOURCE_CHANGED"));
+            }
+        } else {
+            let source = self.connection.path().ok_or_else(invalid)?;
+            let mut input = regular(Path::new(source), MAX_DB)?;
+            let mut output = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)?;
+            let copied = std::io::copy(&mut input, &mut output).and_then(|len| {
+                output.sync_all()?;
+                Ok(len)
+            });
+            drop(output);
+            let len = match copied {
+                Ok(len) => len,
+                Err(e) => {
+                    let _ = fs::remove_file(&path);
+                    return Err(e.into());
+                }
+            };
+            let (actual, hash) = digest(regular(&path, MAX_DB)?)?;
+            if len != self.manifest.database_bytes
+                || actual != len
+                || hash != self.manifest.database_hash
+            {
+                return Err(err("BACKUP_SOURCE_CHANGED"));
+            }
+        }
+        let envelope = seal_recovery_key(&self.manifest.source.binding()?, &self.key, secret)
+            .map_err(|_| invalid())?;
+        Ok(PreservedArchive {
+            manifest: self.manifest.clone(),
+            envelope: STANDARD.encode(envelope.as_bytes()),
+        })
+    }
     pub fn read<R>(&self, f: impl FnOnce(&Connection, &Source) -> R) -> R {
         f(&self.connection, &self.manifest.source)
     }
@@ -594,6 +685,80 @@ impl Archive {
         crate::security::key_provider::persist_recovered_key(store, &source.binding()?, &self.key)
             .map_err(|_| err("BACKUP_KEY_STORE_FAILED"))
     }
+}
+pub fn open_preserved(
+    directory: &Path,
+    stored: &PreservedArchive,
+    secret: &RecoverySecret,
+) -> Result<Archive, BackupError> {
+    if !fs::symlink_metadata(directory)?.file_type().is_dir() {
+        return Err(invalid());
+    }
+    let m = &stored.manifest;
+    let path = directory.join("archive.cipher");
+    let (len, hash) = digest(regular(&path, MAX_DB)?)?;
+    if len != m.database_bytes || hash != m.database_hash {
+        return Err(err("BACKUP_SOURCE_CHANGED"));
+    }
+    let envelope = STANDARD.decode(&stored.envelope).map_err(|_| invalid())?;
+    let key = recover_key(&m.source.binding()?, secret, &envelope)
+        .map_err(|_| err("BACKUP_KEY_INVALID"))?;
+    let connection = Connection::open_with_flags(
+        &path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    cipher::key_connection(&connection, &key).map_err(|_| err("BACKUP_DATABASE_INVALID"))?;
+    cipher::validate_key(&connection).map_err(|_| invalid())?;
+    connection.execute_batch("PRAGMA query_only=ON;PRAGMA foreign_keys=ON;")?;
+    validate_database(&connection, &m.source)?;
+    if migrations::validate_history(&connection).map_err(|_| invalid())? != m.schema_version
+        || counts(&connection)? != m.counts
+    {
+        return Err(invalid());
+    }
+    Ok(Archive {
+        connection,
+        manifest: m.clone(),
+        key,
+    })
+}
+pub fn materialize_preserved(
+    directory: &Path,
+    stored: &PreservedArchive,
+    bytes: &[u8],
+) -> Result<(), BackupError> {
+    if bytes.len() > 128 * 1024 * 1024
+        || bytes.len() as u64 != stored.manifest.database_bytes
+        || format!("{:x}", Sha256::digest(bytes)) != stored.manifest.database_hash
+    {
+        return Err(err("BACKUP_SOURCE_CHANGED"));
+    }
+    match fs::create_dir(directory) {
+        Ok(()) => (),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => (),
+        Err(e) => return Err(e.into()),
+    }
+    if !fs::symlink_metadata(directory)?.file_type().is_dir() {
+        return Err(invalid());
+    }
+    let path = directory.join("archive.cipher");
+    if path.exists() {
+        let (len, hash) = digest(regular(&path, MAX_DB)?)?;
+        if len != bytes.len() as u64 || hash != stored.manifest.database_hash {
+            return Err(err("BACKUP_SOURCE_CHANGED"));
+        }
+        return Ok(());
+    }
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)?;
+    if let Err(e) = file.write_all(bytes).and_then(|_| file.sync_all()) {
+        drop(file);
+        let _ = fs::remove_file(&path);
+        return Err(e.into());
+    }
+    Ok(())
 }
 /// Candidate only, CREATE_NEW. It cannot dispatch, migrate, allocate or print.
 pub fn restore(

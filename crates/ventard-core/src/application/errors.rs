@@ -63,6 +63,7 @@ impl AppError {
     pub fn code(&self) -> &'static str {
         match self {
             Self::Business(BusinessError::SaleGuard { code }) => match code.as_str() {
+                "RECOVERY_REVIEW_REQUIRED" => "RECOVERY_REVIEW_REQUIRED",
                 "HISTORY_MIGRATION_REQUIRED" => "HISTORY_MIGRATION_REQUIRED",
                 "HISTORY_SYNC_REQUIRED" => "HISTORY_SYNC_REQUIRED",
                 "TURN_REQUIRED" => "TURN_REQUIRED",

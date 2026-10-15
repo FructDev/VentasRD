@@ -80,7 +80,7 @@ function SettingsPage() {
         <PrintingSettings/>
         <FiscalSettings/>
         <BackupSettings/>
-        {s.snapshot?.mode!=='recovery-readonly'&&<WebMigrationSettings/>}
+        {s.snapshot&&s.snapshot.mode!=='recovery-readonly'&&<WebMigrationSettings/>}
         <div className="bg-navy-2 rounded-xl p-5 border border-navy-3">
           <h3 className="text-lg font-bold text-vr-gray mb-1 border-b border-navy-3 pb-2">🩺 Estado del Sistema</h3>
           <p className="text-xs text-vr-gray mb-4">Datos de este dispositivo para soporte. No envía ventas ni datos de clientes.</p>
@@ -90,7 +90,7 @@ function SettingsPage() {
             ['Ventas locales confirmadas',s.snapshot?.confirmedSales??'No disponible'],
           ].map(([label,value])=><div key={label} className="flex items-center justify-between gap-3 text-sm py-1.5 border-b border-navy-3/40"><span className="text-vr-gray">{label}</span><span className="font-mono font-bold text-white text-xs text-right">{value}</span></div>)}</div>
           <button type="button" onClick={()=>void s.refresh()} className="mt-3 py-2.5 px-4 bg-navy-3 border border-navy-3 hover:border-gold/40 text-vr-gray hover:text-gold font-bold rounded-xl text-sm transition-all">↻ Actualizar</button>
-          <p className="mt-4 text-xs text-vr-gray">Catálogo público, invitaciones, configuración fiscal, activación operativa de copias en otro equipo y validación de hardware: pendientes en esta versión.</p>
+          <p className="mt-4 text-xs text-vr-gray">Catálogo público, invitaciones, distribución y comprobación física del hardware continúan pendientes. La continuidad de respaldos se gestiona arriba; fiscal está aplazado.</p>
         </div>
       </div>
     </section>

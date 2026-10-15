@@ -196,6 +196,73 @@ struct NetworkContext {
     token: Zeroizing<String>,
 }
 type SalesHttpFailure = (u16, u64, Option<&'static str>);
+fn recovery_submission(
+    current: &CatalogueContext,
+    fact: &ventard_core::storage::recovery::Fact,
+) -> Result<Option<(CatalogueContext, Value)>, AccessError> {
+    let (canonical, hash) = ventard_core::domain::canonical::canonicalize(fact.intent.as_bytes())
+        .map_err(|_| error("RECOVERY_INVALID"))?;
+    if canonical != fact.intent || hash != fact.hash {
+        return Err(error("RECOVERY_INVALID"));
+    }
+    let v: Value = serde_json::from_str(&fact.intent).map_err(|_| error("RECOVERY_INVALID"))?;
+    if v["actorId"] != current.actor_id {
+        return Ok(None);
+    }
+    if v["operationId"] != fact.operation_id
+        || v["protocol"] != "ventard.native.v1"
+        || v["negocioId"] != current.tenant_id
+        || v["scope"] != json!({"type":current.scope_type,"sucursalId":current.branch_id})
+    {
+        return Err(error("RECOVERY_INVALID"));
+    }
+    let original = CatalogueContext {
+        tenant_id: current.tenant_id.clone(),
+        actor_id: current.actor_id.clone(),
+        device_id: v["originDeviceId"]
+            .as_str()
+            .ok_or(error("RECOVERY_INVALID"))?
+            .into(),
+        installation_id: v["installationId"]
+            .as_str()
+            .ok_or(error("RECOVERY_INVALID"))?
+            .into(),
+        writer_epoch: v["writerEpoch"]
+            .as_str()
+            .ok_or(error("RECOVERY_INVALID"))?
+            .into(),
+        scope_type: current.scope_type.clone(),
+        branch_id: current.branch_id.clone(),
+    };
+    for value in [
+        &original.device_id,
+        &original.installation_id,
+        &fact.operation_id,
+    ] {
+        EntityId::parse(value).map_err(|_| error("RECOVERY_INVALID"))?;
+    }
+    if original.writer_epoch.parse::<u64>().ok().is_none_or(|v| {
+        v == 0 || v > 9_007_199_254_740_991 || v.to_string() != original.writer_epoch
+    }) {
+        return Err(error("RECOVERY_INVALID"));
+    }
+    let snapshot_hash = fact
+        .snapshot
+        .as_ref()
+        .map(|s| {
+            let (canonical, h) = ventard_core::domain::canonical::canonicalize(s.as_bytes())
+                .map_err(|_| error("RECOVERY_INVALID"))?;
+            if canonical != *s {
+                return Err(error("RECOVERY_INVALID"));
+            }
+            Ok(h)
+        })
+        .transpose()?;
+    Ok(Some((
+        original,
+        json!({"p_intent":fact.intent,"p_hash":fact.hash,"p_snapshot":fact.snapshot,"p_snapshot_hash":snapshot_hash}),
+    )))
+}
 // A metadata snapshot may expire or be removed while the offline document is
 // still valid. Refresh only its server proof; never rewrite the frozen header,
 // import a stock/cash baseline, advance a cursor, or create another operation.
@@ -482,7 +549,7 @@ impl AccessState {
             .map_err(|e| error(e.code()))?;
         self.sales_local(|c, ctx, _, _, _| sync::read(c, &ctx))
     }
-    fn sales_history_remote(&self) -> Result<Value, AccessError> {
+    pub(super) fn sales_history_remote(&self) -> Result<Value, AccessError> {
         self.sales_sync()?;
         let n = self.sales_network()?;
         let ctx = n.selected.catalogue_context();
@@ -535,6 +602,36 @@ impl AccessState {
                 time().map_err(|_| AppError::Storage("CLOCK".into()))?,
             )
         })
+    }
+    pub(super) fn recovery_original_pending(
+        &self,
+        facts: Vec<ventard_core::storage::recovery::Fact>,
+    ) -> Result<(), AccessError> {
+        let n = self.sales_network()?;
+        let current = n.selected.catalogue_context();
+        let mut sent = 0;
+        for fact in facts {
+            let Some((original, submission)) = recovery_submission(&current, &fact)? else {
+                continue;
+            };
+            self.sales_current(&n)?;
+            let mut lookup = body(&original);
+            lookup["p_operation_id"] = json!(fact.operation_id);
+            lookup["p_hash"] = json!(fact.hash);
+            let receipt =
+                Self::sales_rpc(&n, "native_sales_lookup_v1", lookup).map_err(sales_http)?;
+            if receipt["status"] == "NOT_FOUND" {
+                submit_with_header_proof(&original, submission, |rpc, args| {
+                    Self::sales_rpc(&n, rpc, args)
+                })
+                .map_err(sales_http)?;
+            }
+            sent += 1;
+        }
+        if sent == 0 {
+            return Err(error("RECOVERY_ORIGINAL_USER_REQUIRED"));
+        }
+        Ok(())
     }
     fn sales_sync(&self) -> Result<Value, AccessError> {
         let n = self.sales_network()?;
@@ -1272,6 +1369,46 @@ pub async fn native_sales(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn recovered_native_pending_keeps_origin_bytes_and_refuses_another_actor() {
+        let id = |n: u32| format!("96400000-0000-4000-8000-{n:012}");
+        let current = CatalogueContext {
+            tenant_id: id(1),
+            actor_id: id(2),
+            device_id: id(40),
+            installation_id: id(30),
+            writer_epoch: "1".into(),
+            scope_type: "GLOBAL".into(),
+            branch_id: None,
+        };
+        let v = json!({"protocol":"ventard.native.v1","kind":"TURN_OPEN","operationId":id(5),"negocioId":id(1),"actorId":id(2),"originDeviceId":id(4),"installationId":id(3),"writerEpoch":"1","scope":{"type":"GLOBAL","sucursalId":null},"payload":{"openingCents":"2000"}});
+        let (intent, hash) =
+            ventard_core::domain::canonical::canonicalize(&serde_json::to_vec(&v).unwrap())
+                .unwrap();
+        let fact = ventard_core::storage::recovery::Fact {
+            operation_id: id(5),
+            intent: intent.clone(),
+            hash: hash.clone(),
+            snapshot: None,
+            pending: true,
+        };
+        let (origin, submission) = recovery_submission(&current, &fact).unwrap().unwrap();
+        assert_eq!(origin.installation_id, id(3));
+        assert_eq!(origin.device_id, id(4));
+        assert_eq!(origin.actor_id, current.actor_id);
+        assert_eq!(submission["p_intent"], intent);
+        assert_eq!(submission["p_hash"], hash);
+        assert_eq!(submission["p_snapshot"], Value::Null);
+        let mut other = current.clone();
+        other.actor_id = id(9);
+        assert!(recovery_submission(&other, &fact).unwrap().is_none());
+        let mut altered = fact.clone();
+        altered.hash = "0".repeat(64);
+        assert!(recovery_submission(&current, &altered).is_err());
+        altered = fact.clone();
+        altered.operation_id = id(8);
+        assert!(recovery_submission(&current, &altered).is_err());
+    }
 
     fn header_context() -> CatalogueContext {
         CatalogueContext {

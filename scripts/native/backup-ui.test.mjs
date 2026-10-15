@@ -26,6 +26,8 @@ test('Respaldo en Ajustes: replay, archivo rechazado y consulta histórica sin c
    if(command==='native_access_status')return{status:archive?'RECOVERY_ARCHIVE':'PREPARATION_REQUIRED',configured:true,actorId:id(2),tenantId:id(1),role:archive?null:'owner',pinEnrolled:true,operationalReady:!archive,catalogueReady:true,tenants:[]};
    const c=args.command;
    if(command==='native_backup'){
+    if(c.action==='RECOVERY_LIST'||c.action==='RECOVERY_ARCHIVED_LIST')return{rows:[]};
+    if(c.action==='TRANSITION_VIEW')return{report:null,capture:null};
     if(c.action==='WEB_STATUS')return{rows:[]};
     if(c.action==='STATUS')return{rows,canCreate:!archive,archive:archive?summary:undefined};
     if(c.action==='CREATE'){created.push(c.operationId);if(!rows.length)rows.push({...summary,backupId:c.operationId,handle:undefined});if(lose){lose=false;throw{code:'IPC_RESPONSE_LOST'}}return rows[0]}
@@ -54,7 +56,7 @@ test('Respaldo en Ajustes: replay, archivo rechazado y consulta histórica sin c
   await page.getByRole('button',{name:'Recuperar el mismo respaldo',exact:true}).click();
   await page.getByText('Respaldo cifrado y llave guardados.',{exact:false}).waitFor();
   assert.equal(created.length,2);assert.equal(new Set(created).size,1);
-  await page.getByRole('button',{name:'Abrir y verificar respaldo',exact:true}).click();await page.getByRole('alert').waitFor();assert.equal(archive,false);
+  await page.getByRole('button',{name:'Abrir y verificar respaldo',exact:true}).click();await page.getByRole('heading',{name:'🔐 Respaldo y recuperación',exact:true}).locator('..').getByRole('alert').waitFor();assert.equal(archive,false);
   await page.getByRole('button',{name:'Abrir y verificar respaldo',exact:true}).click();await page.getByText('Copia verificada',{exact:true}).waitFor();
   await page.waitForFunction(()=>[...document.querySelectorAll('button')].some(b=>b.textContent==='Consultar datos recuperados'&&!b.disabled));
   await page.screenshot({path:fileURLToPath(new URL('../../docs/native/evidence/native-backup-settings.png',import.meta.url)),fullPage:true});

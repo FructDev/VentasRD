@@ -7,7 +7,7 @@ use ventard_core::{
 };
 #[derive(Default)]
 pub(super) struct RecoveryState {
-    candidates: BTreeMap<String, core::Archive>,
+    pub(super) candidates: BTreeMap<String, core::Archive>,
     active: Option<String>,
 }
 #[derive(Deserialize)]
@@ -18,6 +18,35 @@ pub(super) struct RecoveryState {
     deny_unknown_fields
 )]
 pub enum Action {
+    RecoveryArchivedList {},
+    RecoveryOpenNested {
+        recovery_id: String,
+    },
+    RecoveryList {},
+    RecoveryPrepare {
+        handle: String,
+        recovery_id: String,
+    },
+    RecoveryReview {
+        recovery_id: String,
+    },
+    RecoverySendPending {
+        recovery_id: String,
+        original_stopped: bool,
+    },
+    RecoveryConfirm {
+        recovery_id: String,
+        original_stopped: bool,
+    },
+    RecoveryRecover {
+        recovery_id: String,
+    },
+    RecoveryAbandon {
+        recovery_id: String,
+    },
+    RecoveryOpen {
+        recovery_id: String,
+    },
     Status {},
     WebStatus {},
     WebImport {},
@@ -232,7 +261,7 @@ impl AccessState {
         .map_err(|e| error(e.code()))?;
         Ok((s, w))
     }
-    fn backup_private(&self) -> Result<PathBuf, AccessError> {
+    pub(super) fn backup_private(&self) -> Result<PathBuf, AccessError> {
         let root = self.root.canonicalize().map_err(|_| error("BACKUP_IO"))?;
         let dir = root.join("recovery-candidates");
         std::fs::create_dir_all(&dir).map_err(|_| error("BACKUP_IO"))?;
@@ -253,6 +282,7 @@ impl AccessState {
             let ctx = context(source);
             let result = (|| -> Result<Value, AppError> {
                 match action {
+                    Action::RecoveryArchivedList {} => ventard_core::storage::recovery::archived_list(c,source).map_err(|e|AppError::Storage(e.code().into())),
                     Action::LegacyHistory { filter } => ventard_core::storage::legacy_transition::history(c,&ctx,&filter.search,filter.method.as_deref(),filter.from_ms.as_deref(),filter.to_ms.as_deref(),filter.page).map_err(|e|AppError::Storage(e.code().into())),
                     Action::LegacyTicket { sale_id } => ventard_core::storage::legacy_transition::ticket(c,&ctx,&sale_id).map_err(|e|AppError::Storage(e.code().into())),
                     Action::Read {} => {
@@ -319,6 +349,46 @@ v["mode"] = json!("recovery-readonly");
         })
     }
     pub(super) fn backup_action(&self, action: Action) -> Result<Value, AccessError> {
+        if matches!(
+            &action,
+            Action::RecoveryArchivedList {} | Action::RecoveryOpenNested { .. }
+        ) {
+            if matches!(&action, Action::RecoveryArchivedList {}) {
+                return self.archive_read(action);
+            }
+            let Action::RecoveryOpenNested { recovery_id } = action else {
+                unreachable!()
+            };
+            id(&recovery_id)?;
+            let handle = EntityId::new_random().to_string();
+            let directory = self.backup_private()?.join(format!("ancestor-{handle}"));
+            let mut state = self.recovery.lock().map_err(|_| error("ACCESS_BUSY"))?;
+            if state.candidates.len() >= 8 {
+                return Err(error("BACKUP_TOO_MANY_CANDIDATES"));
+            }
+            let parent = state
+                .active
+                .as_ref()
+                .and_then(|id| state.candidates.get(id))
+                .ok_or(error("BACKUP_NOT_OPEN"))?;
+            let child = parent.nested(&directory, &recovery_id).map_err(map)?;
+            state.candidates.insert(handle.clone(), child);
+            drop(state);
+            return self.backup_action(Action::Open { handle });
+        }
+        if matches!(
+            &action,
+            Action::RecoveryList {}
+                | Action::RecoveryPrepare { .. }
+                | Action::RecoveryReview { .. }
+                | Action::RecoverySendPending { .. }
+                | Action::RecoveryConfirm { .. }
+                | Action::RecoveryRecover { .. }
+                | Action::RecoveryAbandon { .. }
+                | Action::RecoveryOpen { .. }
+        ) {
+            return self.recovery_action(action);
+        }
         if matches!(
             &action,
             Action::LegacyHistory { .. } | Action::LegacyTicket { .. }

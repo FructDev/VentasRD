@@ -236,6 +236,13 @@ pub fn get_embedded_migrations() -> Vec<Migration> {
         sql: sql_0030,
         checksum: Migration::compute_checksum(sql_0030),
     });
+    let sql_0031 = include_str!("../../migrations/0031_native_recovery.sql");
+    migrations.push(Migration {
+        version: 31,
+        name: "0031_native_recovery",
+        sql: sql_0031,
+        checksum: Migration::compute_checksum(sql_0031),
+    });
     migrations
 }
 

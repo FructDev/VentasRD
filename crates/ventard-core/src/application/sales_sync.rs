@@ -1492,7 +1492,7 @@ pub fn import_history(
     }
     tx.commit()?;
     Ok(
-        json!({"coverage":"NATIVE_LEDGER_THROUGH_WATERMARK","count":count.to_string(),"watermark":watermark.to_string(),"capturedAtMs":m["capturedAtMs"],"legacyReplay":false}),
+        json!({"snapshotId":m["snapshotId"],"coverage":"NATIVE_LEDGER_THROUGH_WATERMARK","count":count.to_string(),"watermark":watermark.to_string(),"capturedAtMs":m["capturedAtMs"],"legacyReplay":false}),
     )
 }
 fn import_history_event(

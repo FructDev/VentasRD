@@ -274,6 +274,7 @@ export const nativePosPort: PosPort = {
   },
 };
 const errors: Record<string, string> = {
+  RECOVERY_REVIEW_REQUIRED:'La recuperación de un respaldo está pendiente. Confírmala o cancélala desde Configuración antes de guardar cambios nuevos.',
   HISTORY_MIGRATION_REQUIRED:'El servidor necesita habilitar la descarga del historial nativo. Las ventas guardadas se conservan.',
   HISTORY_SYNC_REQUIRED:'Resuelve los pendientes y completa la sincronización antes de descargar la historia. No se repitieron ventas.',
   PRINT_QUEUE_MISSING:'La cola de impresora ya no está instalada. Revisa la conexión en Ajustes.',

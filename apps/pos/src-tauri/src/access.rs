@@ -2,6 +2,7 @@
 //! consistent snapshot/recovery/fiscal are ready. Credentials never leave Rust.
 pub mod backup;
 mod printers;
+mod recovery;
 pub mod sales;
 mod transition;
 mod web_reconciliation;

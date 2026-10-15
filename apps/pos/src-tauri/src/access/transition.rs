@@ -63,7 +63,7 @@ impl AccessState {
             .map_err(|_| error("TRANSITION_STORAGE"))?
             .map_err(|e| error(e.code()))
     }
-    fn transition_rpc(
+    pub(super) fn transition_rpc(
         &self,
         ctx: &CatalogueContext,
         rpc: &'static str,
@@ -106,6 +106,7 @@ impl AccessState {
             return Err(error(match status {
                 401 => "LOGIN_REQUIRED",
                 403 => "REMOTE_DENIED",
+                404 if rpc.starts_with("native_recovery_") => "RECOVERY_MIGRATION_REQUIRED",
                 404 => "MIGRATION_REQUIRED",
                 _ => match v["message"].as_str() {
                     Some("WEB_OBSERVATION_UNAVAILABLE") => "TABLE_UNAVAILABLE",
@@ -135,6 +136,14 @@ impl AccessState {
                     Some("CUTOVER_CREDIT_UNVERIFIABLE") => "CUTOVER_CREDIT_UNVERIFIABLE",
                     Some("CUTOVER_ACTIVE_BALANCE_CONFLICT") => "CUTOVER_ACTIVE_BALANCE_CONFLICT",
                     Some("CUTOVER_ID_CONFLICT") => "CUTOVER_ID_CONFLICT",
+                    Some("RECOVERY_PENDING_UNVERIFIED") => "RECOVERY_PENDING_UNVERIFIED",
+                    Some("RECOVERY_SOURCE_NOT_ACTIVE") => "RECOVERY_SOURCE_NOT_ACTIVE",
+                    Some("RECOVERY_SNAPSHOT_REQUIRED" | "RECOVERY_SNAPSHOT_EXPIRED") => {
+                        "RECOVERY_SNAPSHOT_EXPIRED"
+                    }
+                    Some("RECOVERY_ID_CONFLICT") => "RECOVERY_ID_CONFLICT",
+                    Some("RECOVERY_OWNER_REQUIRED") => "RECOVERY_OWNER_REQUIRED",
+                    Some("RECOVERY_NEW_IDENTITY_REQUIRED") => "RECOVERY_NEW_IDENTITY_REQUIRED",
                     Some("NATIVE_ACTIVE_SCOPE_CONFLICT") => "CUTOVER_ACTIVE_SCOPE_CONFLICT",
                     Some("NATIVE_CREDIT_SOURCE_UNVERIFIABLE") => "CUTOVER_CREDIT_UNVERIFIABLE",
                     _ => "NETWORK_UNAVAILABLE",
@@ -375,6 +384,7 @@ mod tests {
                     confirmation: "WEB_WRITERS_CLOSED_BALANCES_REVIEWED".into(),
                     free_tax: "0.18".into(),
                     service_reservations_confirmed: None,
+                    legacy_cash_history_confirmed: None,
                 },
             },
             backup::Action::TransitionCapture {

@@ -119,6 +119,8 @@ pub(crate) fn prepare_in_transaction(
         }
         return Ok(row.10);
     }
+    #[cfg(feature = "encrypted-storage")]
+    crate::storage::recovery::ensure_writable(tx, canonical_bytes)?;
     tx.execute(
         "INSERT INTO operation_journal(operation_id,protocol,kind,version,canonical_bytes,hash,origin_actor,origin_scope,origin_device,origin_epoch,prepared_at,local_seq,local_state)
          VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,COALESCE((SELECT MAX(local_seq) FROM operation_journal),0)+1,'PREPARED')",
@@ -243,6 +245,15 @@ where
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
     if let Some(result) = get_operation_result(&tx, operation_id, hash)? {
         return Ok(result);
+    }
+    #[cfg(feature = "encrypted-storage")]
+    {
+        let raw: Vec<u8> = tx.query_row(
+            "SELECT canonical_bytes FROM operation_journal WHERE operation_id=?1",
+            [operation_id],
+            |r| r.get(0),
+        )?;
+        crate::storage::recovery::ensure_writable(&tx, &raw)?;
     }
     let result = effects(&tx)?;
     commit_in_transaction(&tx, operation_id, &result)?;
