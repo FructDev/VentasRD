@@ -3,13 +3,17 @@
 import { useEffect, useRef, useState } from 'react';
 import type { User as SupabaseUser } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase/client';
-import { useConfigStore } from '@/store/useConfigStore';
+import { useConfigStore, type RolUsuario } from '@/store/useConfigStore';
 import { useRouter, usePathname } from 'next/navigation';
 import PinScreen from '@/components/ui/PinScreen';
 import SubscriptionGate from '@/components/ui/SubscriptionGate';
 import { puedeAcceder } from '@/lib/acceso';
 import { hayServidor } from '@/lib/red';
 import { iniciarMedicion, registrarMetrica, type ResultadoMetrica } from '@/lib/rendimiento';
+import { canUseCachedBusiness, canUseOfflineBusiness } from '@/lib/auth/cached-identity';
+import { resolveStartupSession } from '@/lib/auth/startup';
+import { validateCachedBranch } from '@/lib/auth/cached-branch';
+import { db } from '@/lib/db/dexie';
 
 // Una red 'conectada pero muerta' (WiFi sin internet) deja navigator.onLine
 // en true y las peticiones colgadas por 30-60s — el arranque se eternizaba.
@@ -23,16 +27,25 @@ function conTimeout<T>(p: PromiseLike<T>, ms: number, fallback: T): Promise<T> {
 
 const RUTAS_PUBLICAS = ['/login', '/registro', '/landing', '/offline', '/pin', '/recuperar-contrasena', '/actualizar-contrasena', '/superadmin', '/auth/confirm', '/onboarding', '/select-branch', '/unirse', '/catalogo', '/terminos', '/privacidad', '/ayuda', '/pagar'];
 
+function rolSeguro(rol: string): RolUsuario {
+    return rol === 'admin' || rol === 'vendedor' || rol === 'cajero' ? rol : 'cajero';
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
     const router = useRouter();
     const pathname = usePathname();
     const pathnameRef = useRef(pathname);
-    pathnameRef.current = pathname;
     const [isReady, setIsReady] = useState(false);
     const [needsPin, setNeedsPin] = useState(false);
+    const [cachedIdentityDenied, setCachedIdentityDenied] = useState(false);
+
+    useEffect(() => {
+        pathnameRef.current = pathname;
+    }, [pathname]);
 
     useEffect(() => {
         let montado = true;
+        const authCallbacks = new Set<ReturnType<typeof setTimeout>>();
         // Candado de concurrencia: los eventos de auth (INITIAL_SESSION, SIGNED_IN,
         // TOKEN_REFRESHED) disparan en ráfaga. Dos ejecuciones simultáneas de
         // procesarUsuario llegaban a la auto-sanación a la vez y creaban negocios
@@ -46,6 +59,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         let pendiente: { user: SupabaseUser | null | undefined; forzarOffline: boolean } | null = null;
 
         const procesarUsuario = async (user: SupabaseUser | null | undefined, forzarOffline = false) => {
+            if (!montado) return;
             if (procesando) {
                 // getSession e INITIAL_SESSION pueden informar exactamente la misma
                 // sesión durante el arranque. No repetir todas las consultas por un
@@ -75,12 +89,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         };
 
         const procesarUsuarioInterno = async (user: SupabaseUser | null | undefined, forzarOffline = false) => {
+            const inicioProceso = performance.now();
             const finalizarArranque = iniciarMedicion();
             const rutaActual = pathnameRef.current;
             const rutasPublicas = RUTAS_PUBLICAS;
             // Coincidencia por prefijo: cubre rutas con parámetros como /catalogo/:id
             const esPublica = (p: string) => rutasPublicas.some(r => p === r || p.startsWith(r + '/'));
+            // Repair only an incompatible *selection*, never cached business
+            // data. This also catches configurations persisted before the fix.
+            // No network query: a valid legacy offline cache stays usable.
+            await validateCachedBranch({
+                getScope: () => useConfigStore.getState(),
+                readBranch: id => db.sucursales.get(id),
+                invalidate: () => useConfigStore.getState().setSucursal(null),
+            });
+            if (!montado) return;
             const currentState = useConfigStore.getState();
+
+            // Nunca se usa el cache de otro usuario ni uno sin identidad historica.
+            const identidadCacheValida = canUseCachedBusiness({
+                sessionUserId: user?.id,
+                cachedUserId: currentState.usuarioCacheId,
+                businessId: currentState.negocioId,
+            });
 
             // SIN INTERNET — usar caché directamente.
             // Comprobamos el servidor de verdad: con el router muerto (se fue la
@@ -89,8 +120,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             const inicioRed = performance.now();
             const servidorAlcanzable = forzarOffline ? false : await hayServidor();
             registrarMetrica('arranque.comprobar_servidor', performance.now() - inicioRed, 'ok', { alcanzable: servidorAlcanzable });
+            // Con servidor alcanzable y la MISMA identidad ya validada, Dexie
+            // puede pintar de inmediato. La actualizacion remota de negocio,
+            // plan y rol continua debajo sin bloquear la interfaz.
+            if (servidorAlcanzable && identidadCacheValida) {
+                if (montado) setIsReady(true);
+                registrarMetrica('arranque.cache_local_visible', performance.now() - inicioProceso, 'ok');
+            }
             if (!servidorAlcanzable) {
-                if (currentState.negocioId) {
+                if (canUseOfflineBusiness({ sessionUserId: user?.id, cachedUserId: currentState.usuarioCacheId, businessId: currentState.negocioId })) {
+                    if (montado) setCachedIdentityDenied(false);
                     // El dispositivo conoce este negocio
                     // ¿Ya desbloqueó con el PIN en esta sesión offline? → dejar pasar
                     // ¿No ha desbloqueado? → pedir PIN siempre (ignorar si el dueño dejó la sesión web abierta)
@@ -104,6 +143,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 } else {
                     // Dispositivo nuevo sin datos → no puede hacer nada offline
                     if (!esPublica(rutaActual)) router.push('/login');
+                    // Preserve local data, but never expose an ambiguous cached tenant.
+                    if (montado) { setCachedIdentityDenied(true); setIsReady(true); }
+                    finalizarArranque('arranque.autenticacion', 'error', { modo: 'offline-identidad-no-verificada' });
+                    return;
                 }
                 if (montado) setIsReady(true);
                 finalizarArranque('arranque.autenticacion', 'ok', { modo: 'offline-cache' });
@@ -112,9 +155,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
             // CON INTERNET — flujo normal con Supabase
             if (!user) {
+                if (montado) setCachedIdentityDenied(false);
                 useConfigStore.getState().cerrarSesionUsuario();
                 if (!esPublica(rutaActual)) {
-                    const isPWA = window.matchMedia('(display-mode: standalone)').matches || ('standalone' in window.navigator && (window.navigator as any).standalone);
+                    const navigatorPwa = window.navigator as Navigator & { standalone?: boolean };
+                    const isPWA = window.matchMedia('(display-mode: standalone)').matches || navigatorPwa.standalone === true;
                     router.push(isPWA ? '/login' : '/landing');
                 }
                 if (montado) setIsReady(true);
@@ -168,7 +213,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 if (error) {
                     console.warn("No se pudo conectar a Supabase (posiblemente offline). Usando caché local.");
                     // FALLBACK OFFLINE
-                    if (currentState.negocioId) {
+                    if (identidadCacheValida) {
+                        if (montado && !currentState.isOfflineUnlocked) setNeedsPin(true);
                         negocio = {
                             id: currentState.negocioId,
                             nombre: currentState.negocioNombre,
@@ -248,6 +294,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                     negocio?.telefono || null,
                     negocio?.logo_url || null
                 );
+                if (montado) setCachedIdentityDenied(false);
                 useConfigStore.getState().setPlan(
                     negocio?.plan_activo ?? false,
                     negocio?.trial_hasta ?? null,
@@ -281,6 +328,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 if (!error) {
                     useConfigStore.getState().marcarTiempoVisto();
                     useConfigStore.getState().resetAperturasServidor();
+                    useConfigStore.getState().registrarConexionExitosa();
                 } else {
                     useConfigStore.getState().marcarTiempoVisto();
                 }
@@ -290,7 +338,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 // convertía a un cajero en administrador con solo abrir la app sin
                 // señal. Sin confirmación del servidor se conserva el rol cacheado.
                 if (empleado) {
-                    useConfigStore.getState().setRol(empleado.rol as any, empleado.nombre);
+                    useConfigStore.getState().setRol(rolSeguro(empleado.rol), empleado.nombre);
                 } else if (!error) {
                     useConfigStore.getState().setRol('admin', null);
                 }
@@ -326,7 +374,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                         }
                         // Empleados: bloquear rutas fuera de su rol (la navegación las oculta,
                         // pero esto cubre el acceso directo por URL)
-                        if (empleado && !rutasPublicas.includes(rutaActual) && !puedeAcceder(empleado.rol as any, rutaActual)) {
+                        if (empleado && !rutasPublicas.includes(rutaActual) && !puedeAcceder(rolSeguro(empleado.rol), rutaActual)) {
                             router.push('/');
                         }
                     }
@@ -334,6 +382,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             } catch (error) {
                 resultadoArranque = 'error';
                 console.error("Error en AuthProvider:", error);
+                if (!identidadCacheValida) {
+                    if (montado) setCachedIdentityDenied(true);
+                    if (!esPublica(rutaActual)) router.push('/login');
+                }
             } finally {
                 finalizarArranque('arranque.autenticacion', resultadoArranque, { modo: 'online' });
                 // Solo mostramos la app cuando todo este proceso haya terminado
@@ -346,17 +398,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // mañana SIEMPRE expiró. Con el router muerto esa petición se cuelga y
         // el arranque nunca termina. Con timeout: si no responde, arrancamos por
         // el camino offline en vez de quedarnos en "Iniciando VentaRD…".
-        conTimeout<{ respondio: boolean; user: SupabaseUser | undefined }>(
-            supabase.auth.getSession().then(({ data: { session } }) => ({
-                respondio: true,
-                user: session?.user,
-            })),
-            6000,
-            { respondio: false, user: undefined },
-        ).then(({ respondio, user }) => {
+        resolveStartupSession<SupabaseUser>({
+            probe: () => hayServidor(1200),
+            getSession: () => supabase.auth.getSession().then(({ data: { session } }) => session?.user),
+        }).then(({ offline, user }) => {
             // Si getSession no respondió no sabemos si hay sesión: NO expulsar al
             // login. Forzamos el camino offline, que pide PIN y deja trabajar.
-            procesarUsuario(user, !respondio);
+            void procesarUsuario(user, offline);
         });
 
         // Escuchar si el usuario inicia sesión o se sale
@@ -364,11 +412,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             // La sesión inicial ya la obtiene getSession con timeout y fallback
             // offline. Procesarla también aquí duplicaba todas las consultas.
             if (event === 'INITIAL_SESSION') return;
-            procesarUsuario(session?.user);
+            // Supabase auth holds its lock during callbacks. Never await remote
+            // queries under that lock; defer work, and fence it on unmount.
+            const handle = setTimeout(() => {
+                authCallbacks.delete(handle);
+                if (montado) void procesarUsuario(session?.user);
+            }, 0);
+            authCallbacks.add(handle);
         });
 
         return () => {
             montado = false;
+            for (const handle of authCallbacks) clearTimeout(handle);
             subscription.unsubscribe();
         };
     }, [router]);
@@ -379,6 +434,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (!isReady || needsPin) return;
 
         const esPublica = RUTAS_PUBLICAS.some(r => pathname === r || pathname.startsWith(r + '/'));
+        if (cachedIdentityDenied) {
+            if (!esPublica) router.push('/login');
+            return;
+        }
         const state = useConfigStore.getState();
         const enRecuperacion = pathname.startsWith('/actualizar-contrasena') || pathname.startsWith('/recuperar-contrasena');
         if (enRecuperacion || pathname.startsWith('/catalogo')) return;
@@ -402,10 +461,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (esEmpleado && !esPublica && !puedeAcceder(state.rolUsuario, pathname)) {
             router.push('/');
         }
-    }, [isReady, needsPin, pathname, router]);
+    }, [isReady, needsPin, cachedIdentityDenied, pathname, router]);
 
     // Pantalla de carga mientras piensa a dónde enviarte
-    if (!isReady) {
+    if (!isReady || cachedIdentityDenied && !RUTAS_PUBLICAS.some(r => pathname === r || pathname.startsWith(r + '/'))) {
         return (
             <div className="min-h-screen flex items-center justify-center bg-navy">
                 <div className="animate-pulse flex flex-col items-center">

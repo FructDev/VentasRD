@@ -13,6 +13,8 @@ import { useCandado } from '@/lib/useCandado';
 import TopBar from '@/components/shared/TopBar';
 import OfflineBanner from '@/components/shared/OfflineBanner';
 import ConfirmModal from '@/components/ui/ConfirmModal';
+import {getSharedCaptureContext} from '@/lib/sync/shared-capture';
+import {localCommandError} from '@/lib/domain/local/errors';
 
 type Periodo = 'hoy' | '7d' | 'mes';
 
@@ -80,23 +82,28 @@ export default function GastosPage() {
 
         setGuardando(true);
         try {
+            await db.transaction('rw',db.gastos,db.cajas,async()=>{
+            const shared=getSharedCaptureContext(db),at=Date.now();let turnId:string|undefined;
+            if(shared){const turns=await db.cajas.where('negocio_id').equals(negocioId).filter(row=>row.estado==='abierta'&&(row.sucursal_id??null)===(sucursalId??null)).toArray();if(turns.length!==1)throw Error(turns.length?'turno_ambiguo':'turno_requerido');turnId=turns[0].id}
             await db.gastos.add({
                 id: uuidv4(),
                 negocio_id: negocioId,
                 sucursal_id: sucursalId || undefined,
+                ...(turnId?{caja_id:turnId}:{}),
                 categoria: form.categoria,
                 descripcion: form.descripcion.trim(),
                 monto,
                 metodo: form.metodo,
                 creado_por: nombreUsuario || undefined,
-                fecha_creacion: Date.now(),
-                fecha_actualizacion: Date.now(),
+                fecha_creacion: at,
+                fecha_actualizacion: at,
                 estado_sincronizacion: 0,
+            });
             });
             setIsModalOpen(false);
             showToast(`Gasto de ${formatDOP(monto)} registrado.`, 'success');
-        } catch {
-            showToast('Error al guardar el gasto.', 'error');
+        } catch(error) {
+            showToast(localCommandError(error), 'error');
         } finally {
             setGuardando(false);
         }
@@ -106,6 +113,7 @@ export default function GastosPage() {
 
     const eliminarGasto = async () => {
         if (!gastoAEliminar) return;
+        if(getSharedCaptureContext(db)){setGastoAEliminar(null);showToast('Los gastos del registro compartido se conservan como operaciones y no se borran del historial.','info');return}
         // Soft delete: el worker lo borra de la nube en el próximo sync
         await db.gastos.update(gastoAEliminar.id, { eliminado: true, estado_sincronizacion: 0, fecha_actualizacion: Date.now() });
         setGastoAEliminar(null);

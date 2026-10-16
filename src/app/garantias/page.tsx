@@ -12,6 +12,9 @@ import { TicketGarantia } from '@/components/TicketGarantia';
 import PinGuard from '@/components/ui/PinGuard';
 import TopBar from '@/components/shared/TopBar';
 import OfflineBanner from '@/components/shared/OfflineBanner';
+import {sharedWebEnabled} from '@/lib/sync/shared-worker';
+import {queueSharedConfiguration} from '@/lib/sync/shared-configuration';
+import {localCommandError} from '@/lib/domain/local/errors';
 
 const BarcodeScanner = lazy(() => import('@/components/ui/BarcodeScanner'));
 const DIA = 24 * 60 * 60 * 1000;
@@ -144,7 +147,7 @@ export default function GarantiasPage() {
                                     type="number" min="0"
                                     className="w-20 bg-navy-3 border border-navy-3 rounded-lg p-2 text-white font-mono text-center focus:border-gold outline-none transition-all"
                                     value={garantiaDiasDefault}
-                                    onChange={e => setGarantiaDiasDefault(parseInt(e.target.value) || 0)}
+                                    onChange={e => {const days=parseInt(e.target.value)||0;if(negocioId&&sharedWebEnabled(negocioId)){if(days<0||days>3650)return;void queueSharedConfiguration(db,'WARRANTY_DEFAULT',{at:String(Date.now()),days:String(days)}).then(()=>setGarantiaDiasDefault(days)).catch(error=>showToast(localCommandError(error),'error'))}else setGarantiaDiasDefault(days)}}
                                 />
                                 <span className="text-sm text-vr-gray font-bold">días</span>
                             </div>

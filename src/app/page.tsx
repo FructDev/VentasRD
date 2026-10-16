@@ -1,9 +1,9 @@
 // src/app/page.tsx
 'use client';
 
-import { useState, useEffect, useRef, useMemo, useCallback, memo, lazy, Suspense } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback, useSyncExternalStore, memo, lazy, Suspense } from 'react';
 import { useConfigStore, getDispositivoId } from '@/store/useConfigStore';
-import { useCartStore } from '@/store/useCartStore';
+import { useCartStore, mismoScope, type CartScope } from '@/store/useCartStore';
 import { ProductoLocal } from '@/types/database';
 import { formatDOP, formatTicket } from '@/lib/utils';
 import { linkWhatsApp } from '@/lib/whatsapp';
@@ -13,19 +13,31 @@ import { miniatura } from '@/lib/imagen';
 import Fuse from 'fuse.js';
 import { useReactToPrint } from 'react-to-print';
 import { TicketVenta } from '@/components/TicketVenta';
-import { db, getNextTicketNumber } from '@/lib/db/dexie';
-import { registrarMovimientoStock } from '@/lib/db/stock';
-import { useProductosTenant, useClientesTenant, useTransaccionesFiadoTenant } from '@/lib/db/tenantQuery';
+import { db } from '@/lib/db/dexie';
+import { confirmarDevolucionLocal } from '@/lib/domain/devoluciones/confirmarDevolucionLocal';
+import { useClientesTenant, useTransaccionesFiadoTenant } from '@/lib/db/tenantQuery';
 import { v4 as uuidv4 } from 'uuid';
 import TopBar from '@/components/shared/TopBar';
 const BarcodeScanner = lazy(() => import('@/components/ui/BarcodeScanner'));
 import OfflineBanner from '@/components/shared/OfflineBanner';
 import VentaLibreModal from '@/components/shared/VentaLibreModal';
+import { localCommandError } from '@/lib/domain/local/errors';
 import CajaModal from '@/components/shared/CajaModal';
 import ConfirmModal from '@/components/ui/ConfirmModal';
 import { SkeletonProductGrid } from '@/components/ui/Skeleton';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { estaSyncActivo, iniciarMedicion, type ResultadoMetrica } from '@/lib/rendimiento';
+import { prepararCheckoutLocal, confirmarCheckoutLocal, leerCheckoutLocal, listarCheckoutsSinResolver,
+  abandonarCheckoutLocal, abandonarBorradorSinCheckout, reconocerCheckoutLocal, type CheckoutLocal } from '@/lib/domain/ventas/checkoutLocal';
+import { VERSION_CONTRATO_VENTA, asegurarContratoPreparacionVenta } from '@/lib/domain/ventas/contrato';
+import type { ConfirmarVentaLocalEntrada } from '@/lib/domain/ventas/confirmarVentaLocal';
+import { moneyCents } from '@/lib/domain/local/command';
+import { estadoNcfLocal } from '@/lib/domain/ventas/ncfLocal';
+import {sharedBalanceCents} from '@/lib/sync/shared-balance';
+import { resolveCurrentCatalogMatches } from '@/lib/catalog/search';
+import { catalogAtScope, requireProductAtScope } from '@/lib/sync/inventory/scope-stock';
+import { catalogWindow, extendCatalogWindow } from '@/lib/catalog/window';
+import { devueltaVerificable, resumenBorrador, debeConfirmarConEnter, puedeAbrirCarrito } from '@/lib/domain/ventas/presentacion';
 
 // Color del stock según nivel (puro — fuera del componente para no recrearse)
 function getStockColor(producto: ProductoLocal) {
@@ -78,8 +90,48 @@ const ProductCard = memo(function ProductCard({
 });
 
 export default function POSPage() {
-  const { negocioId, negocioNombre, sucursalId, showToast, negocioRnc, negocioTelefono, negocioDireccion, negocioMensajeTicket, negocioLogo, nombreUsuario, rolUsuario, consumirNcf, ncf: ncfConfig, impresion, dispositivoId, planTier, garantiaDiasDefault } = useConfigStore();
-  const { items, subtotal, itbis, descuento, total, tipoDescuento, valorDescuento, addItem, addItemConSerial, clearCart, updateQuantity, setDescuento, setCliente, clienteActivoId, tipoPrecios, enEspera, pausarVenta, retomarVenta, descartarEnEspera } = useCartStore();
+  const { negocioId, negocioNombre, sucursalId, showToast, negocioRnc, negocioTelefono, negocioDireccion, negocioMensajeTicket, negocioLogo, nombreUsuario, rolUsuario, ncf: ncfConfig, impresion, planTier, garantiaDiasDefault } = useConfigStore();
+  const cart = useCartStore();
+  const activarScope = cart.activarScope;
+  const cartHydrated = useSyncExternalStore(useCallback(cb => {
+    const off = useCartStore.persist.onFinishHydration(cb);
+    const start = useCartStore.persist.onHydrate(cb);
+    return () => { off(); start(); };
+  }, []), () => useCartStore.persist.hasHydrated(), () => false);
+  const scope = useMemo<CartScope | null>(() => negocioId ? { negocioId, sucursalId: sucursalId || null } : null, [negocioId, sucursalId]);
+  useEffect(() => { if (cartHydrated && scope) activarScope(scope); }, [cartHydrated, scope, activarScope]);
+  const cartReady = cartHydrated && mismoScope(cart.scope, scope);
+  const { tipoDescuento, valorDescuento, tipoPrecios } = cart;
+  const items = cartReady ? cart.items : [];
+  const subtotal = cartReady ? cart.subtotal : 0, itbis = cartReady ? cart.itbis : 0;
+  const descuento = cartReady ? cart.descuento : 0, total = cartReady ? cart.total : 0;
+  const errorCalculo = cartReady ? cart.errorCalculo : null;
+  const formatCartAmount = (amount: number) => errorCalculo ? 'No verificable' : formatDOP(amount);
+  const clienteActivoId = cartReady ? cart.clienteActivoId : null;
+  const enEspera = cart.enEspera.filter(v => mismoScope(v.scope, scope));
+  const mutateCart = useCallback((action: () => void) => {
+    const current = useConfigStore.getState();
+    const currentScope = current.negocioId ? { negocioId: current.negocioId, sucursalId: current.sucursalId || null } : null;
+    if (!cartHydrated || !scope || !mismoScope(scope, currentScope) || !mismoScope(useCartStore.getState().scope, scope)) {
+      showToast(localCommandError(new Error('cart_scope_incompatible')), 'error'); return;
+    }
+    try { action(); } catch (e) { showToast(localCommandError(e), 'error'); }
+  }, [scope, showToast, cartHydrated]);
+  const addItem = useCallback((p: ProductoLocal) => mutateCart(() => useCartStore.getState().addItem(p)), [mutateCart]);
+  const addItemConSerial = (p: ProductoLocal, id: string, numero: string) => mutateCart(() => cart.addItemConSerial(p, id, numero));
+  const clearCart = () => mutateCart(() => cart.clearCart());
+  const updateQuantity = (id: string, q: number) => mutateCart(() => cart.updateQuantity(id, q));
+  const setDescuento = (tipo: 'monto' | 'porcentaje', v: number) => mutateCart(() => cart.setDescuento(tipo, v));
+  const setCliente = (id: string | null, tier: 1 | 2 | 3) => mutateCart(() => cart.setCliente(id, tier));
+  const pausarVenta = (etiqueta?: string | null) => { let ok = false; mutateCart(() => { ok = cart.pausarVenta(etiqueta); }); return ok; };
+  const retomarVenta = (id: string, etiqueta?: string | null) => mutateCart(() => cart.retomarVenta(id, etiqueta));
+  const descartarEnEspera = (id: string) => mutateCart(() => cart.descartarEnEspera(id));
+  const checkouts = useLiveQuery(() => scope ? listarCheckoutsSinResolver(db, scope) : [], [scope]) ?? [];
+  const [checkoutVisible, setCheckoutVisible] = useState<CheckoutLocal | null>(null);
+  const [modalScope, setModalScope] = useState<CartScope | null>(null);
+  const [modalCartId, setModalCartId] = useState<string | null>(null);
+  const receiptRef = useRef<CheckoutLocal | null>(null);
+  const recibo = checkoutVisible && mismoScope(checkoutVisible.scope, scope) ? checkoutVisible : null;
 
   const [searchTerm, setSearchTerm] = useState('');
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -97,7 +149,6 @@ export default function POSPage() {
   const [isVentaLibreOpen, setIsVentaLibreOpen] = useState(false);
   const [isCajaOpen, setIsCajaOpen] = useState(false);
   const [ultimoTicketNum, setUltimoTicketNum] = useState<number | undefined>(undefined);
-  const [ultimoNcf, setUltimoNcf] = useState<string | undefined>(undefined);
   const [ultimaVentaId, setUltimaVentaId] = useState<string | null>(null);
   const [anulando, setAnulando] = useState(false);
   const [procesandoVenta, setProcesandoVenta] = useState(false);
@@ -111,6 +162,7 @@ export default function POSPage() {
 
   // Modal selector de serial
   const [productoParaSerial, setProductoParaSerial] = useState<ProductoLocal | null>(null);
+  const [serialScope, setSerialScope] = useState<CartScope | null>(null);
   const [busquedaSerial, setBusquedaSerial] = useState('');
   const [scannerSerialPOS, setScannerSerialPOS] = useState(false);
   // Escáner de cámara para productos: cualquier celular = pistola de escaneo
@@ -132,29 +184,23 @@ export default function POSPage() {
   // Imprime por la vía configurada: ESC/POS directo o diálogo del navegador.
   // Recibe el número de ticket/ncf como argumento porque al auto-imprimir
   // el estado de React aún no se ha actualizado.
-  const imprimirTicket = async (ticketNum?: number, ncfVenta?: string) => {
+  const imprimirTicket = async (capturado = receiptRef.current) => {
+    const current = useConfigStore.getState();
+    if (!capturado || capturado.estado !== 'COMMITTED' || !mismoScope(capturado.scope,
+      { negocioId: current.negocioId ?? '', sucursalId: current.sucursalId || null }) || receiptRef.current?.cartId !== capturado.cartId) return;
+    const { comprobante: c, comando, efectos } = capturado;
     if (impresion.modoImpresion === 'directa') {
       try {
         const { imprimirVentaDirecta } = await import('@/lib/print/tickets');
         await imprimirVentaDirecta({
-          items: items.map(i => ({ cantidad: i.cantidad, nombre: i.nombre, precio: i.precio_venta, ubicacion: i.ubicacion })),
-          subtotal, itbis, descuento, total,
-          metodoPago,
-          montoRecibido: metodoPago === 'efectivo' ? parseFloat(montoRecibido || '0') : total,
-          devuelta: metodoPago === 'efectivo' ? devuelta : 0,
-          negocio: {
-            nombre: negocioNombre || 'VentaRD',
-            rnc: negocioRnc || undefined,
-            direccion: negocioDireccion || undefined,
-            telefono: negocioTelefono || undefined,
-          },
-          numeroTicket: ticketNum ?? ultimoTicketNum,
-          cajaCodigo: dispositivoId || undefined,
-          ncf: ncfVenta ?? ultimoNcf,
-          vendedor: nombreUsuario || undefined,
-          clienteNombre: clienteNombreVenta.trim() || undefined,
-          mensajePie: negocioMensajeTicket || undefined,
-          logoUrl: logoTicket,
+          items: c.items.map(i => ({ cantidad: i.cantidad, nombre: i.nombre, precio: i.precio_venta, ubicacion: i.ubicacion })),
+          subtotal: c.subtotal, itbis: c.itbis, descuento: c.descuento, total: c.total,
+          metodoPago: comando.metodoPago, montoRecibido: c.montoRecibido,
+          devuelta: comando.metodoPago === 'efectivo' ? c.montoRecibido - c.total : 0,
+          negocio: c.negocio, numeroTicket: efectos?.secuencia.numeroTicket,
+          cajaCodigo: comando.cajaCodigo, ncf: comando.ncf, vendedor: comando.vendedorNombre,
+          clienteNombre: comando.clienteNombre, mensajePie: c.negocio.mensajePie,
+          logoUrl: c.logoUrl, fechaVenta: comando.fecha,
         }, impresion);
         return;
       } catch (e) {
@@ -165,13 +211,19 @@ export default function POSPage() {
     handlePrint();
   };
 
-  const productosRaw = useLiveQuery(
-    () => negocioId ? db.productos.where('negocio_id').equals(negocioId).limit(1).toArray() : [],
+  // Una sola lectura local alimenta tanto el estado de carga como el catalogo.
+  // Antes se consultaba Dexie dos veces al abrir el POS.
+  const productosEnDBRaw = useLiveQuery(
+    () => negocioId
+      ? db.productos.where('negocio_id').equals(negocioId)
+        .filter(p => !p.eliminado && p.tipo !== 'insumo')
+        .toArray()
+      : [],
     [negocioId]
   );
-  const catalogoIsLoading = productosRaw === undefined;
-  const productosEnDBRaw = useProductosTenant();
-  const productosEnDB = useMemo(() => productosEnDBRaw.filter(p => p.tipo !== 'insumo'), [productosEnDBRaw]);
+  const catalogoIsLoading = productosEnDBRaw === undefined;
+  const productosEnDB = useMemo(() => negocioId ? catalogAtScope(productosEnDBRaw ?? [],
+    { negocioId, sucursalId: sucursalId ?? null }) : [], [productosEnDBRaw, negocioId, sucursalId]);
   const clientes = useClientesTenant();
   const transacciones = useTransaccionesFiadoTenant();
 
@@ -194,17 +246,21 @@ export default function POSPage() {
   );
   const productosFiltrados = useMemo(() => {
     if (!searchTerm) return productosEnDB;
-    return fuse.search(searchTerm).map(result => result.item);
+    const indexedMatches = fuse.search(searchTerm).map(result => result.item);
+    return resolveCurrentCatalogMatches(indexedMatches, productosEnDB);
   }, [searchTerm, fuse, productosEnDB]);
 
   // Renderizado progresivo: pinta un bloque y carga más al hacer scroll.
   // Mantiene la parrilla ágil con catálogos grandes sin perder ningún producto.
   const PAGINA_GRID = 48;
-  const [limiteVisible, setLimiteVisible] = useState(PAGINA_GRID);
+  const gridKey = JSON.stringify([negocioId, sucursalId || null, searchTerm]);
+  const [gridWindow, setGridWindow] = useState({ key: gridKey, limit: PAGINA_GRID });
+  const currentWindow = catalogWindow(gridWindow, gridKey, PAGINA_GRID);
+  // Ajuste condicionado durante render: React descarta el render anterior.
+  // No hay frame con una ventana de otro ámbito ni cascada de effects.
+  if (currentWindow !== gridWindow) setGridWindow(currentWindow);
+  const limiteVisible = currentWindow.limit;
   const sentinelRef = useRef<HTMLDivElement>(null);
-
-  // Reiniciar al cambiar la búsqueda (cada búsqueda empieza desde arriba)
-  useEffect(() => { setLimiteVisible(PAGINA_GRID); }, [searchTerm]);
 
   const productosVisibles = useMemo(
     () => productosFiltrados.slice(0, limiteVisible),
@@ -219,46 +275,20 @@ export default function POSPage() {
     const obs = new IntersectionObserver(
       entries => {
         if (entries[0].isIntersecting) {
-          setLimiteVisible(l => Math.min(l + PAGINA_GRID, productosFiltrados.length));
+          setGridWindow(prior => extendCatalogWindow(prior, gridKey, productosFiltrados.length, PAGINA_GRID));
         }
       },
       { rootMargin: '300px' }
     );
     obs.observe(el);
     return () => obs.disconnect();
-  }, [productosFiltrados.length]);
+  }, [gridKey, productosFiltrados.length]);
 
-  // ¿Hay números NCF disponibles para emitir? (bloques reservados o secuencia legada)
-  const ncfDisponible =
-    ncfConfig.bloques.some(b => b.proximo <= b.hasta) ||
-    (!ncfConfig.sembrado && (ncfConfig.actual === 0 ? ncfConfig.desde : ncfConfig.actual + 1) <= ncfConfig.hasta);
+  const ncfLocal = useLiveQuery(async () => negocioId ? estadoNcfLocal(db, negocioId, ncfConfig.tipo) : undefined, [negocioId, ncfConfig.tipo]);
+  const ncfDisponible = ncfConfig.negocioId === negocioId && ncfConfig.habilitado && !!ncfLocal?.deviceId && (ncfLocal?.disponibles ?? 0) > 0;
 
-  const devuelta = parseFloat(montoRecibido || '0') - total;
+  const devuelta = devueltaVerificable(montoRecibido, total, errorCalculo);
   const totalMixto = parseFloat(montoEfectivoMixto || '0') + parseFloat(montoTransferenciaMixto || '0');
-
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'F2') { e.preventDefault(); searchInputRef.current?.focus(); }
-      if (e.key === 'F4') { e.preventDefault(); setIsVentaLibreOpen(true); }
-      if (e.key === ' ' && items.length > 0 && document.activeElement !== searchInputRef.current && !isCheckoutOpen && !isVentaLibreOpen) { e.preventDefault(); abrirModalCobro(); }
-      if (e.key === 'Escape' && isCheckoutOpen && !ventaExitosa) { setIsCheckoutOpen(false); }
-      if (e.key === 'Escape' && isVentaLibreOpen) { setIsVentaLibreOpen(false); }
-      if (e.key === 'Escape' && isCartOpen) { setIsCartOpen(false); }
-      if (e.key === 'Enter') {
-        if (isCheckoutOpen && !ventaExitosa) {
-          e.preventDefault();
-          if (esMontoValido) { procesarVentaBD(); }
-        } else if (document.activeElement === searchInputRef.current && searchTerm) {
-          e.preventDefault();
-          const productoExacto = productosEnDB.find(p => p.codigo_barras === searchTerm);
-          if (productoExacto) { addItem(productoExacto); setSearchTerm(''); }
-          else if (productosFiltrados.length === 1) { addItem(productosFiltrados[0]); setSearchTerm(''); }
-        }
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [items, isCheckoutOpen, isVentaLibreOpen, isCartOpen, metodoPago, montoRecibido, total, ventaExitosa, searchTerm, productosFiltrados, productosEnDB, addItem]);
 
   useEffect(() => {
     if (isCheckoutOpen && !ventaExitosa) {
@@ -267,6 +297,13 @@ export default function POSPage() {
   }, [isCheckoutOpen, ventaExitosa]);
 
   const abrirModalCobro = () => {
+    // Revisar el borrador NO es cobrar. La guardia de importes permanece en
+    // esMontoValido/preflight/commit; el usuario puede corregir su descuento.
+    if (!cartReady || cart.bloqueado || !scope) {
+      showToast('Revisa los intentos guardados antes de iniciar otro cobro.', 'info'); return;
+    }
+    receiptRef.current = null; setCheckoutVisible(null);
+    setModalScope(scope); setModalCartId(cart.cartId);
     setMetodoPago('efectivo');
     setMontoRecibido('');
     setMontoEfectivoMixto('');
@@ -286,9 +323,7 @@ export default function POSPage() {
     }
     const cliente = clientes.find(c => c.id === clienteSeleccionadoId);
     const limite = cliente?.limite_credito ?? 0;
-    const cargos = transacciones.filter(t => t.tipo === 'cargo' && t.cliente_id === clienteSeleccionadoId).reduce((s, t) => s + t.monto, 0);
-    const abonos = transacciones.filter(t => t.tipo === 'abono' && t.cliente_id === clienteSeleccionadoId).reduce((s, t) => s + t.monto, 0);
-    const balance = cargos - abonos;
+    const balance = cliente?sharedBalanceCents(cliente,transacciones)/100:0;
     return {
       balanceClienteSeleccionado: balance,
       limiteClienteSeleccionado: limite,
@@ -296,14 +331,53 @@ export default function POSPage() {
     };
   }, [clienteSeleccionadoId, metodoPago, clientes, transacciones, total]);
 
-  const esMontoValido =
+  const mixtoCuadra = (() => {
+    try {
+      const efectivo = moneyCents(parseFloat(montoEfectivoMixto || '0'));
+      const transferencia = moneyCents(parseFloat(montoTransferenciaMixto || '0'));
+      return efectivo > 0 && transferencia > 0 && efectivo + transferencia === moneyCents(total);
+    } catch { return false; }
+  })();
+  const esMontoValido = !errorCalculo && (
     (metodoPago === 'efectivo' && parseFloat(montoRecibido || '0') >= total) ||
     (metodoPago === 'tarjeta' || metodoPago === 'transferencia') ||
     (metodoPago === 'fiado' && clienteSeleccionadoId !== '' && !excedeCredito) ||
-    (metodoPago === 'mixto' && parseFloat(montoEfectivoMixto || '0') > 0 && parseFloat(montoTransferenciaMixto || '0') > 0 && totalMixto >= total);
+    (metodoPago === 'mixto' && mixtoCuadra));
 
+  const mostrarCheckout = (row: CheckoutLocal) => {
+    const current = useConfigStore.getState();
+    if (!mismoScope(row.scope, { negocioId: current.negocioId ?? '', sucursalId: current.sucursalId || null })) return;
+    receiptRef.current = row; setCheckoutVisible(row); setModalScope(row.scope); setModalCartId(row.cartId);
+    setUltimoTicketNum(row.efectos?.secuencia.numeroTicket);
+    if (row.efectos && current.negocioId === row.scope.negocioId) {
+      useConfigStore.setState({ ultimoTicket: Math.max(current.ultimoTicket, row.efectos.secuencia.numeroTicket) });
+    }
+    setUltimaVentaId(row.estado === 'COMMITTED' ? row.cartId : null);
+    setVentaExitosa(row.estado === 'COMMITTED'); setIsCheckoutOpen(true);
+  };
+  const recuperarCheckout = async (row: CheckoutLocal, confirmar = false) => {
+    if (procesandoVentaRef.current || !scope || !mismoScope(row.scope, scope)) return;
+    procesandoVentaRef.current = true; setProcesandoVenta(true);
+    try {
+      // Recobro manual usa exclusivamente el comando persistido. No NCF/stock desde UI.
+      const result = confirmar ? await confirmarCheckoutLocal(db, row.scope, row.cartId)
+        : await leerCheckoutLocal(db, row.scope, row.cartId);
+      if (result) mostrarCheckout(result);
+    } catch (e) { showToast(localCommandError(e), 'error'); }
+    finally { procesandoVentaRef.current = false; setProcesandoVenta(false); }
+  };
+  const finalizarCheckoutUI = async (row: CheckoutLocal) => {
+    try {
+      await reconocerCheckoutLocal(db, row.scope, row.cartId);
+      useCartStore.getState().finalizarCheckout(row.cartId);
+      if (receiptRef.current?.cartId !== row.cartId) return;
+      receiptRef.current = null; setCheckoutVisible(null); setVentaExitosa(false); setIsCheckoutOpen(false);
+      setSearchTerm(''); searchInputRef.current?.focus();
+    } catch (e) { showToast(localCommandError(e), 'error'); }
+  };
   const procesarVentaBD = async () => {
-    if (!negocioId) return;
+    const idVenta = modalCartId;
+    if (!negocioId || !scope || !cartReady || !idVenta || cart.cartId !== idVenta || !mismoScope(modalScope, scope) || !esMontoValido) return;
     // Candado anti doble-cobro: en dispositivos lentos el usuario toca COBRAR
     // dos veces (o Enter + clic) y la venta/fiado se duplicaba. El ref bloquea
     // al instante (el estado tarda un render en deshabilitar el botón).
@@ -316,159 +390,116 @@ export default function POSPage() {
     let resultadoVenta: ResultadoMetrica = 'ok';
 
     try {
+      useCartStore.getState().bloquearCheckout(idVenta);
+      const prepared = await leerCheckoutLocal(db, scope, idVenta);
+      // Otra pestaña pudo preparar/confirmar esta identidad. Mostrar su intención
+      // real antes de volver a ejecutar; nunca cobrar usando un formulario distinto.
+      if (prepared) { mostrarCheckout(prepared); return; }
+      // Preflight UX antes de consumir NCF. El commit vuelve a comprobar el turno
+      // bajo lock: este read no sustituye la garantía transaccional ni reserva NCF.
+      const turnos = await db.cajas.where('negocio_id').equals(negocioId)
+        .filter(c => c.estado === 'abierta' && (c.sucursal_id ?? null) === (sucursalId || null)).toArray();
+      if (turnos.length > 1) throw new Error('turno_ambiguo');
+      if ((metodoPago === 'efectivo' || metodoPago === 'mixto') && !turnos.length) throw new Error('turno_requerido');
+      const cajaId = turnos[0]?.id;
       // ── Validación de stock antes de procesar ────────────────────────────
       const finalizarValidacion = iniciarMedicion();
       for (const item of items) {
+        const product = await db.productos.get(item.id);
+        if (item.venta_libre) {
+          if (product || item.negocio_id !== negocioId || item.serial_id) throw new Error('producto_ambito_invalido');
+          continue;
+        }
+        if (!product || product.negocio_id !== negocioId || product.eliminado) throw new Error('producto_ambito_invalido');
         const receta = await db.composiciones.where('producto_padre_id').equals(item.id).toArray();
         if (receta.length === 0) {
           // Producto simple/insumo — verificar stock disponible
-          const producto = await db.productos.get(item.id);
+          const producto = requireProductAtScope(product, { negocioId, sucursalId: sucursalId ?? null });
           if (producto && producto.stock_actual < item.cantidad) {
-            resultadoVenta = 'cancelada';
-            showToast(
-              `Stock insuficiente: ${producto.nombre} (disponible: ${producto.stock_actual < 0 ? 0 : producto.stock_actual})`,
-              'error'
-            );
-            return;
+            throw new Error('stock_insuficiente');
           }
         }
       }
       finalizarValidacion('venta.validacion', 'ok', { articulos: items.length });
 
-      const ncfGenerado = emitirNcf ? consumirNcf() || undefined : undefined;
-
       const cajaCodigo = getDispositivoId();
-      const idVenta = uuidv4();
 
+      // Handler de cobro: la marca temporal se captura al confirmar, no durante render.
+      // eslint-disable-next-line react-hooks/purity
+      const fechaVenta = Date.now();
+      const itemsContrato = await Promise.all(items.map(async item => {
+        const receta = await db.composiciones.where('producto_padre_id').equals(item.id).toArray();
+        return {
+          productoId: item.id,
+          ...(item.venta_libre ? { sinStock: true as const } : {}),
+          nombre: item.nombre,
+          cantidad: item.cantidad,
+          precioUnitario: item.precio_venta,
+          ...(receta.length > 0 && {
+            ingredientes: receta.map(ingrediente => ({
+              productoId: ingrediente.insumo_id,
+              cantidadNecesaria: ingrediente.cantidad_necesaria,
+            })),
+          }),
+          ...(item.serial_id && item.serial_numero && {
+            serial: { id: item.serial_id, numero: item.serial_numero },
+          }),
+        };
+      }));
+      const current = useConfigStore.getState();
+      if (!mismoScope(scope, { negocioId: current.negocioId ?? '', sucursalId: current.sucursalId || null })) throw new Error('checkout_ambito_invalido');
+      const comando: ConfirmarVentaLocalEntrada = {
+        version: VERSION_CONTRATO_VENTA,
+        operacionId: idVenta,
+        negocioId,
+        sucursalId: sucursalId || undefined,
+        cajaCodigo,
+        cajaId,
+        fecha: fechaVenta,
+        total,
+        metodoPago,
+        ...(metodoPago === 'mixto' && {
+          montoEfectivo: parseFloat(montoEfectivoMixto || '0'),
+          montoTransferencia: parseFloat(montoTransferenciaMixto || '0'),
+        }),
+        vendedorNombre: nombreUsuario || undefined,
+        clienteId: clienteSeleccionadoId || undefined,
+        clienteNombre: clienteNombreVenta.trim() || undefined,
+        garantiaDias: planTier === 'pro' ? (garantiaDiasDefault || 0) : 0,
+        originDeviceId: cajaCodigo,
+        items: itemsContrato,
+        ultimoTicketConocido: useConfigStore.getState().ultimoTicket,
+      };
+      asegurarContratoPreparacionVenta(comando);
+      if (emitirNcf && (!ncfDisponible || !ncfLocal?.deviceId)) throw new Error('ncf_no_disponible');
+      await prepararCheckoutLocal(db, { cartId: idVenta, scope, comando,
+        ...(emitirNcf && ncfLocal?.deviceId ? { solicitudFiscal: { version: 1 as const, tipo: ncfConfig.tipo, deviceId: ncfLocal.deviceId } } : {}),
+        comprobante: { items, subtotal, itbis, descuento, total,
+        montoRecibido: metodoPago === 'efectivo' ? parseFloat(montoRecibido || '0') : total,
+        negocio: { nombre: negocioNombre || 'VentaRD', rnc: negocioRnc || undefined,
+          direccion: negocioDireccion || undefined, telefono: negocioTelefono || undefined, mensajePie: negocioMensajeTicket || undefined },
+        logoUrl: logoTicket,
+      } });
       const finalizarTransaccion = iniciarMedicion();
-      await db.transaction('rw', [db.ventas, db.venta_detalles, db.productos, db.composiciones, db.transacciones_fiado, db.movimientos_stock], async () => {
-        const ticketNum = await getNextTicketNumber(negocioId, cajaCodigo);
-
-        await db.ventas.add({
-          id: idVenta,
-          negocio_id: negocioId,
-          sucursal_id: sucursalId || undefined,
-          numero_ticket: ticketNum,
-          caja_codigo: cajaCodigo,
-          ncf: ncfGenerado,
-          ...(nombreUsuario && { vendedor_nombre: nombreUsuario }),
-          total: total,
-          metodo_pago: metodoPago,
-          ...(metodoPago === 'mixto' && {
-            monto_efectivo: parseFloat(montoEfectivoMixto || '0'),
-            monto_transferencia: parseFloat(montoTransferenciaMixto || '0'),
-          }),
-          ...(metodoPago === 'fiado' && clienteSeleccionadoId && {
-            cliente_id: clienteSeleccionadoId,
-          }),
-          ...(clienteNombreVenta.trim() && { cliente_nombre: clienteNombreVenta.trim() }),
-          estado_sincronizacion: 0,
-          fecha_creacion: Date.now(),
-        });
-
-        if (metodoPago === 'fiado' && clienteSeleccionadoId) {
-            await db.transacciones_fiado.add({
-                id: uuidv4(),
-                negocio_id: negocioId,
-                cliente_id: clienteSeleccionadoId,
-                venta_id: idVenta,
-                tipo: 'cargo',
-                monto: total,
-                concepto: 'Compra en POS',
-                fecha_creacion: Date.now(),
-                estado_sincronizacion: 0,
-                fecha_actualizacion: Date.now()
-            });
-        }
-
-        for (const item of items) {
-          await db.venta_detalles.add({
-              id: uuidv4(),
-              venta_id: idVenta,
-              producto_id: item.id,
-              negocio_id: negocioId,
-              nombre: item.nombre,
-              cantidad: item.cantidad,
-              precio_unitario: item.precio_venta,
-              subtotal: item.precio_venta * item.cantidad,
-              estado_sincronizacion: 0,
-              fecha_creacion: Date.now()
-          });
-
-          const receta = await db.composiciones
-            .where('producto_padre_id')
-            .equals(item.id)
-            .toArray();
-
-          if (receta.length > 0) {
-            // Combo: descontar cada insumo según la receta
-            for (const ingrediente of receta) {
-              await registrarMovimientoStock({
-                productoId: ingrediente.insumo_id,
-                tipo: 'venta',
-                delta: -(ingrediente.cantidad_necesaria * item.cantidad),
-                referenciaId: idVenta,
-              });
-            }
-          } else {
-            await registrarMovimientoStock({
-              productoId: item.id,
-              tipo: 'venta',
-              delta: -item.cantidad,
-              referenciaId: idVenta,
-            });
-          }
-        }
-      });
+      const resultado = await confirmarCheckoutLocal(db, scope, idVenta);
       finalizarTransaccion('venta.transaccion_local', 'ok', { articulos: items.length });
 
-      // Marcar seriales como vendidos (fuera de la transacción principal para no bloquearla)
-      const serialesVendidos = items.filter(i => i.serial_id);
-      const finalizarSeriales = iniciarMedicion();
-      if (serialesVendidos.length > 0) {
-        // Manejador de evento (checkout): Date.now() es seguro aquí.
-        // eslint-disable-next-line react-hooks/purity
-        const ahoraSerial = Date.now();
-        // Garantía (Plan Pro): se fija con el default del negocio; si es 0, sin garantía
-        const dias = planTier === 'pro' ? (garantiaDiasDefault || 0) : 0;
-        const garantiaHasta = dias > 0 ? ahoraSerial + dias * 24 * 60 * 60 * 1000 : null;
-        const clienteVenta = clienteSeleccionadoId ? clientes.find(c => c.id === clienteSeleccionadoId) : null;
-        await Promise.all(serialesVendidos.map(i =>
-          db.seriales.update(i.serial_id!, {
-            estado: 'vendido',
-            venta_id: idVenta,
-            fecha_venta: ahoraSerial,
-            garantia_dias: dias,
-            garantia_hasta: garantiaHasta,
-            precio_venta: i.precio_venta,
-            cliente_nombre: clienteVenta?.nombre ?? null,
-            estado_sincronizacion: 0,
-            fecha_actualizacion: ahoraSerial,
-          })
-        ));
-      }
-      finalizarSeriales('venta.seriales', 'ok', { seriales: serialesVendidos.length });
-
-      const finalizarTicket = iniciarMedicion();
-      const ticketNumFinal = await getNextTicketNumber(negocioId, cajaCodigo) - 1;
-      finalizarTicket('venta.ticket_final');
-      setUltimoTicketNum(ticketNumFinal);
-      // Persistir el último ticket emitido (sobrevive a la purga de datos viejos)
-      useConfigStore.setState({ ultimoTicket: ticketNumFinal });
-      setUltimoNcf(ncfGenerado);
-      setUltimaVentaId(idVenta);
-      setVentaExitosa(true);
+      mostrarCheckout(resultado);
 
       // Impresión automática al confirmar (pequeño delay para que React
       // renderice el ticket oculto con el número de ticket actualizado)
       if (impresion.autoImprimir) {
-        setTimeout(() => imprimirTicket(ticketNumFinal, ncfGenerado), 400);
+        setTimeout(() => imprimirTicket(resultado), 400);
       }
 
     } catch (error) {
       resultadoVenta = 'error';
-      console.error("Error en la transacción de venta:", error);
-      showToast("Hubo un problema al procesar la venta.", "error");
+      showToast(localCommandError(error), "error");
+      try {
+        const saved = await leerCheckoutLocal(db, scope, idVenta);
+        if (saved && saved.estado !== 'ABANDONED') mostrarCheckout(saved);
+        else useCartStore.getState().desbloquearCheckout(idVenta);
+      } catch { showToast('No se pudo verificar el intento guardado. Conserva el carrito y revisa la recuperación.', 'error'); }
     } finally {
       finalizarVenta('venta.total', resultadoVenta, {
         articulos: items.length,
@@ -501,87 +532,23 @@ export default function POSPage() {
     if (!negocioId || !ultimaVentaId || anulando) return;
     setAnulando(true);
     try {
-      const idDevolucion = uuidv4();
-      await db.transaction('rw', [db.devoluciones, db.productos, db.composiciones, db.transacciones_fiado, db.movimientos_stock], async () => {
-        await db.devoluciones.add({
-          id: idDevolucion,
-          negocio_id: negocioId,
-          venta_id: ultimaVentaId,
-          items_devueltos: items.map(i => ({ producto_id: i.id, cantidad: i.cantidad, precio_unitario: i.precio_venta })),
-          monto_devuelto: total,
-          razon: `Venta anulada en caja${nombreUsuario ? ` por ${nombreUsuario}` : ''}`,
-          fecha_creacion: Date.now(),
-          estado_sincronizacion: 0,
-        });
-
-        // Reponer stock (combos vía receta)
-        for (const item of items) {
-          const receta = await db.composiciones.where('producto_padre_id').equals(item.id).toArray();
-          if (receta.length > 0) {
-            for (const ing of receta) {
-              await registrarMovimientoStock({
-                productoId: ing.insumo_id,
-                tipo: 'devolucion',
-                delta: ing.cantidad_necesaria * item.cantidad,
-                referenciaId: idDevolucion,
-              });
-            }
-          } else {
-            await registrarMovimientoStock({
-              productoId: item.id,
-              tipo: 'devolucion',
-              delta: item.cantidad,
-              referenciaId: idDevolucion,
-            });
-          }
-        }
-
-        // Revertir el cargo de fiado con un abono automático
-        if (metodoPago === 'fiado' && clienteSeleccionadoId) {
-          await db.transacciones_fiado.add({
-            id: uuidv4(),
-            negocio_id: negocioId,
-            cliente_id: clienteSeleccionadoId,
-            venta_id: ultimaVentaId,
-            tipo: 'abono',
-            monto: total,
-            concepto: 'Venta anulada en caja',
-            fecha_creacion: Date.now(),
-            estado_sincronizacion: 0,
-            fecha_actualizacion: Date.now(),
-          });
-        }
+      await confirmarDevolucionLocal(db, {
+        operationId: uuidv4(), negocioId, sucursalId: sucursalId || undefined,
+        ventaId: ultimaVentaId, fecha: Date.now(), originDeviceId: getDispositivoId(),
+        razon: `Venta anulada en caja${nombreUsuario ? ` por ${nombreUsuario}` : ''}`,
+        // Sin cantidades de carrito: todo lo pendiente de la venta persistida.
       });
-
-      // Liberar los seriales vendidos en esta venta
-      const conSerial = items.filter(i => i.serial_id);
-      if (conSerial.length > 0) {
-        await Promise.all(conSerial.map(i =>
-          db.seriales.update(i.serial_id!, {
-            estado: 'disponible',
-            venta_id: null,
-            fecha_venta: null,
-            garantia_dias: null,
-            garantia_hasta: null,
-            cliente_nombre: null,
-            precio_venta: null,
-            estado_sincronizacion: 0,
-            fecha_actualizacion: Date.now(),
-          })
-        ));
-      }
 
       setConfirmAnularOpen(false);
       setVentaExitosa(false);
       setIsCheckoutOpen(false);
       setUltimaVentaId(null);
-      clearCart();
+      if (recibo) await finalizarCheckoutUI(recibo);
       setSearchTerm('');
       showToast('Venta anulada — el stock fue repuesto.', 'info');
       searchInputRef.current?.focus();
     } catch (e) {
-      console.error('[anular]', e);
-      showToast('No se pudo anular la venta. Hazlo desde Historial → Devolver.', 'error');
+      showToast(localCommandError(e), 'error');
     } finally {
       setAnulando(false);
     }
@@ -591,12 +558,13 @@ export default function POSPage() {
   // re-renderice al teclear en el buscador.
   const onSelectProducto = useCallback((producto: ProductoLocal) => {
     if (producto.serializable) {
+      setSerialScope(scope);
       setProductoParaSerial(producto);
       setBusquedaSerial('');
     } else {
       addItem(producto);
     }
-  }, [addItem]);
+  }, [addItem, scope, setSerialScope, setProductoParaSerial, setBusquedaSerial]);
 
   // Cliente activo derivado de la lista de clientes
   const clienteActivo = clientes.find(c => c.id === clienteActivoId) ?? null;
@@ -615,6 +583,33 @@ export default function POSPage() {
     setBusquedaCliente('');
     setMostrarDropdownCliente(false);
   };
+
+  // Reemplazar el listener tras cada render conserva el formulario actual
+  // (incluidos ambos importes mixtos), sin un cierre con dependencias omitidas.
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'F2') { e.preventDefault(); searchInputRef.current?.focus(); }
+      if (e.key === 'F4') { e.preventDefault(); setIsVentaLibreOpen(true); }
+      if (e.key === ' ' && items.length > 0 && document.activeElement !== searchInputRef.current && !isCheckoutOpen && !isVentaLibreOpen) { e.preventDefault(); abrirModalCobro(); }
+      if (e.key === 'Escape' && isCheckoutOpen && !ventaExitosa) setIsCheckoutOpen(false);
+      if (e.key === 'Escape' && isVentaLibreOpen) setIsVentaLibreOpen(false);
+      if (e.key === 'Escape' && isCartOpen) setIsCartOpen(false);
+      if (e.key === 'Enter') {
+        if (isCheckoutOpen && !ventaExitosa) {
+          e.preventDefault();
+          if (debeConfirmarConEnter({ key: e.key, checkoutOpen: isCheckoutOpen,
+            ventaExitosa, importeValido: esMontoValido, procesando: procesandoVentaRef.current })) void procesarVentaBD();
+        } else if (document.activeElement === searchInputRef.current && searchTerm) {
+          e.preventDefault();
+          const productoExacto = productosEnDB.find(p => p.codigo_barras === searchTerm);
+          if (productoExacto) { addItem(productoExacto); setSearchTerm(''); }
+          else if (productosFiltrados.length === 1) { addItem(productosFiltrados[0]); setSearchTerm(''); }
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  });
 
   // Cart panel content - shared between desktop sidebar and mobile drawer
   const cartContent = (
@@ -639,6 +634,26 @@ export default function POSPage() {
           <button onClick={() => setIsCartOpen(false)} className="lg:hidden text-vr-gray hover:text-white font-bold text-xl px-1 transition-colors">✕</button>
         </div>
       </div>
+      {errorCalculo && <div role="alert" className="p-3 text-xs text-vr-red bg-vr-red/10">
+        Importes no verificables: revisa precios, cantidades y descuento. El borrador se conservó sin redondearlo; no se puede cobrar.
+        <button type="button" onClick={abrirModalCobro} disabled={cart.bloqueado || !cartReady}
+          className="block underline font-bold mt-2 disabled:opacity-50">Revisar descuento</button>
+      </div>}
+      {cartReady && cart.bloqueado && cart.cartId && !checkouts.some(c => c.cartId === cart.cartId) && (
+        <div className="p-3 text-xs text-gold bg-gold/10">
+          <p>Borrador bloqueado sin intento visible. Revisa la recuperación antes de editarlo.</p>
+          <button disabled={procesandoVenta} className="underline mt-2" onClick={async () => {
+            if (!scope || !cart.cartId || procesandoVentaRef.current) return;
+            const id = cart.cartId; procesandoVentaRef.current = true; setProcesandoVenta(true);
+            try {
+              await abandonarBorradorSinCheckout(db, scope, id, Date.now());
+              useCartStore.getState().renovarCheckout(id);
+              showToast('Identidad del borrador retirada sin crear cobro. Los artículos se conservaron. Ningún NCF consumido se reutilizó.', 'info');
+            } catch (e) { showToast(localCommandError(e), 'error'); }
+            finally { procesandoVentaRef.current = false; setProcesandoVenta(false); }
+          }}>Verificar ausencia de cobro y liberar borrador</button>
+        </div>
+      )}
 
       {/* Ventas en espera (facturas pausadas) */}
       {enEspera.length > 0 && (
@@ -646,7 +661,7 @@ export default function POSPage() {
           <p className="text-[10px] font-black text-vr-gray uppercase tracking-wider mb-1.5">⏸ En espera ({enEspera.length})</p>
           <div className="space-y-1.5 max-h-36 overflow-y-auto">
             {enEspera.map(v => {
-              const totalV = v.items.reduce((s, i) => s + i.precio_venta * i.cantidad, 0);
+              const resumen = resumenBorrador(v);
               return (
                 <div key={v.id} className="flex items-center gap-2 bg-blue-400/10 border border-blue-400/25 rounded-xl pl-3 pr-1 py-1.5">
                   <button
@@ -658,7 +673,7 @@ export default function POSPage() {
                       {v.etiqueta || `Venta #${v.numero}`}
                     </span>
                     <span className="text-[10px] text-vr-gray font-mono shrink-0">
-                      {v.items.length} ít. · {formatDOP(totalV)} · {new Date(v.creado).toLocaleTimeString('es-DO', { hour: 'numeric', minute: '2-digit' })}
+                      {v.items.length} ít. · {resumen.total === null ? 'No verificable' : formatDOP(resumen.total)} · {new Date(v.creado).toLocaleTimeString('es-DO', { hour: 'numeric', minute: '2-digit' })}
                     </span>
                   </button>
                   <button
@@ -766,8 +781,8 @@ export default function POSPage() {
 
       <div className="p-3 sm:p-4 bg-navy border-t border-navy-3">
         <div className="space-y-1 mb-3 text-sm">
-          <div className="flex justify-between text-vr-gray"><span>Subtotal</span><span className="font-mono">{formatDOP(subtotal)}</span></div>
-          <div className="flex justify-between text-vr-gray"><span>ITBIS</span><span className="font-mono">{formatDOP(itbis)}</span></div>
+          <div className="flex justify-between text-vr-gray"><span>Subtotal</span><span className="font-mono">{formatCartAmount(subtotal)}</span></div>
+          <div className="flex justify-between text-vr-gray"><span>ITBIS</span><span className="font-mono">{formatCartAmount(itbis)}</span></div>
           {descuento > 0 && (
             <div className="flex justify-between text-vr-green font-bold">
               <span>Descuento {tipoDescuento === 'porcentaje' ? `(${valorDescuento}%)` : ''}</span>
@@ -775,11 +790,11 @@ export default function POSPage() {
             </div>
           )}
           <div className="flex justify-between text-xl sm:text-2xl font-black text-white pt-2 border-t border-navy-3 mt-2">
-            <span>Total</span><span className="font-mono text-gold">{formatDOP(total)}</span>
+            <span>Total</span><span className="font-mono text-gold">{formatCartAmount(total)}</span>
           </div>
         </div>
         <button
-          onClick={abrirModalCobro} disabled={items.length === 0}
+          onClick={abrirModalCobro} disabled={items.length === 0 || !!errorCalculo}
           className="w-full bg-gold-gradient text-navy text-base sm:text-lg font-extrabold py-3 sm:py-4 rounded-xl hover:brightness-110 transition-all disabled:opacity-30 disabled:cursor-not-allowed shadow-lg relative"
         >
           Cobrar Venta
@@ -793,21 +808,32 @@ export default function POSPage() {
     <div className="flex flex-col h-screen bg-navy overflow-hidden">
       <TopBar />
       <OfflineBanner />
+      {checkouts.length > 0 && (
+        <div className="bg-gold/10 border-b border-gold/30 p-3 text-sm text-white flex flex-wrap items-center gap-2">
+          <span>Intentos de cobro guardados en esta sucursal:</span>
+          {checkouts.map(row => <button key={row.cartId} disabled={procesandoVenta} onClick={() => recuperarCheckout(row)}
+            className="rounded border border-gold/40 px-3 py-1 text-gold disabled:opacity-40">
+            {row.estado === 'COMMITTED' ? 'Recuperar venta' : 'Revisar intento'} · {formatDOP(row.comprobante.total)}
+          </button>)}
+        </div>
+      )}
+      {(cart.carritosGuardados.some(c => !c.scope) || cart.enEspera.some(v => !v.scope)) && (
+        <p className="p-2 text-xs text-gold bg-navy-2">Se conservaron borradores antiguos sin sucursal verificable. No se asignaron ni cobraron automáticamente.</p>
+      )}
 
       <div className="flex flex-col lg:flex-row flex-1 overflow-hidden relative">
         {/* COMPONENTE OCULTO DE IMPRESIÓN */}
         <div style={{ display: "none" }}>
           <TicketVenta
-            ref={ticketRef} items={items} subtotal={subtotal} itbis={itbis} descuento={descuento} total={total}
-            metodoPago={metodoPago} montoRecibido={montoRecibido} devuelta={devuelta}
-            nombreNegocio={negocioNombre || 'VentaRD'} rnc={negocioRnc || undefined}
-            direccion={negocioDireccion || undefined} telefono={negocioTelefono || undefined}
-            numeroTicket={ultimoTicketNum} mensajePie={negocioMensajeTicket || undefined}
-            cajaCodigo={dispositivoId || undefined}
-            ncf={ultimoNcf}
-            logoUrl={logoTicket}
-            vendedor={nombreUsuario || undefined}
-            clienteNombre={clienteNombreVenta.trim() || undefined}
+            ref={ticketRef} items={recibo?.comprobante.items ?? []} subtotal={recibo?.comprobante.subtotal ?? 0}
+            itbis={recibo?.comprobante.itbis ?? 0} descuento={recibo?.comprobante.descuento ?? 0} total={recibo?.comprobante.total ?? 0}
+            metodoPago={recibo?.comando.metodoPago ?? ''} montoRecibido={String(recibo?.comprobante.montoRecibido ?? 0)}
+            devuelta={recibo?.comando.metodoPago === 'efectivo' ? recibo.comprobante.montoRecibido - recibo.comprobante.total : 0}
+            nombreNegocio={recibo?.comprobante.negocio.nombre} rnc={recibo?.comprobante.negocio.rnc}
+            direccion={recibo?.comprobante.negocio.direccion} telefono={recibo?.comprobante.negocio.telefono}
+            numeroTicket={recibo?.efectos?.secuencia.numeroTicket} mensajePie={recibo?.comprobante.negocio.mensajePie}
+            cajaCodigo={recibo?.comando.cajaCodigo} ncf={recibo?.comando.ncf} logoUrl={recibo?.comprobante.logoUrl}
+            vendedor={recibo?.comando.vendedorNombre} clienteNombre={recibo?.comando.clienteNombre} fechaVenta={recibo?.comando.fecha}
           />
         </div>
 
@@ -893,20 +919,20 @@ export default function POSPage() {
           <div className="lg:hidden fixed bottom-0 left-0 right-0 z-30 p-3 bg-navy/95 border-t border-navy-3 backdrop-blur-sm">
             <button
               onClick={() => setIsCartOpen(true)}
-              disabled={items.length === 0}
+              disabled={!puedeAbrirCarrito(items.length, enEspera.length)}
               className="w-full bg-gold-gradient text-navy font-extrabold py-3.5 rounded-xl disabled:opacity-30 flex items-center justify-between px-5 shadow-xl"
             >
               <span className="text-sm">
-                {items.length > 0 ? `${items.length} ítem${items.length > 1 ? 's' : ''} • Ver Carrito` : 'Carrito vacío'}
+                {items.length > 0 ? `${items.length} ítem${items.length > 1 ? 's' : ''} • Ver Carrito` : enEspera.length > 0 ? `Ver ventas en espera (${enEspera.length})` : 'Carrito vacío'}
               </span>
-              <span className="font-mono font-black">{formatDOP(total)}</span>
+              <span className="font-mono font-black">{formatCartAmount(total)}</span>
             </button>
           </div>
         )}
       </div>
 
       {/* MODAL DE COBRO */}
-      {isCheckoutOpen && (
+      {isCheckoutOpen && mismoScope(modalScope, scope) && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-md z-50 flex items-end sm:items-center justify-center sm:p-4 animate-fade-in">
           <div className="bg-navy-2 w-full sm:max-w-2xl rounded-t-2xl sm:rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[95vh] sm:max-h-[90vh] border border-navy-3 animate-scale-in">
 
@@ -914,45 +940,47 @@ export default function POSPage() {
               <div className="p-6 sm:p-10 text-center flex flex-col items-center justify-center">
                 <div className="w-16 h-16 sm:w-20 sm:h-20 bg-vr-green/15 text-vr-green rounded-full flex items-center justify-center text-3xl sm:text-4xl mb-4 sm:mb-5 border border-vr-green/30 animate-scale-in">✓</div>
                 <h2 className="text-2xl sm:text-3xl font-display font-black text-white mb-2">¡Venta Exitosa!</h2>
-                {ultimoTicketNum && <p className="text-vr-gray font-mono text-sm mb-4">Ticket #{formatTicket(ultimoTicketNum, dispositivoId || undefined)}</p>}
-                {metodoPago === 'efectivo' && (
+                {ultimoTicketNum && <p className="text-vr-gray font-mono text-sm mb-4">Ticket #{formatTicket(ultimoTicketNum, recibo?.comando.cajaCodigo)}</p>}
+                {recibo?.comando.ncf && <p className="text-blue-300 font-mono text-sm mb-4">NCF: {recibo.comando.ncf}</p>}
+                {recibo?.comando.metodoPago === 'efectivo' && (
                   <div className="bg-vr-green/10 border border-vr-green/20 rounded-xl px-6 py-3 mb-6">
                     <p className="text-sm text-vr-gray">Devuelta</p>
-                    <p className="text-3xl font-black font-mono text-vr-green">{formatDOP(devuelta)}</p>
+                    <p className="text-3xl font-black font-mono text-vr-green">{formatDOP(recibo.comprobante.montoRecibido - recibo.comprobante.total)}</p>
                   </div>
                 )}
-                {metodoPago === 'mixto' && (
+                {recibo?.comando.metodoPago === 'mixto' && (
                   <div className="bg-navy border border-navy-3 rounded-xl px-6 py-3 mb-6 space-y-1 w-full max-w-xs">
                     <div className="flex justify-between text-sm">
                       <span className="text-vr-green font-bold">Efectivo</span>
-                      <span className="font-mono text-white">{formatDOP(parseFloat(montoEfectivoMixto || '0'))}</span>
+                      <span className="font-mono text-white">{formatDOP(recibo.comando.montoEfectivo ?? 0)}</span>
                     </div>
                     <div className="flex justify-between text-sm">
                       <span className="text-purple-400 font-bold">Transferencia</span>
-                      <span className="font-mono text-white">{formatDOP(parseFloat(montoTransferenciaMixto || '0'))}</span>
+                      <span className="font-mono text-white">{formatDOP(recibo.comando.montoTransferencia ?? 0)}</span>
                     </div>
                   </div>
                 )}
                 <div className="flex gap-3 mt-4 w-full max-w-sm">
                   <button
                     onClick={() => {
-                      const clienteRecibo = (clienteSeleccionadoId ? clientes.find(c => c.id === clienteSeleccionadoId) : null) ?? clienteActivo;
-                      const encabezado = `*${negocioNombre || 'VentaRD'}*${negocioRnc ? `\nRNC: ${negocioRnc}` : ''}${negocioDireccion ? `\n${negocioDireccion}` : ''}${negocioTelefono ? `\nTel: ${negocioTelefono}` : ''}`;
-                      const pie = negocioMensajeTicket || '¡Gracias por su compra!';
-                      const lineas = items.map(i => `${i.cantidad}x ${i.nombre} — ${formatDOP(i.precio_venta * i.cantidad)}`).join('\n');
+                      if (!recibo) return;
+                      const c = recibo.comprobante, n = c.negocio;
+                      const encabezado = `*${n.nombre}*${n.rnc ? `\nRNC: ${n.rnc}` : ''}${n.direccion ? `\n${n.direccion}` : ''}${n.telefono ? `\nTel: ${n.telefono}` : ''}`;
+                      const pie = n.mensajePie || '¡Gracias por su compra!';
+                      const lineas = c.items.map(i => `${i.cantidad}x ${i.nombre} — ${formatDOP(i.precio_venta * i.cantidad)}`).join('\n');
                       const metodoTxt: Record<string, string> = { efectivo: 'Efectivo', transferencia: 'Transferencia', tarjeta: 'Tarjeta', mixto: 'Mixto', fiado: 'Fiado' };
                       const resumen =
                         `${encabezado}\n` +
-                        `Recibo #${formatTicket(ultimoTicketNum, dispositivoId || undefined)}\n` +
+                        `Recibo #${formatTicket(recibo.efectos?.secuencia.numeroTicket, recibo.comando.cajaCodigo)}\n` +
                         `${'—'.repeat(20)}\n` +
                         `${lineas}\n` +
                         `${'—'.repeat(20)}\n` +
-                        (descuento > 0 ? `Subtotal: ${formatDOP(subtotal + itbis)}\nDescuento: -${formatDOP(descuento)}\n` : '') +
-                        `*Total: ${formatDOP(total)}*\n` +
-                        `Pago: ${metodoTxt[metodoPago] || metodoPago}\n\n` +
+                        (c.descuento > 0 ? `Subtotal: ${formatDOP(c.subtotal + c.itbis)}\nDescuento: -${formatDOP(c.descuento)}\n` : '') +
+                        `*Total: ${formatDOP(c.total)}*\n` +
+                        `Pago: ${metodoTxt[recibo.comando.metodoPago]}\n\n` +
                         `${pie}\n\n` +
                         `_Hecho con VentaRD_`;
-                      window.open(linkWhatsApp(resumen, clienteRecibo?.telefono), '_blank');
+                      window.open(linkWhatsApp(resumen), '_blank');
                     }}
                     className="flex-1 py-3 bg-vr-green/15 text-vr-green font-bold rounded-xl border border-vr-green/20 hover:bg-vr-green/25 transition-all text-sm flex items-center justify-center gap-2"
                   >
@@ -966,13 +994,7 @@ export default function POSPage() {
                   </button>
                 </div>
                 <button
-                  onClick={() => {
-                    setVentaExitosa(false);
-                    setIsCheckoutOpen(false);
-                    clearCart(); // clearCart ya resetea clienteActivoId y tipoPrecios
-                    setSearchTerm('');
-                    searchInputRef.current?.focus();
-                  }}
+                  onClick={() => { if (recibo) void finalizarCheckoutUI(recibo); }}
                   className="mt-4 w-full max-w-sm py-4 bg-gold-gradient text-navy font-extrabold rounded-xl hover:brightness-110 transition-all text-lg"
                 >
                   Nueva Venta →
@@ -985,6 +1007,25 @@ export default function POSPage() {
                   ✕ Me equivoqué — anular esta venta
                 </button>
               </div>
+            ) : recibo?.estado === 'PREPARED' ? (
+              <div className="p-6 space-y-4 text-white">
+                <h2 className="text-xl font-bold">Intento guardado — pendiente de confirmación local</h2>
+                <p>{formatDOP(recibo.comprobante.total)} · {recibo.comando.metodoPago} · {recibo.comprobante.items.length} artículos</p>
+                <p className="text-sm text-vr-gray">Reintentar conserva el comando original. No modifica el importe, el cliente ni el NCF.</p>
+                <button disabled={procesandoVenta} onClick={() => recuperarCheckout(recibo, true)} className="bg-gold text-navy rounded p-3 font-bold disabled:opacity-40">Confirmar este mismo intento</button>
+                <button disabled={procesandoVenta} onClick={async () => {
+                  if (procesandoVentaRef.current) return;
+                  procesandoVentaRef.current = true; setProcesandoVenta(true);
+                  try {
+                    await abandonarCheckoutLocal(db, recibo.scope, recibo.cartId);
+                    useCartStore.getState().renovarCheckout(recibo.cartId);
+                    receiptRef.current = null; setCheckoutVisible(null); setIsCheckoutOpen(false);
+                    showToast(recibo.fiscal === 'NONE' ? 'Intento abandonado. El carrito se conserva para revisarlo.' : 'Intento abandonado. El NCF legacy consumido no se reutilizó ni devolvió a la secuencia.', 'info');
+                  } catch (e) { showToast(localCommandError(e), 'error'); }
+                  finally { procesandoVentaRef.current = false; setProcesandoVenta(false); }
+                }} className="block text-vr-red underline">Abandonar intento sin borrar su evidencia</button>
+                <button onClick={() => setIsCheckoutOpen(false)} className="block text-vr-gray">Volver sin modificar</button>
+              </div>
             ) : (
               <>
                 <div className="p-4 sm:p-6 bg-navy border-b border-navy-3 flex justify-between items-center">
@@ -995,7 +1036,7 @@ export default function POSPage() {
                 <div className="p-4 sm:p-6 flex-1 overflow-y-auto">
                   <div className="text-center mb-6">
                     <p className="text-vr-gray mb-1 text-sm">Monto a Cobrar</p>
-                    <p className="text-4xl sm:text-5xl font-black font-mono text-gold">{formatDOP(total)}</p>
+                    <p className="text-4xl sm:text-5xl font-black font-mono text-gold">{formatCartAmount(total)}</p>
                   </div>
 
                   {/* Payment method buttons - 2 cols on xs, 3 on sm, 5 on md */}
@@ -1054,13 +1095,14 @@ export default function POSPage() {
                   </div>
 
                   {/* QR de transferencia (si el negocio configuró sus datos de pago) */}
-                  {metodoPago === 'transferencia' && (
+                  {metodoPago === 'transferencia' && !errorCalculo && (
                     <div className="mb-4 sm:mb-6">
                       <QrTransferencia monto={total} />
                     </div>
                   )}
 
                   {/* DESCUENTO */}
+                  {errorCalculo && <p role="alert" className="mb-3 text-vr-red text-sm">Importes no verificables. Revisa el descuento y los artículos antes de cobrar.</p>}
                   <div className="bg-navy p-3 sm:p-4 rounded-xl border border-navy-3 mb-4 sm:mb-6">
                     <div className="flex items-center justify-between mb-3">
                       <span className="text-sm font-bold text-vr-gray">Descuento</span>
@@ -1101,7 +1143,7 @@ export default function POSPage() {
                     <div className="bg-navy p-4 sm:p-6 rounded-xl border border-navy-3">
                       <label className="block text-sm font-bold text-vr-gray mb-3">¿Con cuánto paga el cliente?</label>
                       <div className="flex gap-2 mb-4 overflow-x-auto pb-1">
-                        <button onClick={() => setMontoRecibido(total.toString())} className="px-3 sm:px-4 py-2 bg-vr-green/15 text-vr-green font-bold rounded-lg border border-vr-green/20 hover:bg-vr-green/25 text-sm whitespace-nowrap">Exacto</button>
+                        <button disabled={!!errorCalculo} onClick={() => setMontoRecibido(total.toString())} className="px-3 sm:px-4 py-2 bg-vr-green/15 text-vr-green font-bold rounded-lg border border-vr-green/20 hover:bg-vr-green/25 text-sm whitespace-nowrap disabled:opacity-50">Exacto</button>
                         <button onClick={() => setMontoRecibido('500')} className="px-3 sm:px-4 py-2 bg-navy-3 font-bold rounded-lg border border-navy-4 hover:bg-navy-4 text-white text-sm">RD$500</button>
                         <button onClick={() => setMontoRecibido('1000')} className="px-3 sm:px-4 py-2 bg-navy-3 font-bold rounded-lg border border-navy-4 hover:bg-navy-4 text-white text-sm">RD$1,000</button>
                         <button onClick={() => setMontoRecibido('2000')} className="px-3 sm:px-4 py-2 bg-navy-3 font-bold rounded-lg border border-navy-4 hover:bg-navy-4 text-white text-sm">RD$2,000</button>
@@ -1114,13 +1156,13 @@ export default function POSPage() {
                           placeholder="0.00" value={montoRecibido} onChange={(e) => setMontoRecibido(e.target.value)}
                         />
                       </div>
-                      {parseFloat(montoRecibido || '0') >= total && (
+                      {devuelta !== null && (
                         <div className="mt-4 p-3 sm:p-4 bg-vr-green/10 border border-vr-green/20 rounded-xl flex justify-between items-center">
                           <span className="text-vr-green font-bold text-base">Devuelta:</span>
                           <span className="text-2xl sm:text-3xl font-black font-mono text-vr-green">{formatDOP(devuelta)}</span>
                         </div>
                       )}
-                      {(parseFloat(montoRecibido || '0') > 0 && parseFloat(montoRecibido || '0') < total) && (
+                      {(!errorCalculo && parseFloat(montoRecibido || '0') > 0 && parseFloat(montoRecibido || '0') < total) && (
                         <div className="mt-4 p-3 bg-vr-red/10 border border-vr-red/20 text-vr-red rounded-xl font-bold text-center text-sm">Falta dinero para completar la venta</div>
                       )}
                     </div>
@@ -1155,7 +1197,7 @@ export default function POSPage() {
                           </div>
                           <div className="flex justify-between mb-1">
                             <span>Esta venta</span>
-                            <span className="font-mono font-bold text-white">+ {formatDOP(total)}</span>
+                            <span className="font-mono font-bold text-white">+ {formatCartAmount(total)}</span>
                           </div>
                           <div className={`flex justify-between pt-2 border-t font-bold ${excedeCredito ? 'border-vr-red/30' : 'border-navy-3'}`}>
                             <span>Límite de crédito</span>
@@ -1196,21 +1238,23 @@ export default function POSPage() {
                           />
                         </div>
                       </div>
-                      <div className={`flex justify-between items-center p-3 rounded-lg border ${totalMixto >= total ? 'bg-vr-green/10 border-vr-green/20' : 'bg-navy-3 border-navy-3'}`}>
+                      <div className={`flex justify-between items-center p-3 rounded-lg border ${mixtoCuadra && !errorCalculo ? 'bg-vr-green/10 border-vr-green/20' : 'bg-navy-3 border-navy-3'}`}>
                         <span className="text-sm font-bold text-vr-gray">Total ingresado:</span>
-                        <span className={`font-mono font-black text-lg ${totalMixto >= total ? 'text-vr-green' : 'text-white'}`}>
+                        <span className={`font-mono font-black text-lg ${mixtoCuadra && !errorCalculo ? 'text-vr-green' : 'text-white'}`}>
                           {formatDOP(totalMixto)}
                         </span>
                       </div>
                       {totalMixto > 0 && totalMixto < total && (
                         <p className="text-xs text-vr-red font-bold text-center">Faltan {formatDOP(total - totalMixto)} para completar el pago</p>
                       )}
+                      {totalMixto >= total && !mixtoCuadra && <p className="text-xs text-vr-red font-bold text-center">El reparto debe coincidir exactamente con el total, en centavos.</p>}
                     </div>
                   )}
                 </div>
 
                 <div className="p-4 sm:p-6 bg-navy border-t border-navy-3 space-y-3">
                   {/* Aviso: NCF habilitado pero sin números disponibles en esta caja */}
+                  {ncfLocal?.incierta && <p className="text-sm text-vr-orange">Abastecimiento NCF incierto. No se reintentará automáticamente. Revisión manual en Configuración.</p>}
                   {ncfConfig.habilitado && !ncfDisponible && (
                     <div className="w-full px-4 py-3 rounded-xl border border-vr-orange/30 bg-vr-orange/10 text-vr-orange text-sm font-bold text-center">
                       Sin comprobantes fiscales disponibles — conéctate a internet para reservar más
@@ -1251,7 +1295,7 @@ export default function POSPage() {
       )}
 
       {/* MODAL SELECTOR DE SERIAL */}
-      {productoParaSerial && (
+      {productoParaSerial && mismoScope(serialScope, scope) && cartReady && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-md z-50 flex items-end sm:items-center justify-center sm:p-4 animate-fade-in">
           <div className="bg-navy-2 w-full sm:max-w-sm rounded-t-2xl sm:rounded-2xl border border-navy-3 shadow-2xl overflow-hidden max-h-[80vh] flex flex-col animate-scale-in">
             <div className="p-4 border-b border-navy-3 flex justify-between items-start">
@@ -1318,7 +1362,7 @@ export default function POSPage() {
       )}
 
       {/* Scanner IMEI en el POS — busca y selecciona el serial automáticamente */}
-      {scannerSerialPOS && productoParaSerial && (
+      {scannerSerialPOS && productoParaSerial && mismoScope(serialScope, scope) && cartReady && (
         <Suspense fallback={null}>
           <BarcodeScanner
             onScan={(code) => {
@@ -1361,7 +1405,7 @@ export default function POSPage() {
       )}
 
       {/* MODAL VENTA LIBRE (F4) */}
-      <VentaLibreModal isOpen={isVentaLibreOpen} onClose={() => setIsVentaLibreOpen(false)} />
+      <VentaLibreModal isOpen={isVentaLibreOpen && cartReady && !cart.bloqueado} scope={scope} onClose={() => setIsVentaLibreOpen(false)} />
 
       {/* MODAL APERTURA/CIERRE DE CAJA */}
       <CajaModal isOpen={isCajaOpen} onClose={() => setIsCajaOpen(false)} />

@@ -18,6 +18,83 @@ fn invalid() -> AppError {
 fn conflict() -> AppError {
     AppError::Protocol(ProtocolError::OperationIdConflict)
 }
+// Only additive stock evidence may reconcile a stale sale. No intent, price,
+// payment or printed snapshot is rebased. An intervening physical count is never
+// accepted as a commutative sale adjustment.
+fn stock_receipt_before(row: &Value, proof: &Value, sequence: &Value) -> Result<i64, AppError> {
+    let quoted = integer(&proof["effectiveQty"])?;
+    let Some(merge) = row.get("merge") else {
+        return Ok(quoted);
+    };
+    let entries = array(&merge["concurrent"])?;
+    if merge["protocol"] != "ventard.stock.merge.1"
+        || merge["quotedBefore"] != proof["effectiveQty"]
+        || entries.is_empty()
+        || entries.len() > 1000
+    {
+        return Err(invalid());
+    }
+    let applied = integer(&merge["appliedBefore"])?;
+    if applied > i32::MAX as i64 {
+        return Err(invalid());
+    }
+    let signed = |value: &Value| -> Result<i64, AppError> {
+        let raw = text(value)?;
+        let n = raw.parse::<i32>().map_err(|_| invalid())?;
+        if n.to_string() != raw {
+            return Err(invalid());
+        }
+        Ok(n as i64)
+    };
+    let pending = array(&proof["pending"])?;
+    let mut original = integer(&proof["remoteBaseQty"])? as i128;
+    let mut own = HashSet::new();
+    for p in pending {
+        original += signed(&p["delta"])? as i128;
+        own.insert(text(&p["effectId"])?);
+    }
+    if original != quoted as i128 {
+        return Err(invalid());
+    }
+    let mut last = integer(&proof["remoteSequence"])?;
+    let end = integer(sequence)?;
+    let mut total = quoted as i128;
+    let mut seen = HashSet::new();
+    for e in entries {
+        let op = text(&e["operationId"])?;
+        EntityId::parse(op).map_err(|_| invalid())?;
+        let eid = text(&e["effectId"])?;
+        let seq = integer(&e["remoteSequence"])?;
+        if eid != effect_id(op, &format!("stock/{}", text(&row["productId"])?))
+            || own.contains(eid)
+            || !seen.insert(eid)
+            || seq <= last
+            || seq >= end
+            || !matches!(
+                e["kind"].as_str(),
+                Some(
+                    "PRODUCT_CREATE"
+                        | "INVENTORY_DELTA"
+                        | "SALE_CONFIRM"
+                        | "SALE_RETURN"
+                        | "REPAIR_CREATE"
+                        | "REPAIR_EDIT"
+                        | "REPAIR_DISASSEMBLE"
+                        | "LAYAWAY_CREATE"
+                        | "LAYAWAY_CANCEL"
+                )
+            )
+        {
+            return Err(invalid());
+        }
+        total += signed(&e["delta"])? as i128;
+        last = seq;
+    }
+    if total != applied as i128 {
+        return Err(invalid());
+    }
+    Ok(applied)
+}
 fn text(v: &Value) -> Result<&str, AppError> {
     v.as_str().ok_or_else(invalid)
 }
@@ -1079,7 +1156,7 @@ pub fn validate_event(
                 .ok_or_else(invalid)?;
             let delta = text(&e["delta"])?.parse::<i64>().map_err(|_| invalid())?;
             if integer(&x["after"])?
-                != integer(&proof["effectiveQty"])?
+                != stock_receipt_before(x, proof, &r["remoteSequence"])?
                     .checked_add(delta)
                     .ok_or_else(invalid)?
                 || x["version"] != r["remoteSequence"]
@@ -1654,4 +1731,37 @@ fn store_cash_base(
     }
     tx.execute("INSERT INTO native_cash_baseline_v1 VALUES(?1,?2,?3,?4,'VERIFIED') ON CONFLICT(tenant_id,turn_id) DO UPDATE SET net_cents=excluded.net_cents,remote_sequence=excluded.remote_sequence,authority='VERIFIED' WHERE excluded.remote_sequence>=native_cash_baseline_v1.remote_sequence",(&ctx.tenant_id,turn,net,through))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod shared_stock_tests {
+    use super::*;
+    #[test]
+    fn concurrent_stock_proof_rejects_tampered_or_non_additive_evidence() {
+        let product = "96000001-0000-4000-8000-000000000020";
+        let operation = "96000001-0000-4000-8000-000000008160";
+        let proof =
+            json!({"remoteBaseQty":"100","remoteSequence":"0","pending":[],"effectiveQty":"100"});
+        let row = json!({"productId":product,"merge":{"protocol":"ventard.stock.merge.1","quotedBefore":"100","appliedBefore":"99","concurrent":[{"operationId":operation,"effectId":effect_id(operation,&format!("stock/{product}")),"delta":"-1","remoteSequence":"1","kind":"SALE_CONFIRM"}]}});
+        assert_eq!(stock_receipt_before(&row, &proof, &json!("2")).unwrap(), 99);
+        for (path, value) in [
+            ("/merge/appliedBefore", json!("98")),
+            ("/merge/quotedBefore", json!("99")),
+            ("/merge/concurrent/0/effectId", json!(operation)),
+            ("/merge/concurrent/0/remoteSequence", json!("2")),
+            ("/merge/concurrent/0/kind", json!("INVENTORY_COUNT")),
+            ("/merge/concurrent/0/delta", json!("2147483648")),
+        ] {
+            let mut changed = row.clone();
+            *changed.pointer_mut(path).unwrap() = value;
+            assert!(
+                stock_receipt_before(&changed, &proof, &json!("2")).is_err(),
+                "{path}"
+            );
+        }
+        let mut own = proof.clone();
+        own["pending"] =
+            json!([{"effectId":row["merge"]["concurrent"][0]["effectId"],"delta":"0"}]);
+        assert!(stock_receipt_before(&row, &own, &json!("2")).is_err());
+    }
 }

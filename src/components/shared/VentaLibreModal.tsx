@@ -1,63 +1,66 @@
 // src/components/shared/VentaLibreModal.tsx
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
-import { useCartStore } from '@/store/useCartStore';
-import { ProductoLocal } from '@/types/database';
+import { useState } from 'react';
+import { useCartStore, mismoScope, type CartScope, type CartItem } from '@/store/useCartStore';
+import { useConfigStore } from '@/store/useConfigStore';
+import { localCommandError } from '@/lib/domain/local/errors';
 import { v4 as uuidv4 } from 'uuid';
 
 interface Props {
     isOpen: boolean;
     onClose: () => void;
+    scope: CartScope | null;
 }
 
-export default function VentaLibreModal({ isOpen, onClose }: Props) {
+export default function VentaLibreModal({ isOpen, onClose, scope }: Props) {
+    if (!isOpen) return null;
+    // Cada apertura/ámbito monta un formulario nuevo; ningún reset por effect.
+    return <VentaLibreForm key={JSON.stringify(scope)} onClose={onClose} scope={scope} />;
+}
+
+function VentaLibreForm({ onClose, scope }: Omit<Props, 'isOpen'>) {
     const { addItem } = useCartStore();
     const [nombre, setNombre] = useState('');
     const [precio, setPrecio] = useState('');
     const [cantidad, setCantidad] = useState('1');
     const [tasaItbis, setTasaItbis] = useState('0.18'); // '0' = exento, '0.18' = 18%
-    const inputRef = useRef<HTMLInputElement>(null);
-
-    useEffect(() => {
-        if (isOpen) {
-            setNombre('');
-            setPrecio('');
-            setCantidad('1');
-            setTasaItbis('0.18');
-            setTimeout(() => inputRef.current?.focus(), 100);
-        }
-    }, [isOpen]);
 
     const agregarVentaLibre = (e: React.FormEvent) => {
         e.preventDefault();
-        const precioNum = parseFloat(precio);
-        const cantidadNum = parseInt(cantidad) || 1;
-        if (!nombre.trim() || precioNum <= 0) return;
+        const config = useConfigStore.getState();
+        if (!scope || !mismoScope(scope, useCartStore.getState().scope) || !mismoScope(scope,
+            { negocioId: config.negocioId ?? '', sucursalId: config.sucursalId || null }) || useCartStore.getState().bloqueado) {
+            config.showToast(localCommandError(new Error('cart_scope_incompatible')), 'error'); return;
+        }
+        const precioNum = Number(precio);
+        const cantidadNum = Number(cantidad);
+        if (!nombre.trim() || !Number.isFinite(precioNum) || precioNum <= 0 || !Number.isSafeInteger(cantidadNum) || cantidadNum <= 0) {
+            config.showToast('Revisa precio y cantidad. La cantidad debe ser un entero positivo.', 'error'); return;
+        }
 
         // Crear un producto virtual temporal
-        const productoVirtual: ProductoLocal = {
+        const productoVirtual: CartItem = {
             id: uuidv4(),
-            negocio_id: '',
+            negocio_id: scope.negocioId,
+            venta_libre: true,
+            cantidad: 1,
             nombre: nombre.trim(),
             codigo_barras: '',
             precio_venta: precioNum,
             costo: 0,
-            stock_actual: 9999,
+            stock_actual: 0,
             stock_minimo: 0,
             tasa_itbis: parseFloat(tasaItbis) || 0,
             tipo: 'simple',
         };
 
-        // Agregar la cantidad especificada
-        for (let i = 0; i < cantidadNum; i++) {
-            addItem(productoVirtual);
-        }
+        // Sin un bucle por unidad que pueda congelar la interfaz.
+        addItem(productoVirtual);
+        if (cantidadNum !== 1) useCartStore.getState().updateQuantity(productoVirtual.id, cantidadNum);
 
         onClose();
     };
-
-    if (!isOpen) return null;
 
     return (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-md z-50 flex items-center justify-center p-4 animate-fade-in">
@@ -74,7 +77,7 @@ export default function VentaLibreModal({ isOpen, onClose }: Props) {
                     <div>
                         <label className="block text-sm font-bold text-vr-gray mb-1.5">Descripción *</label>
                         <input
-                            ref={inputRef}
+                            autoFocus
                             required type="text"
                             placeholder="Ej: Servicio de reparación, Producto especial..."
                             className="w-full bg-navy-3 border border-navy-3 rounded-xl p-3 text-white placeholder-vr-gray-2 focus:border-gold outline-none transition-all"

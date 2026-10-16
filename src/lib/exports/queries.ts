@@ -1,3 +1,4 @@
+import {sharedBalanceCents} from '@/lib/sync/shared-balance';
 // src/lib/exports/queries.ts
 // Extractores de datos desde Dexie para reportes
 import { db } from '@/lib/db/dexie';
@@ -18,7 +19,8 @@ function fmtHora(ts: number) {
     return new Date(ts).toLocaleTimeString('es-DO', { hour: '2-digit', minute: '2-digit' });
 }
 
-function fmtDOP(n: number) {
+function fmtDOP(n: number | null) {
+    if (n === null) return 'No verificable';
     return `RD$ ${n.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
@@ -32,26 +34,24 @@ export async function getReporteVentas(negocioId: string, desde: number, hasta: 
 
     ventas.sort((a, b) => b.fecha_creacion - a.fecha_creacion);
 
+    const ventaIds = new Set(ventas.map(v => v.id));
     const detalles = await db.venta_detalles
         .where('negocio_id').equals(negocioId)
-        .filter(d => {
-            const v = ventas.find(v => v.id === d.venta_id);
-            return !!v;
-        })
+        .filter(d => ventaIds.has(d.venta_id))
         .toArray();
 
     const productoIds = [...new Set(detalles.map(d => d.producto_id))];
     const productos = await db.productos.bulkGet(productoIds);
-    const prodMap = new Map(productos.filter(Boolean).map(p => [p!.id, p!]));
+    const prodMap = new Map(productos.filter(p => p?.negocio_id === negocioId).map(p => [p!.id, p!]));
 
     const totalVentas = ventas.reduce((s, v) => s + v.total, 0);
-    const totalItbis = ventas.reduce((s, v) => {
-        const dets = detalles.filter(d => d.venta_id === v.id);
-        return s + dets.reduce((sd, d) => {
-            const prod = prodMap.get(d.producto_id);
-            return sd + (prod ? d.subtotal * prod.tasa_itbis : 0);
-        }, 0);
-    }, 0);
+    // La línea libre no conserva tasa fiscal remota. No usar catálogo coincidente
+    // ni ausencia de vínculo como prueba de exención. Fórmula legacy de catálogo
+    // conservada; NO equivale a impuesto histórico certificado.
+    const ventasConDetalle = new Set(detalles.map(d => d.venta_id));
+    const itbisNoVerificable = ventas.some(v => !ventasConDetalle.has(v.id)) ||
+        detalles.some(d => d.sin_stock === true || !prodMap.has(d.producto_id));
+    const totalItbis = itbisNoVerificable ? null : detalles.reduce((s, d) => s + d.subtotal * prodMap.get(d.producto_id)!.tasa_itbis, 0);
 
     // Resumen por método de pago
     const porMetodo: Record<string, { count: number; total: number }> = {};
@@ -64,6 +64,12 @@ export async function getReporteVentas(negocioId: string, desde: number, hasta: 
     // Productos más vendidos
     const porProducto: Record<string, { nombre: string; cantidad: number; ingresos: number }> = {};
     for (const d of detalles) {
+        if (d.sin_stock === true) {
+            // Identidad histórica de línea: no agrupar por un nombre/costo actual.
+            const lineKey = `libre:${d.id}`;
+            porProducto[lineKey] = { nombre: d.nombre || 'Venta libre (nombre no disponible)', cantidad: d.cantidad, ingresos: d.subtotal };
+            continue;
+        }
         const prod = prodMap.get(d.producto_id);
         if (!prod) continue;
         if (!porProducto[d.producto_id]) porProducto[d.producto_id] = { nombre: prod.nombre, cantidad: 0, ingresos: 0 };
@@ -118,7 +124,7 @@ export async function getReporteFiado(negocioId: string) {
         const txs = transacciones.filter(t => t.cliente_id === c.id);
         const cargos = txs.filter(t => t.tipo === 'cargo').reduce((s, t) => s + t.monto, 0);
         const abonos = txs.filter(t => t.tipo === 'abono').reduce((s, t) => s + t.monto, 0);
-        const balance = cargos - abonos;
+        const balance = sharedBalanceCents(c,txs)/100;
         return { ...c, cargos, abonos, balance };
     }).filter(c => c.cargos > 0 || c.balance !== 0)
       .sort((a, b) => b.balance - a.balance);
@@ -161,11 +167,19 @@ export async function getReporte607(negocioId: string, anio: number, mes: number
 
     const ventaIds = ventas.map(v => v.id);
     const detalles = ventaIds.length > 0
-        ? await db.venta_detalles.where('venta_id').anyOf(ventaIds).toArray()
+        ? await db.venta_detalles.where('venta_id').anyOf(ventaIds).filter(d => d.negocio_id === negocioId).toArray()
         : [];
     const productoIds = [...new Set(detalles.map(d => d.producto_id))];
     const productos = await db.productos.bulkGet(productoIds);
-    const prodMap = new Map(productos.filter(Boolean).map(p => [p!.id, p!]));
+    const prodMap = new Map(productos.filter(p => p?.negocio_id === negocioId).map(p => [p!.id, p!]));
+
+    const ventasConDetalle = new Set(detalles.map(d => d.venta_id));
+    if (ventas.some(v => !ventasConDetalle.has(v.id)) ||
+        detalles.some(d => d.sin_stock === true || !prodMap.has(d.producto_id))) {
+        // No fabricar una tasa fiscal desde ausencia de evidencia/valores actuales.
+        // Mantener intactos los datos; el reporte requiere revisión autorizada.
+        throw new Error('reporte607_impuesto_no_verificable');
+    }
 
     const filas: Fila607[] = ventas.map(v => {
         const dets = detalles.filter(d => d.venta_id === v.id);

@@ -6,7 +6,13 @@ import Link from 'next/link';
 import { db } from '@/lib/db/dexie';
 import { supabase } from '@/lib/supabase/client';
 import { registrarMovimientoStock } from '@/lib/db/stock';
-import { comprimirImagen, miniatura } from '@/lib/imagen';
+import { catalogAtScope } from '@/lib/sync/inventory/scope-stock';
+import { prepareNewLocalProduct } from '@/lib/sync/inventory/bootstrap';
+import { localCommandError } from '@/lib/domain/local/errors';
+import { normalizeInventoryInteger } from '@/lib/sync/inventory/canonical-payload';
+import { comprimirImagen, comprimirImagenCompartida, miniatura } from '@/lib/imagen';
+import {adjustSharedInventory} from '@/lib/sync/shared-inventory';
+import {sharedWebEnabled} from '@/lib/sync/shared-worker';
 import ConfirmModal from '@/components/ui/ConfirmModal';
 import { useProductosTenant, useComposicionesTenant, useVentasPeriodoTenant, useVentaDetallesPorVentas } from '@/lib/db/tenantQuery';
 import { useConfigStore } from '@/store/useConfigStore';
@@ -16,6 +22,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { useLiveQuery } from 'dexie-react-hooks';
 import PinGuard from '@/components/ui/PinGuard';
 import TopBar from '@/components/shared/TopBar';
+import { IndicadorSync } from '@/components/shared/IndicadorSync';
 import OfflineBanner from '@/components/shared/OfflineBanner';
 import { SkeletonTable } from '@/components/ui/Skeleton';
 import Pagination from '@/components/ui/Pagination';
@@ -65,11 +72,13 @@ function CeldaEditInput({ valor, onValor, onGuardar, onCancelar }: {
 }
 
 export default function InventarioPage() {
-    const { negocioId, showToast, isOnline } = useConfigStore();
-    const productosRaw = useLiveQuery(
+    const { negocioId, sucursalId, showToast, isOnline } = useConfigStore();
+    const cachedProducts = useLiveQuery(
         () => negocioId ? db.productos.where('negocio_id').equals(negocioId).toArray() : [],
         [negocioId]
     );
+    const productosRaw = cachedProducts && negocioId ? catalogAtScope(cachedProducts,
+        { negocioId, sucursalId: sucursalId ?? null }) : cachedProducts;
     const isLoading = productosRaw === undefined;
     const productos = useProductosTenant();
     const composiciones = useComposicionesTenant();
@@ -446,7 +455,7 @@ export default function InventarioPage() {
         try {
             // Foto: si es nueva (data URL), subirla a Cloudinary antes de guardar
             let imagenFinal: string | undefined = fotoProducto || undefined;
-            if (fotoProducto?.startsWith('data:')) {
+            if (fotoProducto?.startsWith('data:') && !sharedWebEnabled(negocioId)) {
                 if (navigator.onLine) {
                     try {
                         const { data: { session } } = await supabase.auth.getSession();
@@ -472,11 +481,11 @@ export default function InventarioPage() {
             await db.transaction('rw', db.productos, db.composiciones, db.movimientos_stock, async () => {
                 const precio2 = parseFloat(formData.precio_2) || undefined;
                 const precio3 = parseFloat(formData.precio_3) || undefined;
-                const stockFormulario = parseInt(formData.stock_actual) || 0;
+                const stockFormulario = Number(normalizeInventoryInteger(formData.stock_actual || 0));
                 // El stock NO se escribe directo: se registra como movimiento
                 // (entrada inicial si es nuevo, conteo si cambió en edición)
                 const stockPrevio = productoEditando?.stock_actual ?? 0;
-                await db.productos.put({
+                const product: ProductoLocal = {
                     id: idProducto,
                     negocio_id: negocioId,
                     nombre: formData.nombre,
@@ -490,11 +499,15 @@ export default function InventarioPage() {
                     ...(formData.tipo !== 'insumo' && precio3 && { precio_3: precio3 }),
                     costo: formData.tipo === 'combo' ? 0 : (parseFloat(formData.costo) || 0),
                     stock_actual: stockPrevio,
+                    inventory_stock_by_scope: productoEditando?.inventory_stock_by_scope,
+                    inventory_bootstrap: productoEditando?.inventory_bootstrap,
                     stock_minimo: parseInt(formData.stock_minimo) || 0,
                     tasa_itbis: parseFloat(formData.tasa_itbis),
                     estado_sincronizacion: 0,
                     fecha_actualizacion: Date.now(),
-                } as any);
+                };
+                await db.productos.put(productoEditando ? product
+                    : prepareNewLocalProduct(product, { negocioId, sucursalId: sucursalId ?? null }));
 
                 if (formData.tipo !== 'combo') {
                     if (!productoEditando && stockFormulario > 0) {
@@ -522,6 +535,7 @@ export default function InventarioPage() {
             setIsModalOpen(false);
         } catch (error) {
             console.error("Error:", error);
+            showToast(localCommandError(error), 'error');
         } finally {
             guardandoProductoRef.current = false;
             setGuardandoProducto(false);
@@ -555,6 +569,14 @@ export default function InventarioPage() {
         e.preventDefault();
         if (!productoAjustando || !negocioId) return;
 
+        if (sharedWebEnabled(negocioId)) {
+            try {
+                const serials = productoAjustando.serializable ? serialesEntrada.map(s => s.trim()).filter(Boolean) : [];
+                await adjustSharedInventory(db, { productId: productoAjustando.id, mode: tipoAjuste === 'entrada' ? 'IN' : tipoAjuste === 'merma' ? 'LOSS' : 'COUNT', quantity: productoAjustando.serializable ? serials.length : Number(cantidadAjuste), serials, at: Date.now(), operationId: uuidv4() });
+                setIsAjusteOpen(false);
+            } catch (error) { showToast(localCommandError(error), 'error'); }
+            return;
+        }
         // Producto serializable + entrada: validar que los seriales estén completos
         const esSerializable = productoAjustando.serializable;
         if (esSerializable && tipoAjuste === 'entrada') {
@@ -997,10 +1019,10 @@ export default function InventarioPage() {
                                 </button>
 
                                 {/* Entrada serializable: inputs de números de serie */}
-                                {productoAjustando?.serializable && tipoAjuste === 'entrada' ? (
+                                {productoAjustando?.serializable && (tipoAjuste === 'entrada' || !!negocioId && sharedWebEnabled(negocioId)) ? (
                                     <div>
                                         <div className="flex items-center justify-between mb-2">
-                                            <label className="text-sm font-bold text-vr-gray">Números de serie a ingresar</label>
+                                            <label className="text-sm font-bold text-vr-gray">{tipoAjuste === 'merma' ? 'Seriales que se dan de baja' : tipoAjuste === 'conteo' ? 'Todos los seriales disponibles contados' : 'Números de serie a ingresar'}</label>
                                             <span className="text-xs font-bold text-gold">{serialesEntrada.filter(s => s.trim()).length} unidades</span>
                                         </div>
                                         <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
@@ -1096,7 +1118,10 @@ export default function InventarioPage() {
                             <div className="p-4 sm:p-6 border-b border-navy-3 flex justify-between items-center">
                                 <div className="min-w-0">
                                     <h2 className="text-xl font-display font-bold text-white">Movimientos</h2>
-                                    <p className="text-sm text-vr-gray mt-0.5 truncate">{productoHistorial.nombre}</p>
+                                    <div className="flex items-center gap-2 mt-0.5">
+                                                                    <p className="text-sm text-vr-gray truncate">{productoHistorial.nombre}</p>
+                                                                    <IndicadorSync entity={productoHistorial} showLabel={true} className="scale-90 origin-left" />
+                                                                </div>
                                 </div>
                                 <button onClick={() => setProductoHistorial(null)} className="text-vr-gray hover:text-white font-bold text-xl transition-colors shrink-0">✕</button>
                             </div>
@@ -1182,7 +1207,7 @@ export default function InventarioPage() {
                                                 e.target.value = '';
                                                 if (!f) return;
                                                 if (!f.type.startsWith('image/')) { showToast('El archivo debe ser una imagen.', 'error'); return; }
-                                                try { setFotoProducto(await comprimirImagen(f, 360)); }
+                                                try { setFotoProducto(await (negocioId&&sharedWebEnabled(negocioId)?comprimirImagenCompartida(f):comprimirImagen(f, 360))); }
                                                 catch { showToast('No se pudo procesar la imagen.', 'error'); }
                                             }}
                                         />

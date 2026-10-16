@@ -2,12 +2,15 @@
 'use client';
 
 import { useMemo, useState, useRef } from 'react';
-import { db, getNextFolioReparacion } from '@/lib/db/dexie';
-import { registrarMovimientoStock } from '@/lib/db/stock';
-import { useConfigStore } from '@/store/useConfigStore';
+import { db } from '@/lib/db/dexie';
+import { commitServicioLocal } from '@/lib/domain/local/servicios';
+import {getSharedCaptureContext} from '@/lib/sync/shared-capture';
+import SharedDepositRefund from '@/components/shared/SharedDepositRefund';
+import { localCommandError } from '@/lib/domain/local/errors';
+import { useConfigStore, getDispositivoId } from '@/store/useConfigStore';
 import { useProductosTenant } from '@/lib/db/tenantQuery';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { ReparacionLocal, ReparacionEstado, RepuestoReparacion, MetodoPagoReparacion, ProductoLocal } from '@/types/database';
+import { ReparacionLocal, ReparacionEstado, RepuestoReparacion, MetodoPagoReparacion, ProductoLocal, ClienteLocal } from '@/types/database';
 import { formatDOP } from '@/lib/utils';
 import { linkWhatsApp } from '@/lib/whatsapp';
 import { v4 as uuidv4 } from 'uuid';
@@ -81,7 +84,10 @@ const FORM_VACIO = {
 
 export default function ReparacionesPage() {
     const { negocioId, sucursalId, planTier, showToast, negocioNombre, negocioRnc, negocioDireccion, negocioTelefono, nombreUsuario, cobrarRepuestosAparte, setCobrarRepuestosAparte } = useConfigStore();
-    const { ocupado, conCandado } = useCandado();
+    const { ocupado, conCandado: locked } = useCandado();
+    const conCandado = <A extends unknown[],>(fn: (...args: A) => Promise<void> | void) => locked(async (...args: A) => {
+        try { await fn(...args); } catch (error) { showToast(localCommandError(error), 'error'); }
+    });
     const usuarioActual = nombreUsuario || 'Dueño';
     // Agrega un evento a la bitácora de una reparación (auditoría de estados)
     const conEvento = (rep: ReparacionLocal, estado: ReparacionEstado, fecha: number): ReparacionLocal['bitacora'] =>
@@ -278,14 +284,17 @@ export default function ReparacionesPage() {
         setGuardando(true);
         try {
             const id = editando ? editando.id : uuidv4();
+            // Evento de submit, nunca render: timestamp del comando confirmado.
+            // eslint-disable-next-line react-hooks/purity
             const ahora = Date.now();
-            const folio = editando ? editando.folio : await getNextFolioReparacion(negocioId);
+            const folio = editando?.folio ?? '';
 
             // Cliente: si es nuevo y se pidió guardar, crearlo y enlazarlo
             let clienteId = formData.cliente_id;
+            let clienteNuevo: ClienteLocal | undefined;
             if (!clienteId && formData.guardar_cliente && formData.cliente_nombre.trim()) {
                 clienteId = uuidv4();
-                await db.clientes.add({
+                clienteNuevo = {
                     id: clienteId,
                     negocio_id: negocioId,
                     nombre: formData.cliente_nombre.trim(),
@@ -293,32 +302,10 @@ export default function ReparacionesPage() {
                     limite_credito: 0,
                     estado_sincronizacion: 0,
                     fecha_actualizacion: ahora,
-                });
+                };
             }
 
-            // Descontar del inventario los repuestos nuevos que salen de stock
-            // Reconciliación de stock de repuestos de inventario (maneja altas, bajas
-            // y cambios de cantidad al editar): se compara lo ya descontado contra lo
-            // deseado y se aplica solo la diferencia. Así el inventario nunca se descuadra.
-            const prevAplicado = new Map<string, number>();
-            (editando?.repuestos ?? []).forEach(rp => {
-                if (rp.desde_inventario && rp.producto_id && rp.stock_aplicado) {
-                    prevAplicado.set(rp.producto_id, (prevAplicado.get(rp.producto_id) ?? 0) + rp.cantidad);
-                }
-            });
-            const nuevoDeseado = new Map<string, number>();
-            formData.repuestos.forEach(rp => {
-                if (rp.desde_inventario && rp.producto_id) {
-                    nuevoDeseado.set(rp.producto_id, (nuevoDeseado.get(rp.producto_id) ?? 0) + rp.cantidad);
-                }
-            });
-            for (const pid of new Set([...prevAplicado.keys(), ...nuevoDeseado.keys()])) {
-                const diff = (nuevoDeseado.get(pid) ?? 0) - (prevAplicado.get(pid) ?? 0);
-                if (diff !== 0) {
-                    // diff>0 consume más (salida), diff<0 devuelve al stock (entrada)
-                    await registrarMovimientoStock({ productoId: pid, tipo: 'reparacion', delta: -diff, referenciaId: id });
-                }
-            }
+            // El UnitOfWork relee la versión y aplica los deltas dentro del commit.
             const repuestosFinal: RepuestoReparacion[] = formData.repuestos.map(rp => {
                 const base = rp.desde_inventario && rp.producto_id ? { ...rp, stock_aplicado: true } : { ...rp };
                 // Si los repuestos NO se cobran aparte, su precio es 0 (lo cubre la mano de obra)
@@ -377,13 +364,16 @@ export default function ReparacionesPage() {
                 fecha_actualizacion: ahora,
             };
 
-            await db.reparaciones.put(rep);
+            const { documento } = await commitServicioLocal(db, { operationId: editando ? uuidv4() : id, negocioId,
+                sucursalId: sucursalId || undefined, originDeviceId: getDispositivoId(), fecha: ahora,
+                tipo: 'REPARACION', accion: 'GUARDAR', previo: editando ?? undefined, documento: rep, clienteNuevo });
+            const confirmada = documento as ReparacionLocal;
             setIsModalOpen(false);
-            showToast(editando ? 'Reparación actualizada.' : `Reparación ${folio} creada.`, 'success');
-            if (!editando) setTimeout(() => imprimir(rep, 'recepcion'), 150);
+            showToast(editando ? 'Reparación actualizada.' : `Reparación ${confirmada.folio} creada.`, 'success');
+            if (!editando) setTimeout(() => imprimir(confirmada, 'recepcion'), 150);
         } catch (err) {
             console.error('[reparacion]', err);
-            showToast('No se pudo guardar la reparación.', 'error');
+            showToast(localCommandError(err), 'error');
         }
         setGuardando(false);
     };
@@ -392,12 +382,16 @@ export default function ReparacionesPage() {
         // Manejador de evento (onChange del select): Date.now() es seguro aquí.
         // eslint-disable-next-line react-hooks/purity
         const ahora = Date.now();
-        await db.reparaciones.update(r.id, { estado, bitacora: conEvento(r, estado, ahora), estado_sincronizacion: 0, fecha_actualizacion: ahora });
+        await commitServicioLocal(db, { operationId: uuidv4(), negocioId: negocioId!, sucursalId: sucursalId || undefined,
+            originDeviceId: getDispositivoId(), fecha: ahora, tipo: 'REPARACION', accion: 'GUARDAR', previo: r,
+            documento: { ...r, estado, bitacora: conEvento(r, estado, ahora) } });
     };
 
     const confirmarEntrega = async () => {
         if (!entregando) return;
         const dias = parseInt(garantiaDias) || 0;
+        // Callback de clic protegido por candado; no se ejecuta durante render.
+        // eslint-disable-next-line react-hooks/purity
         const ahora = Date.now();
         // Saldo pendiente cobrado a la entrega → se registra como pago final
         const saldo = Math.max(0, entregando.total - (entregando.abono ?? 0));
@@ -417,8 +411,10 @@ export default function ReparacionesPage() {
             estado_sincronizacion: 0 as const,
             fecha_actualizacion: ahora,
         };
-        await db.reparaciones.update(entregando.id, campos);
-        const actualizada: ReparacionLocal = { ...entregando, ...campos };
+        const { documento } = await commitServicioLocal(db, { operationId: uuidv4(), negocioId: negocioId!, sucursalId: sucursalId || undefined,
+            originDeviceId: getDispositivoId(), fecha: ahora, tipo: 'REPARACION', accion: 'GUARDAR', previo: entregando,
+            documento: { ...entregando, ...campos } });
+        const actualizada = documento as ReparacionLocal;
         setEntregando(null);
         showToast('Equipo entregado.', 'success');
         setTimeout(() => imprimir(actualizada, 'entrega'), 150);
@@ -428,10 +424,14 @@ export default function ReparacionesPage() {
         if (!abonandoRep) return;
         const monto = parseFloat(montoAbonoRep) || 0;
         if (monto <= 0) { showToast('Ingresa un monto válido.', 'error'); return; }
+        // Evento de abono; el reloj no se evalúa al renderizar.
+        // eslint-disable-next-line react-hooks/purity
         const ahora = Date.now();
         const pagos = [...(abonandoRep.pagos ?? []), { monto, metodo: metodoAbonoRep, fecha: ahora, tipo: 'abono' as const }];
         const abono = (abonandoRep.abono ?? 0) + monto;
-        await db.reparaciones.update(abonandoRep.id, { pagos, abono, estado_sincronizacion: 0, fecha_actualizacion: ahora });
+        await commitServicioLocal(db, { operationId: uuidv4(), negocioId: negocioId!, sucursalId: sucursalId || undefined,
+            originDeviceId: getDispositivoId(), fecha: ahora, tipo: 'REPARACION', accion: 'GUARDAR', previo: abonandoRep,
+            documento: { ...abonandoRep, pagos, abono } });
         setAbonandoRep(null);
         setMontoAbonoRep('');
         showToast('Abono registrado.', 'success');
@@ -439,8 +439,12 @@ export default function ReparacionesPage() {
 
     // Aprobar cotización → pasa a en reparación
     const aprobarCotizacion = async (r: ReparacionLocal) => {
+        // Callback de clic protegido por candado; no se ejecuta durante render.
+        // eslint-disable-next-line react-hooks/purity
         const ahora = Date.now();
-        await db.reparaciones.update(r.id, { estado: 'en_reparacion', bitacora: conEvento(r, 'en_reparacion', ahora), estado_sincronizacion: 0, fecha_actualizacion: ahora });
+        await commitServicioLocal(db, { operationId: uuidv4(), negocioId: negocioId!, sucursalId: sucursalId || undefined,
+            originDeviceId: getDispositivoId(), fecha: ahora, tipo: 'REPARACION', accion: 'GUARDAR', previo: r,
+            documento: { ...r, estado: 'en_reparacion', bitacora: conEvento(r, 'en_reparacion', ahora) } });
         showToast('Cotización aprobada. En reparación.', 'success');
     };
 
@@ -453,18 +457,16 @@ export default function ReparacionesPage() {
     };
     const confirmarRechazo = async () => {
         if (!rechazando) return;
+        // Callback de confirmación; timestamp capturado al ejecutar el comando.
+        // eslint-disable-next-line react-hooks/purity
         const ahora = Date.now();
         const cargo = parseFloat(cargoRevision) || 0;
-        // Devolver al inventario los repuestos que se hubieran descontado al cotizar
-        for (const rp of rechazando.repuestos) {
-            if (rp.desde_inventario && rp.producto_id && rp.stock_aplicado) {
-                await registrarMovimientoStock({ productoId: rp.producto_id, tipo: 'reparacion', delta: Math.abs(rp.cantidad), referenciaId: rechazando.id });
-            }
-        }
         const pagos = [...(rechazando.pagos ?? [])];
         if (cargo > 0) pagos.push({ monto: cargo, metodo: metodoCargo, fecha: ahora, tipo: 'revision' });
         const estadoRechazo: ReparacionEstado = rechazoResolucion === 'abandonado' ? 'abandonado' : 'no_reparado';
-        await db.reparaciones.update(rechazando.id, {
+        await commitServicioLocal(db, { operationId: uuidv4(), negocioId: negocioId!, sucursalId: sucursalId || undefined,
+            originDeviceId: getDispositivoId(), fecha: ahora, tipo: 'REPARACION', accion: 'GUARDAR', previo: rechazando,
+            documento: { ...rechazando,
             estado: estadoRechazo,
             bitacora: conEvento(rechazando, estadoRechazo, ahora),
             // El único cobro real es el cargo de revisión (la reparación no se hizo)
@@ -472,10 +474,10 @@ export default function ReparacionesPage() {
             mano_obra: 0,
             repuestos: rechazando.repuestos.map(rp => rp.desde_inventario ? { ...rp, stock_aplicado: false } : rp),
             pagos,
-            abono: cargo,
+            abono: getSharedCaptureContext(db)?rechazando.abono+cargo:cargo,
             estado_sincronizacion: 0,
             fecha_actualizacion: ahora,
-        });
+        } });
         setRechazando(null);
         showToast(rechazoResolucion === 'abandonado' ? 'Marcado como abandonado.' : 'Cliente retiró el equipo.', 'info');
     };
@@ -483,8 +485,10 @@ export default function ReparacionesPage() {
     // Reingreso por garantía: crea una nueva reparación ligada al original, sin cobro
     const reingresoGarantia = async (r: ReparacionLocal) => {
         if (!negocioId) return;
+        // Callback de clic protegido por candado; no se ejecuta durante render.
+        // eslint-disable-next-line react-hooks/purity
         const ahora = Date.now();
-        const folio = await getNextFolioReparacion(negocioId);
+        const folio = '';
         const nueva: ReparacionLocal = {
             id: uuidv4(),
             negocio_id: negocioId,
@@ -511,27 +515,26 @@ export default function ReparacionesPage() {
             estado_sincronizacion: 0,
             fecha_actualizacion: ahora,
         };
-        await db.reparaciones.put(nueva);
-        showToast(`Reingreso por garantía creado: ${folio}`, 'success');
+        const { documento } = await commitServicioLocal(db, { operationId: nueva.id, negocioId, sucursalId: sucursalId || undefined,
+            originDeviceId: getDispositivoId(), fecha: ahora, tipo: 'REPARACION', accion: 'GUARDAR', documento: nueva });
+        showToast(`Reingreso por garantía creado: ${documento.folio}`, 'success');
     };
 
     const confirmarCancelar = async () => {
         if (!cancelando) return;
+        // Callback de confirmación; timestamp capturado al ejecutar el comando.
+        // eslint-disable-next-line react-hooks/purity
         const ahora = Date.now();
-        // Devolver al inventario los repuestos que ya se habían descontado
-        for (const rp of cancelando.repuestos) {
-            if (rp.desde_inventario && rp.producto_id && rp.stock_aplicado) {
-                await registrarMovimientoStock({ productoId: rp.producto_id, tipo: 'reparacion', delta: Math.abs(rp.cantidad), referenciaId: cancelando.id });
-            }
-        }
         // Marcar cancelada y limpiar la marca de stock (ya se devolvió)
-        await db.reparaciones.update(cancelando.id, {
+        await commitServicioLocal(db, { operationId: uuidv4(), negocioId: negocioId!, sucursalId: sucursalId || undefined,
+            originDeviceId: getDispositivoId(), fecha: ahora, tipo: 'REPARACION', accion: 'CANCELAR', previo: cancelando,
+            documento: { ...cancelando,
             estado: 'cancelado',
             bitacora: conEvento(cancelando, 'cancelado', ahora),
             repuestos: cancelando.repuestos.map(rp => rp.desde_inventario ? { ...rp, stock_aplicado: false } : rp),
             estado_sincronizacion: 0,
             fecha_actualizacion: ahora,
-        });
+        } });
         setCancelando(null);
         showToast('Reparación cancelada. Los repuestos volvieron al inventario.', 'info');
     };
@@ -562,41 +565,41 @@ export default function ReparacionesPage() {
 
     const confirmarDespiece = async () => {
         if (!despiezando || !negocioId) return;
+        // Callback de clic protegido por candado; no se ejecuta durante render.
+        // eslint-disable-next-line react-hooks/purity
         const ahora = Date.now();
         try {
-            // Devolver al inventario los repuestos que la reparación hubiera descontado
-            for (const rp of despiezando.repuestos) {
-                if (rp.desde_inventario && rp.producto_id && rp.stock_aplicado) {
-                    await registrarMovimientoStock({ productoId: rp.producto_id, tipo: 'reparacion', delta: Math.abs(rp.cantidad), referenciaId: despiezando.id });
-                }
-            }
+            const productosNuevos: ProductoLocal[] = [];
+            const entradasDespiece: { productoId: string; cantidad: number }[] = [];
             // Agregar las piezas recuperadas al inventario (crea el insumo si es nuevo)
             for (const pz of piezas) {
                 if (!pz.nombre.trim() || pz.cantidad <= 0) continue;
                 let pid = pz.producto_id;
                 if (!pid) {
                     pid = uuidv4();
-                    await db.productos.put({
+                    productosNuevos.push({
                         id: pid, negocio_id: negocioId, nombre: pz.nombre.trim(), tipo: 'insumo',
                         codigo_barras: '', precio_venta: 0, costo: pz.costo || 0,
                         stock_actual: 0, stock_minimo: 0, tasa_itbis: 0,
                         estado_sincronizacion: 0, fecha_actualizacion: ahora,
                     } as ProductoLocal);
                 }
-                await registrarMovimientoStock({ productoId: pid, tipo: 'entrada', delta: Math.abs(pz.cantidad), referenciaId: despiezando.id });
+                entradasDespiece.push({ productoId: pid, cantidad: pz.cantidad });
             }
-            await db.reparaciones.update(despiezando.id, {
+            await commitServicioLocal(db, { operationId: uuidv4(), negocioId, sucursalId: sucursalId || undefined,
+                originDeviceId: getDispositivoId(), fecha: ahora, tipo: 'REPARACION', accion: 'DESPIECE', previo: despiezando,
+                productosNuevos, entradasDespiece, documento: { ...despiezando,
                 estado: 'cancelado',
                 bitacora: conEvento(despiezando, 'cancelado', ahora),
                 notas: `${despiezando.notas ? despiezando.notas + ' · ' : ''}Equipo abandonado y despiezado`,
                 repuestos: despiezando.repuestos.map(rp => rp.desde_inventario ? { ...rp, stock_aplicado: false } : rp),
                 estado_sincronizacion: 0, fecha_actualizacion: ahora,
-            });
+            } });
             setDespiezando(null);
             showToast('Equipo despiezado: piezas agregadas al inventario.', 'success');
         } catch (err) {
             console.error('[despiece]', err);
-            showToast('No se pudo completar el despiece.', 'error');
+            showToast(localCommandError(err), 'error');
         }
     };
 
@@ -744,7 +747,7 @@ export default function ReparacionesPage() {
                                                     {(r.estado === 'recibido' || r.estado === 'diagnostico') && (
                                                         <>
                                                             {r.estado === 'recibido' && (
-                                                                <button onClick={() => cambiarEstado(r, 'diagnostico')} className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-purple-500/15 text-purple-300 border border-purple-500/30 hover:bg-purple-500/25 transition-all">🔬 Diagnosticar</button>
+                                                                <button onClick={conCandado(() => cambiarEstado(r, 'diagnostico'))} className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-purple-500/15 text-purple-300 border border-purple-500/30 hover:bg-purple-500/25 transition-all">🔬 Diagnosticar</button>
                                                             )}
                                                             <button onClick={() => abrirEditar(r, true)} className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-gold/10 text-gold border border-gold/20 hover:bg-gold/20 transition-all">📝 Cotizar</button>
                                                         </>
@@ -753,7 +756,7 @@ export default function ReparacionesPage() {
                                                     {/* Cotizado → aprobar / rechazar */}
                                                     {r.estado === 'cotizado' && (
                                                         <>
-                                                            <button onClick={() => aprobarCotizacion(r)} className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-vr-green/10 text-vr-green border border-vr-green/20 hover:bg-vr-green/20 transition-all">✅ Aprobar</button>
+                                                            <button onClick={conCandado(() => aprobarCotizacion(r))} className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-vr-green/10 text-vr-green border border-vr-green/20 hover:bg-vr-green/20 transition-all">✅ Aprobar</button>
                                                             <button onClick={() => abrirRechazo(r)} className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-vr-red/10 text-vr-red border border-vr-red/20 hover:bg-vr-red/20 transition-all">❌ Rechazar</button>
                                                         </>
                                                     )}
@@ -762,7 +765,7 @@ export default function ReparacionesPage() {
                                                     {enTrabajo && (
                                                         <select
                                                             value={r.estado}
-                                                            onChange={e => cambiarEstado(r, e.target.value as ReparacionEstado)}
+                                                            onChange={conCandado(e => cambiarEstado(r, e.target.value as ReparacionEstado))}
                                                             className="bg-navy-3 border border-navy-3 rounded-lg py-1.5 pl-2.5 pr-7 text-xs font-bold text-white focus:border-gold outline-none cursor-pointer"
                                                         >
                                                             {ESTADOS.filter(e => ESTADOS_TRABAJO.includes(e.key)).map(e => (
@@ -789,7 +792,7 @@ export default function ReparacionesPage() {
 
                                                     {/* Reingreso por garantía (entregado y vigente) */}
                                                     {enGarantia && (
-                                                        <button onClick={() => reingresoGarantia(r)} className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-gold/10 text-gold border border-gold/20 hover:bg-gold/20 transition-all">🛡️ Reingreso garantía</button>
+                                                        <button onClick={conCandado(() => reingresoGarantia(r))} className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-gold/10 text-gold border border-gold/20 hover:bg-gold/20 transition-all">🛡️ Reingreso garantía</button>
                                                     )}
 
                                                     {/* Despiezar (abandonado, o activos no-cotizado) */}
@@ -1014,7 +1017,7 @@ export default function ReparacionesPage() {
                                 </div>
                                 <div className="flex gap-3 pt-2">
                                     <button type="button" onClick={() => setEntregando(null)} className="flex-1 py-3 font-bold text-vr-gray hover:text-white border border-navy-3 rounded-xl transition-colors">Cancelar</button>
-                                    <button type="button" onClick={confirmarEntrega} className="flex-1 py-3 bg-gold-gradient text-navy font-extrabold rounded-xl hover:brightness-110 transition-all">Cobrar y entregar</button>
+                                    <button type="button" onClick={conCandado(confirmarEntrega)} disabled={ocupado} className="flex-1 py-3 bg-gold-gradient text-navy font-extrabold rounded-xl hover:brightness-110 transition-all">Cobrar y entregar</button>
                                 </div>
                             </div>
                         </div>
@@ -1054,7 +1057,7 @@ export default function ReparacionesPage() {
                                 )}
                                 <div className="flex gap-3 pt-2">
                                     <button type="button" onClick={() => setRechazando(null)} className="flex-1 py-3 font-bold text-vr-gray hover:text-white border border-navy-3 rounded-xl transition-colors">Cancelar</button>
-                                    <button type="button" onClick={confirmarRechazo} className="flex-1 py-3 bg-vr-red/80 hover:bg-vr-red text-white font-extrabold rounded-xl transition-all">Confirmar</button>
+                                    <button type="button" onClick={conCandado(confirmarRechazo)} disabled={ocupado} className="flex-1 py-3 bg-vr-red/80 hover:bg-vr-red text-white font-extrabold rounded-xl transition-all">Confirmar</button>
                                 </div>
                             </div>
                         </div>
@@ -1146,6 +1149,7 @@ export default function ReparacionesPage() {
                                 )}
 
                                 {/* Visitas anteriores del equipo */}
+                                <SharedDepositRefund family="repair" id={detalle.id}/>
                                 {detalle.equipo_imei && (
                                     <div>
                                         <p className="text-xs font-bold text-vr-gray uppercase tracking-wider mb-2">Visitas anteriores de este equipo</p>
@@ -1259,7 +1263,7 @@ export default function ReparacionesPage() {
                         </div>
                         <div className="p-4 sm:p-6 border-t border-navy-3 flex gap-3 shrink-0">
                             <button type="button" onClick={() => setDespiezando(null)} className="flex-1 py-3 font-bold text-vr-gray hover:text-white border border-navy-3 rounded-xl transition-colors">Cancelar</button>
-                            <button type="button" onClick={confirmarDespiece} className="flex-1 py-3 bg-gold-gradient text-navy font-extrabold rounded-xl hover:brightness-110 transition-all">Despiezar y guardar piezas</button>
+                            <button type="button" onClick={conCandado(confirmarDespiece)} disabled={ocupado} className="flex-1 py-3 bg-gold-gradient text-navy font-extrabold rounded-xl hover:brightness-110 transition-all">Despiezar y guardar piezas</button>
                         </div>
                     </div>
                 </div>
@@ -1270,7 +1274,7 @@ export default function ReparacionesPage() {
                 title="Cancelar reparación"
                 mensaje={<>¿Cancelar la reparación <span className="font-bold text-white">{cancelando?.folio}</span>? No se borra, queda marcada como cancelada.</>}
                 confirmLabel="Sí, cancelar"
-                onConfirm={confirmarCancelar}
+                onConfirm={conCandado(confirmarCancelar)}
                 onClose={() => setCancelando(null)}
             />
         </PinGuard>

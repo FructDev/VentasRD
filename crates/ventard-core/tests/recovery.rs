@@ -219,7 +219,7 @@ fn recovered_archive_custody_uses_destination_secret_and_never_becomes_a_writer(
     ventard_core::application::sales_sync::begin_bootstrap(c, &target, &m, 2000).unwrap();
     ventard_core::application::sales_sync::activate_bootstrap(c, &target, 2000, &id(16)).unwrap();
     let facts = reopened
-        .read(|c, source| ventard_core::storage::recovery::facts(c, source))
+        .read(ventard_core::storage::recovery::facts)
         .unwrap();
     let ciphertext = reopened.encrypted_bytes().unwrap();
     let view = ventard_core::storage::recovery::prepare(
@@ -356,7 +356,7 @@ fn recovered_archive_custody_uses_destination_secret_and_never_becomes_a_writer(
         backup::restore(&parent_file, &parent_card, &root.join("candidate/parent")).unwrap();
     assert_eq!(
         parent
-            .read(|c, s| ventard_core::storage::recovery::archived_list(c, s))
+            .read(ventard_core::storage::recovery::archived_list)
             .unwrap()["rows"][0]["recoveryId"],
         id(17)
     );

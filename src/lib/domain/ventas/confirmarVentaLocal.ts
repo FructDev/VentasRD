@@ -1,6 +1,9 @@
 import { v4 as uuidv4 } from 'uuid';
 import type { VentaRDDatabase } from '@/lib/db/dexie';
 import type { ProductoLocal } from '@/types/database';
+import { commandHash } from '@/lib/domain/local/command';
+import { normalizeInventoryInteger } from '@/lib/sync/inventory/canonical-payload';
+import { requireProductAtScope, withScopeStock } from '@/lib/sync/inventory/scope-stock';
 import {
     construirEfectosVenta,
     type ConfirmarVentaEntrada,
@@ -40,34 +43,6 @@ async function calcularBaseLegada(
     return Math.max(maxCaja || maxGlobal, entrada.ultimoTicketConocido ?? 0);
 }
 
-function reconstruirResultadoExistente(
-    entrada: ConfirmarVentaLocalEntrada,
-    venta: EfectosVentaLocal['venta'],
-    detalles: EfectosVentaLocal['detalles'],
-    movimientosStock: EfectosVentaLocal['movimientosStock'],
-    cargoFiado: EfectosVentaLocal['cargoFiado'],
-    seriales: EfectosVentaLocal['seriales'],
-): EfectosVentaLocal {
-    return {
-        venta,
-        detalles,
-        movimientosStock,
-        cargoFiado,
-        seriales,
-        impactoCaja: {
-            efectivo: venta.metodo_pago === 'efectivo' ? venta.total : venta.metodo_pago === 'mixto' ? (venta.monto_efectivo ?? 0) : 0,
-            tarjeta: venta.metodo_pago === 'tarjeta' ? venta.total : 0,
-            transferencia: venta.metodo_pago === 'transferencia' ? venta.total : venta.metodo_pago === 'mixto' ? (venta.monto_transferencia ?? 0) : 0,
-            fiado: venta.metodo_pago === 'fiado' ? venta.total : 0,
-        },
-        secuencia: {
-            cajaCodigo: venta.caja_codigo ?? entrada.cajaCodigo,
-            numeroTicket: venta.numero_ticket!,
-            ncf: venta.ncf,
-        },
-    };
-}
-
 /**
  * Confirma todos los efectos locales de una venta en una sola transacción Dexie.
  * No realiza red, impresión ni cambios de UI. Repetir operacionId es idempotente.
@@ -78,6 +53,13 @@ export async function confirmarVentaLocal(
     dependencias: DependenciasConfirmarVenta = {},
 ): Promise<ConfirmarVentaLocalResultado> {
     const crearId = dependencias.crearId ?? (() => uuidv4());
+    // Copiar antes del primer await: el llamador no puede cambiar el contexto/items
+    // mientras esperamos el lock. Contadores de respaldo son resultado, no intención.
+    entrada = structuredClone(entrada);
+    const { ultimoTicketConocido: _counter, ...command } = entrada;
+    void _counter;
+    const hash = commandHash({ kind: 'SALE', contractVersion: 1, ...command });
+    const journalId = `${entrada.negocioId}:SALE:${entrada.operacionId}`;
 
     return database.transaction('rw', [
         database.ventas,
@@ -87,55 +69,47 @@ export async function confirmarVentaLocal(
         database.movimientos_stock,
         database.seriales,
         database.secuencias,
+        database.operaciones_locales,
+        database.cajas,
+        database.clientes,
     ], async () => {
         const existente = await database.ventas.get(entrada.operacionId);
         if (existente) {
-            if (
-                existente.negocio_id !== entrada.negocioId
-                || existente.caja_codigo !== entrada.cajaCodigo
-                || existente.metodo_pago !== entrada.metodoPago
-                || Math.abs(existente.total - entrada.total) > 0.01
-            ) {
+            const journal = await database.operaciones_locales.get(journalId);
+            if (existente.negocio_id !== entrada.negocioId || journal && journal.payload_hash !== hash) {
                 throw new Error(`operacion_id_conflicto:${entrada.operacionId}`);
             }
+            if (!journal) throw new Error(`venta_legacy_replay_no_verificable:${entrada.operacionId}`);
+            return { reutilizada: true, efectos: journal.resultado as EfectosVentaLocal };
+        }
 
-            const [detalles, movimientos, cargos, serialesVendidos] = await Promise.all([
-                database.venta_detalles.where('venta_id').equals(entrada.operacionId).toArray(),
-                database.movimientos_stock.where('negocio_id').equals(entrada.negocioId)
-                    .filter(m => m.referencia_id === entrada.operacionId).toArray(),
-                database.transacciones_fiado.where('negocio_id').equals(entrada.negocioId)
-                    .filter(t => t.venta_id === entrada.operacionId).toArray(),
-                database.seriales.where('negocio_id').equals(entrada.negocioId)
-                    .filter(s => s.venta_id === entrada.operacionId).toArray(),
-            ]);
-            return {
-                reutilizada: true,
-                efectos: reconstruirResultadoExistente(
-                    entrada,
-                    existente,
-                    detalles,
-                    movimientos,
-                    cargos[0] ?? null,
-                    serialesVendidos.map(s => ({
-                        serialId: s.id,
-                        productoId: s.producto_id,
-                        numeroSerial: s.numero_serial,
-                        ventaId: entrada.operacionId,
-                        fechaVenta: s.fecha_venta ?? existente.fecha_creacion,
-                        garantiaDias: s.garantia_dias ?? 0,
-                        garantiaHasta: s.garantia_hasta ?? null,
-                        clienteNombre: s.cliente_nombre ?? null,
-                        precioVenta: s.precio_venta ?? 0,
-                    })),
-                ),
-            };
+        const turnos = await database.cajas.where('negocio_id').equals(entrada.negocioId)
+            .filter(c => c.estado === 'abierta' && (c.sucursal_id ?? null) === (entrada.sucursalId ?? null)).toArray();
+        const tieneEfectivo = entrada.metodoPago === 'efectivo' || entrada.metodoPago === 'mixto';
+        if (turnos.length > 1) throw new Error('turno_ambiguo');
+        if ((tieneEfectivo || entrada.cajaId) && !turnos.length) throw new Error('turno_requerido');
+        const turno = turnos[0];
+        if (entrada.cajaId && turno?.id !== entrada.cajaId) throw new Error('turno_cambiado');
+        if (turno && entrada.fecha < turno.fecha_apertura) throw new Error('turno_fecha_invalida');
+        if (entrada.clienteId) {
+            const cliente = await database.clientes.get(entrada.clienteId);
+            if (!cliente || cliente.eliminado || cliente.negocio_id !== entrada.negocioId) throw new Error('cliente_ambito_invalido');
         }
 
         const secuenciaId = idSecuencia(entrada.negocioId, entrada.cajaCodigo);
         const secuencia = await database.secuencias.get(secuenciaId);
         const base = secuencia?.ultimo ?? await calcularBaseLegada(database, entrada);
         const numeroTicket = base + 1;
-        const efectos = construirEfectosVenta({ ...entrada, numeroTicket }, crearId);
+        const efectos = construirEfectosVenta({ ...entrada, cajaId: turno?.id, numeroTicket }, crearId);
+        for (const item of entrada.items) {
+            const product = await database.productos.get(item.productoId);
+            if (item.sinStock) {
+                if (product) throw new Error('venta_libre_producto_existente');
+                continue;
+            }
+            if (!product || product.negocio_id !== entrada.negocioId || product.eliminado) throw new Error(`producto_ambito_invalido:${item.productoId}`);
+            if (product.serializable && !item.serial) throw new Error(`serial_requerido:${item.productoId}`);
+        }
 
         // Validar y acumular todos los deltas antes de escribir. Un combo puede
         // afectar el mismo insumo varias veces; se comprueba el total agregado.
@@ -148,10 +122,14 @@ export async function confirmarVentaLocal(
         [...deltas.entries()].forEach(([productoId, delta], indice) => {
             const producto = productos[indice];
             if (!producto) throw new Error(`producto_no_encontrado:${productoId}`);
-            const stockResultante = parseFloat((producto.stock_actual + delta).toFixed(3));
+            if (producto.negocio_id !== entrada.negocioId || producto.eliminado) throw new Error(`producto_ambito_invalido:${productoId}`);
+            const stockScope = { negocioId: entrada.negocioId, sucursalId: entrada.sucursalId ?? null };
+            const projected = requireProductAtScope(producto, stockScope);
+            normalizeInventoryInteger(projected.stock_actual);
+            const stockResultante = Number(normalizeInventoryInteger(projected.stock_actual + delta));
             if (stockResultante < 0) throw new Error(`stock_insuficiente:${productoId}`);
             productosActualizados.push({
-                ...producto,
+                ...withScopeStock(producto, stockScope, stockResultante),
                 stock_actual: stockResultante,
                 fecha_actualizacion: entrada.fecha,
             });
@@ -160,6 +138,8 @@ export async function confirmarVentaLocal(
         for (const actualizacion of efectos.seriales) {
             const serial = await database.seriales.get(actualizacion.serialId);
             if (!serial) throw new Error(`serial_no_encontrado:${actualizacion.serialId}`);
+            if (serial.negocio_id !== entrada.negocioId) throw new Error(`serial_ambito_invalido:${actualizacion.serialId}`);
+            if (serial.numero_serial !== actualizacion.numeroSerial) throw new Error(`serial_numero_invalido:${actualizacion.serialId}`);
             if (serial.producto_id !== actualizacion.productoId) throw new Error(`serial_producto_invalido:${actualizacion.serialId}`);
             if (serial.estado !== 'disponible') throw new Error(`serial_no_disponible:${actualizacion.serialId}`);
         }
@@ -189,6 +169,11 @@ export async function confirmarVentaLocal(
             tipo: 'ticket',
             ultimo: numeroTicket,
             fecha_actualizacion: entrada.fecha,
+        });
+        await database.operaciones_locales.add({
+            id: journalId, negocio_id: entrada.negocioId, operation_id: entrada.operacionId,
+            tipo: 'SALE', contract_version: 1, payload_hash: hash, estado_local: 'COMMITTED',
+            estado_remoto: 'NOT_ENABLED', fecha_origen: entrada.fecha, resultado: efectos,
         });
 
         return { efectos, reutilizada: false };

@@ -21,6 +21,7 @@ export interface DatosVentaTicket {
     clienteNombre?: string; // Cliente de la venta (clave para delivery)
     mensajePie?: string;
     logoUrl?: string;
+    fechaVenta?: number;
 }
 
 const fmt = (n: number) => n.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -52,7 +53,7 @@ function cabecera(b: EscPosBuilder, datos: DatosVentaTicket, logo: LogoBitmap | 
     if (datos.negocio.direccion) b.line(datos.negocio.direccion);
     if (datos.negocio.telefono) b.line(`Tel: ${datos.negocio.telefono}`);
     b.feed(1);
-    b.line(`Fecha: ${new Date().toLocaleString('es-DO')}`);
+    b.line(`Fecha: ${new Date(datos.fechaVenta ?? Date.now()).toLocaleString('es-DO')}`);
     const numStr = datos.numeroTicket != null ? String(datos.numeroTicket).padStart(5, '0') : '-----';
     b.bold(true).line(`Ticket #: ${datos.cajaCodigo ? `${datos.cajaCodigo}-${numStr}` : numStr}`).bold(false);
     if (datos.vendedor) b.line(`Le atendio: ${datos.vendedor}`);

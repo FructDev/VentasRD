@@ -3,17 +3,49 @@ import { db } from './dexie';
 import { supabase } from '../supabase/client';
 import { useConfigStore } from '@/store/useConfigStore';
 import { productosConMovimientosPendientes } from './stock';
-import type { ProductoLocal } from '@/types/database';
 import { iniciarMedicion, marcarSyncActivo, registrarMetrica, type ResultadoMetrica } from '../rendimiento';
 import type { RealtimeChannel } from '@supabase/supabase-js';
+import { InventoryRemoteClient } from '@/lib/sync/inventory/remote-client';
+import { createInventoryHttpTransport } from '@/lib/sync/inventory/http-transport';
+import { InventoryOperationRepository } from '@/lib/sync/inventory/repository';
+import { procesarColaInventario } from '@/lib/sync/inventory/worker-outbox';
+import { inventoryReceiverMode, startInventoryReceiver } from '@/lib/sync/inventory/receiver';
+import { startInventorySender } from '@/lib/sync/inventory/sender';
+import { prepareInventoryProduct } from '@/lib/sync/inventory/bootstrap';
+import { InventoryRemoteError } from '@/lib/sync/inventory/remote-client';
+import { captureCatalogBaseline, persistRemoteCatalog } from '@/lib/sync/catalog-pull';
+import { readCompletePages } from '@/lib/sync/read-complete-pages';
+import { syncStorageKey } from '@/lib/sync/scope-storage';
+import { syncQuiescence } from '@/lib/sync/quiescence';
+import type { InventoryScope } from '@/lib/sync/inventory/contract';
+import type { Table } from 'dexie';
+import { acknowledgeSyncedSnapshot, removeSyncedSnapshot, pendingTenantRows, pullTenantRows, historyPullFloor, type BusinessSyncRow } from '@/lib/sync/tenant-rows';
+import { purgeAcknowledgedHistory } from '@/lib/sync/retention';
+import { payloadFiadoRemoto } from '@/lib/domain/fiado/abonos';
+import { payloadDetalleRemoto, detalleDesdeRemoto } from '@/lib/sync/sale-details';
+import { abastecerNcfLocal } from '@/lib/domain/ventas/ncfLocal';
+import {sharedWebEnabled,refreshSharedWorker,runSharedWorkerCycle,resetSharedWorker} from '@/lib/sync/shared-worker';
 
 // ─── Singleton ────────────────────────────────────────────────────────────────
 // Garantiza que nunca corra más de un intervalo de sync a la vez,
 // aunque SyncProvider se desmonte y remonte (ej. navegación rápida).
 let activeInterval: ReturnType<typeof setInterval> | null = null;
+let syncGeneration = 0;
 // Referencias a los listeners para poder removerlos en stopSyncWorker.
 let onVisibilidad: (() => void) | null = null;
 let onOnline: (() => void) | null = null;
+let inventoryReceiver: ReturnType<typeof startInventoryReceiver> | null = null;
+let inventorySender: ReturnType<typeof startInventorySender> | null = null;
+let unsubscribeInventoryAuth: (() => void) | null = null;
+let unsubscribeInventoryScope: (() => void) | null = null;
+
+function inventoryRemoteClient() {
+    return new InventoryRemoteClient({ ...createInventoryHttpTransport({
+        baseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL ?? '',
+        publishableKey: process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? '',
+        getAccessToken: async () => (await supabase.auth.getSession()).data.session?.access_token ?? null,
+    }), from: table => supabase.from(table) });
+}
 
 // ─── Timeout helper ───────────────────────────────────────────────────────────
 // Lanza error si Supabase no responde en `ms` ms, liberando el flag isSyncing.
@@ -53,17 +85,17 @@ async function sinPisarPendientes<T extends FilaSincronizable>(
 // cada vez que se abre la app, y sobrevive reinicios del intervalo.
 const TS_PREFIX = 'vrd_sync_';
 
-function getSyncTs(key: string): number {
+function readSyncTs(key: string, scope: InventoryScope): number {
     try {
-        return parseInt(localStorage.getItem(TS_PREFIX + key) || '0', 10) || 0;
+        return parseInt(localStorage.getItem(syncStorageKey(TS_PREFIX, key, scope)) || '0', 10) || 0;
     } catch {
         return 0;
     }
 }
 
-function setSyncTs(key: string, ts: number) {
+function writeSyncTs(key: string, ts: number, scope: InventoryScope) {
     try {
-        if (ts > 0) localStorage.setItem(TS_PREFIX + key, String(ts));
+        if (ts > 0) localStorage.setItem(syncStorageKey(TS_PREFIX, key, scope), String(ts));
     } catch { /* quota exceeded — ignorar */ }
 }
 
@@ -118,10 +150,17 @@ async function suscribirRealtimeStock(negocioId: string): Promise<void> {
             table: 'movimientos_stock',
             filter: `negocio_id=eq.${negocioId}`,
         }, async (payload) => {
+            const finishActivity = syncQuiescence.enter();
+            if (!finishActivity) return; // Durable pull catches notifications after update/failure.
             const inicioRealtime = performance.now();
             try {
                 const m = payload.new as { id: string; producto_id: string; fecha_creacion?: number };
                 if (!m?.producto_id) return;
+                void inventoryReceiver?.wake();
+                const current = useConfigStore.getState();
+                if (current.negocioId !== negocioId) return;
+                const scope = { negocioId, sucursalId: current.sucursalId ?? null };
+                const baseline = await captureCatalogBaseline(db, scope, [m.producto_id]);
                 // ¿Es un movimiento nuestro? Ya está aplicado localmente.
                 if (await db.movimientos_stock.get(m.id)) return;
                 // Con cambios locales pendientes de ese producto, manda el recon.
@@ -131,33 +170,39 @@ async function suscribirRealtimeStock(negocioId: string): Promise<void> {
                 if (!local || local.estado_sincronizacion === 0) return;
 
                 // Refresco puntual del producto desde la nube
-                const { data: prod } = await supabase
+                const { data: prod, error: prodError } = await withTimeout(() => supabase
                     .from('productos')
-                    .select('stock_actual, fecha_actualizacion')
+                    .select('*')
+                    .eq('negocio_id', negocioId)
                     .eq('id', m.producto_id)
-                    .maybeSingle();
-                if (!prod) return;
-                let stock = prod.stock_actual as number;
-                const { sucursalId } = useConfigStore.getState();
-                if (sucursalId) {
-                    const { data: inv } = await supabase
+                    .maybeSingle());
+                if (prodError || !prod) return;
+                const branchStocks = new Map<string, number>();
+                if (scope.sucursalId) {
+                    const { data: inv, error: invError } = await withTimeout(() => supabase
                         .from('inventario_sucursales')
                         .select('stock_actual')
-                        .eq('sucursal_id', sucursalId)
+                        .eq('sucursal_id', scope.sucursalId)
                         .eq('producto_id', m.producto_id)
-                        .maybeSingle();
-                    if (inv) stock = inv.stock_actual;
+                        .maybeSingle());
+                    if (invError || !inv) return;
+                    branchStocks.set(m.producto_id, inv.stock_actual);
                 }
-                await db.productos.update(m.producto_id, {
-                    stock_actual: stock,
-                    fecha_actualizacion: (prod.fecha_actualizacion as number) ?? Date.now(),
+                const result = await persistRemoteCatalog({ database: db, scope, baseline,
+                    products: [prod], branchStocks, mode: 'STOCK_ONLY',
+                    isCurrentScope: () => {
+                        const state = useConfigStore.getState();
+                        return state.negocioId === scope.negocioId && (state.sucursalId ?? null) === scope.sucursalId;
+                    },
                 });
-                registrarMetrica('stock.realtime_aplicacion', performance.now() - inicioRealtime, 'ok', {
+                registrarMetrica('stock.realtime_aplicacion', performance.now() - inicioRealtime, result.deferred ? 'cancelada' : 'ok', {
                     retrasoRelojMs: m.fecha_creacion ? Math.max(0, Date.now() - m.fecha_creacion) : null,
                 });
             } catch (e) {
                 registrarMetrica('stock.realtime_aplicacion', performance.now() - inicioRealtime, 'error');
                 console.warn('[realtime-stock]', e);
+            } finally {
+                finishActivity();
             }
         })
         .subscribe();
@@ -168,12 +213,58 @@ async function suscribirRealtimeStock(negocioId: string): Promise<void> {
 export const startSyncWorker = (): ReturnType<typeof setInterval> => {
     // Si ya hay un intervalo activo, devolver el mismo (singleton)
     if (activeInterval !== null) return activeInterval;
+    const generation = ++syncGeneration;
+    const completedScopeSnapshots = new Set<string>();
+    const live = () => generation === syncGeneration;
+    refreshSharedWorker();
 
     let isSyncing = false;
+    let queuedScopeTick = false;
     let consecutiveErrors = 0; // backoff simple: si hay 3 errores seguidos, esperar
+    inventoryReceiver = startInventoryReceiver({
+        database: db, remote: inventoryRemoteClient(),
+        getScope: () => {
+            const current = useConfigStore.getState();
+            return current.negocioId ? { negocioId: current.negocioId, sucursalId: current.sucursalId ?? null } : null;
+        },
+        getMode: scope => sharedWebEnabled(scope.negocioId) ? 'PAUSED' : inventoryReceiverMode(process.env.NEXT_PUBLIC_SUPABASE_URL,
+            process.env.NEXT_PUBLIC_VENTARD_INVENTORY_FEED_MODE, scope),
+        online: () => navigator.onLine, visible: () => !document.hidden,
+        reportError: code => console.warn(`[sync] ${code}: cursor y pendientes conservados`),
+    });
+    inventorySender = startInventorySender({
+        database: db, remote: inventoryRemoteClient(),
+        getScope: () => {
+            const current = useConfigStore.getState();
+            return current.negocioId && current.sucursalId
+                ? { negocioId: current.negocioId, sucursalId: current.sucursalId } : null;
+        },
+        getMode: scope => sharedWebEnabled(scope.negocioId) ? 'PAUSED' : inventoryReceiverMode(process.env.NEXT_PUBLIC_SUPABASE_URL,
+            process.env.NEXT_PUBLIC_VENTARD_INVENTORY_FEED_MODE, scope),
+        online: () => navigator.onLine, visible: () => !document.hidden,
+        reportError: code => console.warn(`[sync] ${code}: pendientes conservados`),
+        reportResult: (result, elapsedMs) => {
+            registrarMetrica('stock.push_independiente', elapsedMs, result.pending ? 'error' : 'ok');
+            void inventoryReceiver?.wake();
+        },
+    });
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+        if ((event !== 'SIGNED_IN' && event !== 'TOKEN_REFRESHED') || !session?.user.id) return;
+        // Do not await Supabase work inside its auth callback.
+        setTimeout(() => {
+            if (!live()) return;
+            const current = useConfigStore.getState();
+            if (current.user?.id === session.user.id && current.negocioId) {
+                void new InventoryOperationRepository(db).resumeAfterAuthentication(current.negocioId, Date.now())
+                    .then(() => { void inventoryReceiver?.wake(); void inventorySender?.wake(); })
+                    .catch(() => { /* preserve pending on local storage failure */ });
+            }
+        }, 0);
+    });
+    unsubscribeInventoryAuth = () => subscription.unsubscribe();
 
     const tick = async () => {
-        if (!navigator.onLine || isSyncing) return;
+        if (!live() || !navigator.onLine || isSyncing) return;
         // No sincronizar cuando la app está en segundo plano (pestaña oculta/minimizada):
         // evita gastar CPU, red y batería, y que la app se trabe al volver a abrirla.
         if (typeof document !== 'undefined' && document.hidden) return;
@@ -184,6 +275,8 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
             return;
         }
 
+        const finishActivity = syncQuiescence.enter();
+        if (!finishActivity) return;
         isSyncing = true;
         marcarSyncActivo(true);
         const inicioSync = performance.now();
@@ -193,14 +286,59 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
 
         try {
             const { sucursalId, negocioId } = useConfigStore.getState();
-            if (!negocioId) return;
+            // The POS requires branch selection. Never provision GLOBAL stock
+            // while the user is still choosing which branch this device serves.
+            if (!negocioId || !sucursalId) return;
+
+            if (sharedWebEnabled(negocioId)) {
+                await limpiarCanalRealtimeStock();
+                if (await runSharedWorkerCycle()) return;
+            }
 
             // Stock en vivo entre cajas (se suscribe una vez por negocio)
             await suscribirRealtimeStock(negocioId);
+            if (!live()) return;
 
-            // Productos con movimientos de stock aún no subidos: el pull no debe
-            // pisar su stock local (la nube todavía no refleja esos movimientos)
-            const movPendientes = await productosConMovimientosPendientes();
+            const scope = { negocioId, sucursalId: sucursalId ?? null };
+            const metadataWithoutAuthority = inventoryReceiverMode(process.env.NEXT_PUBLIC_SUPABASE_URL,
+                process.env.NEXT_PUBLIC_VENTARD_INVENTORY_FEED_MODE, scope) === 'ACTIVE';
+            const isCurrentScope = () => {
+                const current = useConfigStore.getState();
+                return live() && current.negocioId === scope.negocioId && (current.sucursalId ?? null) === scope.sucursalId;
+            };
+            const getSyncTs = (key: string) => readSyncTs(key, scope);
+            const setSyncTs = (key: string, ts: number) => { if (isCurrentScope()) writeSyncTs(key, ts, scope); };
+            const pullRows = async <T extends BusinessSyncRow>(table: Table<T>,
+                timestamp: 'fecha_creacion' | 'fecha_actualizacion',
+                options: { branchOnly?: boolean; preserveLegacyWithoutFlag?: boolean; merge?: (remote: T, local: T | undefined) => T } = {}) => {
+                if (!isCurrentScope()) return;
+                const cursor = getSyncTs(table.name);
+                const historyKey = syncStorageKey(TS_PREFIX, `${table.name}_recent_recon`, scope);
+                const now = Date.now();
+                const reconcile = timestamp === 'fecha_creacion'
+                    && now - parseInt(localStorage.getItem(historyKey) || '0', 10) > 5 * 60 * 1000;
+                const floor = historyPullFloor(cursor, now, reconcile);
+                try {
+                    const result = await pullTenantRows({ table, scope, isCurrentScope, ...options,
+                        readPage: (from, to) => withTimeout(() => {
+                            if (!isCurrentScope()) throw new Error('sync_scope_changed');
+                            let query = supabase.from(table.name).select('*', { count: 'exact' })
+                                .eq('negocio_id', negocioId).gte(timestamp, floor);
+                            if (options.branchOnly && sucursalId) query = query.eq('sucursal_id', sucursalId);
+                            return query.order('id').range(from, to);
+                        }),
+                    });
+                    if (result.deferred === 0) setSyncTs(table.name, clampTs(timestamp === 'fecha_creacion'
+                        ? maxCreacionTs(result.rows) : maxTs(result.rows)));
+                    // An offline sale may arrive long after its creation date.
+                    // Periodically revisit the same 90-day history we retain
+                    // locally instead of trusting a creation-date cursor alone.
+                    if (reconcile && isCurrentScope()) localStorage.setItem(historyKey, String(now));
+                } catch {
+                    resultadoSync = 'error';
+                    console.warn(`[sync] ${table.name}: descarga incompleta; se conserva el dato local y su cursor`);
+                }
+            };
 
             // ══════════════════════════════════════════════════════════════════
             // 1. PULL — Descargar de la nube
@@ -216,180 +354,110 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
             }
 
             // ── 1.B  Productos ────────────────────────────────────────────────
-            const lastProdTs = getSyncTs('productos');
-            const { data: cloudProducts, error: pullProdErr } = await withTimeout(() =>
-                supabase.from('productos').select('*').eq('negocio_id', negocioId).gt('fecha_actualizacion', lastProdTs)
-            );
-            if (!pullProdErr && cloudProducts && cloudProducts.length > 0) {
-                const cloudStockMap = new Map<string, { stock_actual: number; stock_minimo: number; fecha_actualizacion?: number | null }>();
-                if (sucursalId) {
-                    const { data: stockData } = await withTimeout(() =>
-                        supabase.from('inventario_sucursales')
-                            .select('producto_id, stock_actual, stock_minimo, fecha_actualizacion')
-                            .eq('sucursal_id', sucursalId)
-                            .in('producto_id', cloudProducts.map(p => p.id))
-                    );
-                    if (stockData) stockData.forEach(s => cloudStockMap.set(s.producto_id, s));
-                }
-                const productosAInsertar = await Promise.all(cloudProducts.map(async p => {
-                    const cloudStock = cloudStockMap.get(p.id);
-                    const local = await db.productos.get(p.id);
-                    const tieneCambiosPendientes = local?.estado_sincronizacion === 0;
-                    // Movimientos sin subir: conservar el stock local pase lo que pase
-                    const stockPendiente = movPendientes.has(p.id);
-
-                    // stock_minimo es atributo del PRODUCTO (no de inventario_sucursales):
-                    // siempre viene de la tabla productos. Si hay cambios locales sin subir,
-                    // se respeta el local. NUNCA se toma de inventario_sucursales (que lo
-                    // guarda en 0 por defecto y borraría el valor real).
-                    const stockMinimoFinal = tieneCambiosPendientes
-                        ? (local?.stock_minimo ?? p.stock_minimo ?? 0)
-                        : (p.stock_minimo ?? local?.stock_minimo ?? 0);
-
-                    // El stock_actual sí puede venir de inventario_sucursales (es por sucursal),
-                    // usándolo solo si su timestamp es más reciente que el de productos.
-                    if (cloudStock && !stockPendiente) {
-                        const invTs = cloudStock.fecha_actualizacion ?? 0;
-                        const prodTs = p.fecha_actualizacion ?? 0;
-                        if (invTs >= prodTs) {
-                            return { ...p, stock_actual: cloudStock.stock_actual, stock_minimo: stockMinimoFinal, estado_sincronizacion: 1 };
+            try {
+                const baseline = await captureCatalogBaseline(db, scope);
+                const lastProdTs = getSyncTs('productos');
+                const cloudProducts = await readCompletePages((from, to) => withTimeout(() =>
+                    supabase.from('productos').select('*', { count: 'exact' })
+                        .eq('negocio_id', negocioId).gt('fecha_actualizacion', lastProdTs)
+                        .order('id').range(from, to)
+                ), row => row.id);
+                if (cloudProducts.length) {
+                    const branchStocks = new Map<string, number>();
+                    if (sucursalId) {
+                        // Bounded batches also keep the URL below proxy limits.
+                        for (let index = 0; index < cloudProducts.length; index += 100) {
+                            const ids = cloudProducts.slice(index, index + 100).map(product => product.id);
+                            const stockData = await readCompletePages((from, to) => withTimeout(() =>
+                                supabase.from('inventario_sucursales').select('producto_id, stock_actual', { count: 'exact' })
+                                    .eq('sucursal_id', sucursalId).in('producto_id', ids).order('producto_id').range(from, to)
+                            ), row => row.producto_id);
+                            stockData.forEach(row => branchStocks.set(row.producto_id, row.stock_actual));
                         }
                     }
-
-                    return {
-                        ...p,
-                        stock_actual: (stockPendiente || tieneCambiosPendientes)
-                            ? (local?.stock_actual ?? p.stock_actual ?? 0)
-                            : (p.stock_actual ?? local?.stock_actual ?? 0),
-                        stock_minimo: stockMinimoFinal,
-                        estado_sincronizacion: 1,
-                    };
-                }));
-                // Separar los que vienen eliminados de la nube para borrarlos localmente
-                const activos = productosAInsertar.filter(p => !p.eliminado);
-                const eliminados = productosAInsertar.filter(p => p.eliminado);
-                if (activos.length > 0) await db.productos.bulkPut(activos);
-                if (eliminados.length > 0) {
-                    await db.productos.bulkDelete(eliminados.map(p => p.id));
-                    await Promise.all(eliminados.map(p =>
-                        db.composiciones.where('producto_padre_id').equals(p.id).delete()
-                    ));
+                    const result = await persistRemoteCatalog({ database: db, scope, baseline,
+                        products: cloudProducts, branchStocks, metadataWithoutAuthority, isCurrentScope });
+                    // A skipped response is retried on a later pull; never advance
+                    // the cursor past a local edit committed during the download.
+                    if (result.deferred === 0 && isCurrentScope()) setSyncTs('productos', clampTs(maxTs(cloudProducts)));
                 }
-                setSyncTs('productos', clampTs(maxTs(cloudProducts)));
+            } catch (error) {
+                console.warn('[sync] catalogo incremental incompleto; se conserva el cache local', error);
             }
 
-            // ── 1.B.2  Reconciliación de stocks (cada 30 seg) ────────────────
-            // El pull incremental puede perderse cambios de otros dispositivos si
-            // su timestamp es anterior al lastProdTs local. Esta reconciliación
-            // descarga el stock_actual de TODOS los productos desde Supabase y
-            // actualiza Dexie ignorando timestamps, garantizando consistencia.
-            const STOCK_RECON_KEY = 'vrd_stock_recon_ts';
+            // ── 1.B.2  Reconciliación de stocks (cada 120 seg) ───────────────
+            // Red de seguridad para cambios fuera de la ventana incremental.
+            // Se exige cobertura completa y se revalidan los pendientes al
+            // escribir; la sucursal nunca cae al stock global por falta de fila.
+            const STOCK_RECON_KEY = syncStorageKey(TS_PREFIX, 'stock_recon', scope);
             // Red de seguridad (por si el pull incremental se perdió un cambio). Se
             // hace con menos frecuencia porque descarga TODO el catálogo: cada 30s
             // trababa la app en negocios con muchos productos. El pull incremental
             // (cada ~15s) sigue trayendo los cambios al instante.
             const STOCK_RECON_INTERVAL = 120 * 1000;
             const lastStockRecon = parseInt(localStorage.getItem(STOCK_RECON_KEY) || '0', 10);
-            if (Date.now() - lastStockRecon > STOCK_RECON_INTERVAL) {
-                const { data: allStocks } = await withTimeout(() =>
-                    supabase
-                        .from('productos')
-                        .select('id, stock_actual, fecha_actualizacion')
-                        .eq('negocio_id', negocioId)
-                );
-                if (allStocks && allStocks.length > 0) {
-                    // Si hay sucursal, también traer stocks desde inventario_sucursales
-                    const sucursalStockMap = new Map<string, number>();
+            const firstQaScopeSnapshot = inventoryReceiverMode(process.env.NEXT_PUBLIC_SUPABASE_URL,
+                process.env.NEXT_PUBLIC_VENTARD_INVENTORY_FEED_MODE, scope) === 'ACTIVE'
+                && !completedScopeSnapshots.has(STOCK_RECON_KEY);
+            if (firstQaScopeSnapshot || Date.now() - lastStockRecon > STOCK_RECON_INTERVAL) {
+                try {
+                    const baseline = await captureCatalogBaseline(db, scope);
+                    const allStocks = await readCompletePages((from, to) => withTimeout(() =>
+                        supabase.from('productos').select('id, negocio_id, stock_actual, eliminado', { count: 'exact' }).eq('negocio_id', negocioId)
+                            .order('id').range(from, to)
+                    ), row => row.id);
+                    const branchStocks = new Map<string, number>();
                     if (sucursalId) {
-                        const { data: invData } = await withTimeout(() =>
-                            supabase
-                                .from('inventario_sucursales')
-                                .select('producto_id, stock_actual')
-                                .eq('sucursal_id', sucursalId)
-                        );
-                        if (invData) {
-                            (invData as { producto_id: string; stock_actual: number }[])
-                                .forEach(s => sucursalStockMap.set(s.producto_id, s.stock_actual));
-                        }
+                        const invData = await readCompletePages((from, to) => withTimeout(() =>
+                            supabase.from('inventario_sucursales').select('producto_id, stock_actual', { count: 'exact' })
+                                .eq('sucursal_id', sucursalId).order('producto_id').range(from, to)
+                        ), row => row.producto_id);
+                        invData.forEach(row => branchStocks.set(row.producto_id, row.stock_actual));
                     }
-
-                    // Lectura en lote (1 operación en vez de N) para no trabar el
-                    // hilo principal cada 30s con catálogos grandes.
-                    const locales = await db.productos.bulkGet(allStocks.map(p => p.id));
-                    const localMap = new Map<string, ProductoLocal>();
-                    locales.forEach(l => { if (l) localMap.set(l.id, l); });
-
-                    const reconciliados: ProductoLocal[] = [];
-                    for (const cloudProd of allStocks) {
-                        const local = localMap.get(cloudProd.id);
-                        if (!local) continue;
-                        // No tocar productos con cambios locales pendientes
-                        if (local.estado_sincronizacion === 0) continue;
-                        // Ni productos con movimientos de stock sin subir
-                        if (movPendientes.has(cloudProd.id)) continue;
-
-                        const stockCorrecto = sucursalStockMap.has(cloudProd.id)
-                            ? sucursalStockMap.get(cloudProd.id)!
-                            : (cloudProd.stock_actual ?? local.stock_actual);
-
-                        if (local.stock_actual !== stockCorrecto) {
-                            reconciliados.push({
-                                ...local,
-                                stock_actual: stockCorrecto,
-                                fecha_actualizacion: cloudProd.fecha_actualizacion ?? local.fecha_actualizacion,
-                            });
-                        }
+                    await persistRemoteCatalog({ database: db, scope, baseline,
+                        products: allStocks, branchStocks, mode: 'STOCK_ONLY', isCurrentScope });
+                    // This is a periodic safety refresh, not a data cursor. A
+                    // deferred local edit/missing branch must not force a full
+                    // download every tick; incremental/realtime still run.
+                    if (isCurrentScope()) {
+                        completedScopeSnapshots.add(STOCK_RECON_KEY);
+                        localStorage.setItem(STOCK_RECON_KEY, String(Date.now()));
                     }
-                    // Escritura en lote (1 operación en vez de N)
-                    if (reconciliados.length > 0) await db.productos.bulkPut(reconciliados);
+                } catch (error) {
+                    console.warn('[sync] reconteo incompleto; se conserva el stock local', error);
                 }
-                localStorage.setItem(STOCK_RECON_KEY, String(Date.now()));
             }
 
             // ── 1.B.4  Reconciliación de existencia (cada 5 min) ─────────────
-            // Compara los IDs de la nube con los locales para: (a) eliminar los
-            // que ya no existen en la nube, y (b) TRAER los que existen en la nube
-            // pero faltan localmente (productos que se perdieron la ventana del
-            // pull incremental, ej. insertados con fecha vieja o nula).
-            const RECON_KEY = 'vrd_prod_recon_ts';
+            // Recupera productos ausentes y procesa eliminaciones explícitas.
+            // Una ausencia bajo RLS no demuestra una eliminación comercial.
+            const RECON_KEY = syncStorageKey(TS_PREFIX, 'prod_recon', scope);
             const RECON_INTERVAL = 5 * 60 * 1000; // 5 minutos
             const lastRecon = parseInt(localStorage.getItem(RECON_KEY) || '0', 10);
             if (Date.now() - lastRecon > RECON_INTERVAL) {
-                const { data: allIds } = await withTimeout(() =>
-                    supabase.from('productos').select('id, eliminado').eq('negocio_id', negocioId)
-                );
-                if (allIds) {
-                    const cloudActivos = new Set((allIds as { id: string; eliminado?: boolean }[])
-                        .filter(r => !r.eliminado).map(r => r.id));
-                    const locales = await db.productos.where('negocio_id').equals(negocioId).toArray();
-                    // Solo contamos como "presentes localmente" los que NO están eliminados.
-                    // Si un producto está marcado eliminado localmente pero sigue activo en la
-                    // nube (push de borrado fallido o producto recreado en Supabase), se trata
-                    // como faltante y se restaura desde la nube — Supabase es la fuente de verdad.
-                    const localIds = new Set(locales.filter(p => !p.eliminado).map(p => p.id));
-
-                    // (a) Borrar los sincronizados que ya no existen (o quedaron eliminados) en la nube
-                    const obsoletos = locales.filter(p => !p.eliminado && p.estado_sincronizacion === 1 && !cloudActivos.has(p.id));
-                    if (obsoletos.length > 0) {
-                        await db.productos.bulkDelete(obsoletos.map(p => p.id));
-                        await Promise.all(obsoletos.map(p =>
-                            db.composiciones.where('producto_padre_id').equals(p.id).delete()
-                        ));
+                try {
+                    const baseline = await captureCatalogBaseline(db, scope);
+                    const remoteProducts = await readCompletePages((from, to) => withTimeout(() =>
+                        supabase.from('productos').select('*', { count: 'exact' }).eq('negocio_id', negocioId)
+                            .order('id').range(from, to)
+                    ), row => row.id);
+                    const products = remoteProducts.filter(product => product.eliminado || !baseline.has(product.id));
+                    const branchStocks = new Map<string, number>();
+                    if (sucursalId && products.some(product => !product.eliminado)) {
+                        const rows = await readCompletePages((from, to) => withTimeout(() =>
+                            supabase.from('inventario_sucursales').select('producto_id, stock_actual', { count: 'exact' })
+                                .eq('sucursal_id', sucursalId).order('producto_id').range(from, to)
+                        ), row => row.producto_id);
+                        rows.forEach(row => branchStocks.set(row.producto_id, row.stock_actual));
                     }
-
-                    // (b) Traer los activos de la nube que faltan localmente (incluye los
-                    // que localmente están marcados eliminados pero la nube los tiene activos)
-                    const faltantes = [...cloudActivos].filter(id => !localIds.has(id));
-                    if (faltantes.length > 0) {
-                        const { data: nuevos } = await withTimeout(() =>
-                            supabase.from('productos').select('*').in('id', faltantes)
-                        );
-                        if (nuevos && nuevos.length > 0) {
-                            await db.productos.bulkPut(nuevos.map(p => ({ ...p, estado_sincronizacion: 1 })));
-                        }
-                    }
+                    // Absence alone can mean permissions changed. Delete only an
+                    // explicit tombstone and only after checking local pending work.
+                    await persistRemoteCatalog({ database: db, scope, baseline,
+                        products, branchStocks, metadataWithoutAuthority, isCurrentScope });
+                    if (isCurrentScope()) localStorage.setItem(RECON_KEY, String(Date.now()));
+                } catch (error) {
+                    console.warn('[sync] catalogo completo no verificable; no se eliminan productos', error);
                 }
-                localStorage.setItem(RECON_KEY, String(Date.now()));
             }
 
             // ── 1.C  Composiciones ────────────────────────────────────────────
@@ -403,159 +471,72 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
             }
 
             // ── 1.D  Clientes ─────────────────────────────────────────────────
-            const lastClienteTs = getSyncTs('clientes');
-            const { data: cloudClientes, error: pullClienteErr } = await withTimeout(() =>
-                supabase.from('clientes').select('*').eq('negocio_id', negocioId).gt('fecha_actualizacion', lastClienteTs)
-            );
-            if (!pullClienteErr && cloudClientes && cloudClientes.length > 0) {
-                await db.clientes.bulkPut(await sinPisarPendientes(db.clientes, cloudClientes));
-                setSyncTs('clientes', maxTs(cloudClientes));
-            }
+            await pullRows(db.clientes, 'fecha_actualizacion');
 
             // ── 1.E  Transacciones fiado ──────────────────────────────────────
-            const lastTransTs = getSyncTs('transacciones_fiado');
-            const { data: cloudTrans, error: pullTransErr } = await withTimeout(() =>
-                supabase.from('transacciones_fiado').select('*').eq('negocio_id', negocioId).gt('fecha_actualizacion', lastTransTs)
-            );
-            if (!pullTransErr && cloudTrans && cloudTrans.length > 0) {
-                await db.transacciones_fiado.bulkPut(await sinPisarPendientes(
-                    db.transacciones_fiado,
-                    cloudTrans,
-                    t => ({ ...t, fecha_creacion: new Date(t.fecha_creacion).getTime() }),
-                ));
-                setSyncTs('transacciones_fiado', maxTs(cloudTrans));
-            }
+            await pullRows(db.transacciones_fiado, 'fecha_actualizacion', {
+                merge: remote => ({ ...remote, fecha_creacion: new Date(remote.fecha_creacion).getTime() }),
+            });
 
             // ── 1.F  Ventas (NUEVO: descarga ventas de otros dispositivos) ────
-            const lastVentasTs = getSyncTs('ventas');
-            const { data: cloudVentas, error: pullVentasErr } = await withTimeout(() =>
-                supabase.from('ventas').select('*').eq('negocio_id', negocioId).gt('fecha_creacion', lastVentasTs)
-            );
-            if (!pullVentasErr && cloudVentas && cloudVentas.length > 0) {
-                // Merge with local to preserve fields not yet in Supabase (e.g. ncf)
-                const ventasMerged = await Promise.all(cloudVentas.map(async v => {
-                    const local = await db.ventas.get(v.id);
-                    return {
-                        ...v,
-                        ncf: v.ncf ?? local?.ncf ?? null,
-                        vendedor_nombre: v.vendedor_nombre ?? local?.vendedor_nombre ?? null,
-                        estado_sincronizacion: 1,
-                    };
-                }));
-                await db.ventas.bulkPut(ventasMerged);
-                setSyncTs('ventas', maxCreacionTs(cloudVentas));
-            }
+            await pullRows(db.ventas, 'fecha_creacion', {
+                merge: (remote, local) => ({ ...remote, ncf: remote.ncf ?? local?.ncf,
+                    vendedor_nombre: remote.vendedor_nombre ?? local?.vendedor_nombre }),
+            });
 
             // ── 1.G  Venta detalles (NUEVO) ───────────────────────────────────
-            const lastDetallesTs = getSyncTs('venta_detalles');
-            const { data: cloudDetalles, error: pullDetallesErr } = await withTimeout(() =>
-                supabase.from('venta_detalles').select('*').eq('negocio_id', negocioId).gt('fecha_creacion', lastDetallesTs)
-            );
-            if (!pullDetallesErr && cloudDetalles && cloudDetalles.length > 0) {
-                await db.venta_detalles.bulkPut(await sinPisarPendientes(db.venta_detalles, cloudDetalles));
-                setSyncTs('venta_detalles', maxCreacionTs(cloudDetalles));
-            }
+            await pullRows(db.venta_detalles, 'fecha_creacion', { merge: remote => detalleDesdeRemoto(remote) });
 
             // ── 1.H  Cajas (NUEVO) ────────────────────────────────────────────
-            const lastCajasTs = getSyncTs('cajas');
-            const cajasQuery = sucursalId
-                ? supabase.from('cajas').select('*').eq('negocio_id', negocioId).eq('sucursal_id', sucursalId).gt('fecha_actualizacion', lastCajasTs)
-                : supabase.from('cajas').select('*').eq('negocio_id', negocioId).gt('fecha_actualizacion', lastCajasTs);
-            const { data: cloudCajas, error: pullCajasErr } = await withTimeout(() => cajasQuery);
-            if (!pullCajasErr && cloudCajas && cloudCajas.length > 0) {
-                await db.cajas.bulkPut(await sinPisarPendientes(db.cajas, cloudCajas));
-                setSyncTs('cajas', maxTs(cloudCajas));
-            }
+            await pullRows(db.cajas, 'fecha_actualizacion', { branchOnly: true, preserveLegacyWithoutFlag: true });
 
             // ── 1.I  Devoluciones ─────────────────────────────────────────────
-            const lastDevTs = getSyncTs('devoluciones');
-            const { data: cloudDevs, error: pullDevErr } = await withTimeout(() =>
-                supabase.from('devoluciones').select('*').eq('negocio_id', negocioId).gt('fecha_creacion', lastDevTs)
-            );
-            if (!pullDevErr && cloudDevs && cloudDevs.length > 0) {
-                await db.devoluciones.bulkPut(await sinPisarPendientes(db.devoluciones, cloudDevs));
-                setSyncTs('devoluciones', maxCreacionTs(cloudDevs));
-            }
+            await pullRows(db.devoluciones, 'fecha_creacion');
 
             // ── 1.K  Reparaciones (Plan Pro) ──────────────────────────────────
-            const lastRepTs = getSyncTs('reparaciones');
-            const { data: cloudReps, error: pullRepErr } = await withTimeout(() =>
-                supabase.from('reparaciones').select('*').eq('negocio_id', negocioId).gt('fecha_actualizacion', lastRepTs)
-            );
-            if (!pullRepErr && cloudReps && cloudReps.length > 0) {
-                // No pisar reparaciones con cambios locales sin subir
-                await db.reparaciones.bulkPut(await sinPisarPendientes(db.reparaciones, cloudReps));
-                setSyncTs('reparaciones', clampTs(maxTs(cloudReps)));
-            }
+            await pullRows(db.reparaciones, 'fecha_actualizacion');
 
             // ── 1.L  Apartados (Plan Pro) ─────────────────────────────────────
-            const lastApTs = getSyncTs('apartados');
-            const { data: cloudAps, error: pullApErr } = await withTimeout(() =>
-                supabase.from('apartados').select('*').eq('negocio_id', negocioId).gt('fecha_actualizacion', lastApTs)
-            );
-            if (!pullApErr && cloudAps && cloudAps.length > 0) {
-                await db.apartados.bulkPut(await sinPisarPendientes(db.apartados, cloudAps));
-                setSyncTs('apartados', clampTs(maxTs(cloudAps)));
-            }
+            await pullRows(db.apartados, 'fecha_actualizacion');
 
             // ── 1.J  Seriales ─────────────────────────────────────────────────
-            const lastSerialesTs = getSyncTs('seriales');
-            const { data: cloudSeriales, error: pullSerialesErr } = await withTimeout(() =>
-                supabase.from('seriales').select('*').eq('negocio_id', negocioId).gt('fecha_actualizacion', lastSerialesTs)
-            );
-            if (!pullSerialesErr && cloudSeriales && cloudSeriales.length > 0) {
-                // No pisar seriales con cambios locales sin subir (ej. recién vendidos)
-                await db.seriales.bulkPut(await sinPisarPendientes(db.seriales, cloudSeriales));
-                setSyncTs('seriales', clampTs(maxTs(cloudSeriales)));
-            }
+            await pullRows(db.seriales, 'fecha_actualizacion');
 
             // ── 1.J.2  Gastos ─────────────────────────────────────────────────
-            const lastGastosTs = getSyncTs('gastos');
-            const { data: cloudGastos, error: pullGastosErr } = await withTimeout(() =>
-                supabase.from('gastos').select('*').eq('negocio_id', negocioId).gt('fecha_actualizacion', lastGastosTs)
-            );
-            if (!pullGastosErr && cloudGastos && cloudGastos.length > 0) {
-                await db.gastos.bulkPut(await sinPisarPendientes(db.gastos, cloudGastos));
-                setSyncTs('gastos', maxTs(cloudGastos));
-            }
+            await pullRows(db.gastos, 'fecha_actualizacion');
 
             // ── 1.K  Cortes de caja ───────────────────────────────────────────
-            const lastCortesTs = getSyncTs('cortes_caja');
-            const { data: cloudCortes, error: pullCortesErr } = await withTimeout(() =>
-                supabase.from('cortes_caja').select('*').eq('negocio_id', negocioId).gt('fecha_creacion', lastCortesTs)
-            );
-            if (!pullCortesErr && cloudCortes && cloudCortes.length > 0) {
-                await db.cortes_caja.bulkPut(await sinPisarPendientes(db.cortes_caja, cloudCortes));
-                setSyncTs('cortes_caja', maxCreacionTs(cloudCortes));
-            }
+            await pullRows(db.cortes_caja, 'fecha_creacion');
 
             // ── 1.L  NCF: secuencia centralizada con bloques por dispositivo ──
+            if (!isCurrentScope()) return;
             try {
-                const ncf = useConfigStore.getState().ncf;
-
-                // 1.L.1 Sembrar la config legada a la nube (una sola vez por dispositivo).
-                // ignoreDuplicates: si otra caja ya sembró, no se pisa nada.
-                if (ncf.habilitado && !ncf.sembrado && ncf.hasta > 0) {
-                    await withTimeout(() =>
-                        supabase.from('ncf_secuencias').upsert({
-                            negocio_id: negocioId,
-                            tipo: ncf.tipo,
-                            desde: ncf.desde,
-                            hasta: ncf.hasta,
-                            proximo: ncf.actual === 0 ? ncf.desde : ncf.actual + 1,
-                            habilitado: true,
-                        }, { onConflict: 'negocio_id', ignoreDuplicates: true })
-                    );
-                }
-
-                // 1.L.2 Bajar el estado global de la secuencia
-                const { data: sec } = await withTimeout(() =>
-                    supabase.from('ncf_secuencias').select('*').eq('negocio_id', negocioId).maybeSingle()
-                );
-                if (sec) {
+                const { data: { session }, error: authError } = await supabase.auth.getSession();
+                if (authError || !session?.user.id) throw new Error('ncf_auth_requerida');
+                const source = new URL(process.env.NEXT_PUBLIC_SUPABASE_URL!).origin;
+                const sec = await abastecerNcfLocal(db, { negocioId, actorId: session.user.id,
+                    source, fecha: Date.now(), requestId: crypto.randomUUID() }, {
+                    sequence: async () => {
+                        const { data, error } = await withTimeout(() =>
+                            supabase.from('ncf_secuencias').select('*').eq('negocio_id', negocioId).maybeSingle());
+                        if (error) throw new Error('ncf_lectura_fallida');
+                        return data;
+                    },
+                    reserve: async () => {
+                        const { data, error } = await withTimeout(() =>
+                            supabase.rpc('reservar_ncf', { p_negocio_id: negocioId, p_cantidad: 20 }));
+                        if (error) throw new Error('ncf_reserva_fallida');
+                        if (!Array.isArray(data) || data.length > 1) throw new Error('ncf_respuesta_invalida');
+                        return data[0] ?? null;
+                    },
+                });
+                // El rango pertenece al scope capturado, aunque cambie la pantalla.
+                // Solo el espejo de la UI se condiciona al scope actual.
+                if (sec && isCurrentScope()) {
                     useConfigStore.setState(s => ({
                         ncf: {
                             ...s.ncf,
+                            negocioId,
                             habilitado: sec.habilitado,
                             tipo: sec.tipo,
                             desde: Number(sec.desde),
@@ -564,31 +545,10 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                             sembrado: true,
                         },
                     }));
-
-                    // 1.L.3 Reservar bloque si quedan pocos números locales
-                    const bloques = useConfigStore.getState().ncf.bloques;
-                    const restantes = bloques.reduce((s, b) => s + Math.max(0, b.hasta - b.proximo + 1), 0);
-                    if (sec.habilitado && restantes <= 5 && Number(sec.proximo) <= Number(sec.hasta)) {
-                        const { data: reserva } = await withTimeout(() =>
-                            supabase.rpc('reservar_ncf', { p_negocio_id: negocioId, p_cantidad: 20 })
-                        );
-                        const b = Array.isArray(reserva) ? reserva[0] : reserva;
-                        if (b?.bloque_desde != null) {
-                            useConfigStore.setState(s => ({
-                                ncf: {
-                                    ...s.ncf,
-                                    bloques: [
-                                        ...s.ncf.bloques.filter(x => x.proximo <= x.hasta),
-                                        { desde: Number(b.bloque_desde), hasta: Number(b.bloque_hasta), proximo: Number(b.bloque_desde) },
-                                    ],
-                                    proximoGlobal: Number(b.bloque_hasta) + 1,
-                                },
-                            }));
-                        }
-                    }
                 }
-            } catch (e) {
-                console.error('[sync] ncf error:', e);
+            } catch {
+                // No tokens/payloads ni retry de una RPC incierta. Visible en journal.
+                console.warn('[sync] NCF no verificable; revisar abastecimiento.');
             }
 
             // ══════════════════════════════════════════════════════════════════
@@ -596,10 +556,12 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
             // ══════════════════════════════════════════════════════════════════
             finPull = performance.now();
             registrarMetrica('sync.pull', finPull - inicioSync);
+            if (!isCurrentScope()) return;
 
             // ── 2.A  Ventas ───────────────────────────────────────────────────
-            const ventasPendientes = await db.ventas.where('estado_sincronizacion').equals(0).toArray();
+            const ventasPendientes = await pendingTenantRows(db.ventas, negocioId);
             for (const venta of ventasPendientes) {
+                if (!isCurrentScope()) return;
                 const { error } = await withTimeout(() =>
                     supabase.from('ventas').upsert({
                         id: venta.id,
@@ -622,44 +584,35 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                         ...(venta.cliente_nombre && { cliente_nombre: venta.cliente_nombre }),
                     })
                 );
-                if (!error) await db.ventas.update(venta.id, { estado_sincronizacion: 1 });
+                if (!error) await acknowledgeSyncedSnapshot(db.ventas, venta);
             }
 
             // ── 2.B  Venta detalles ───────────────────────────────────────────
-            const detallesPendientes = (await db.venta_detalles.where('estado_sincronizacion').equals(0).toArray())
+            const detallesPendientes = (await pendingTenantRows(db.venta_detalles, negocioId))
                 .filter(d => isValidUUID(d.id) && isValidUUID(d.venta_id) && isValidUUID(d.producto_id));
             for (const detalle of detallesPendientes) {
-                const payload = {
-                    id: detalle.id,
-                    venta_id: detalle.venta_id,
-                    producto_id: detalle.producto_id,
-                    negocio_id: detalle.negocio_id,
-                    sucursal_id: detalle.sucursal_id || sucursalId || null,
-                    nombre: detalle.nombre ?? null,
-                    cantidad: detalle.cantidad,
-                    precio_unitario: detalle.precio_unitario,
-                    subtotal: detalle.subtotal,
-                    fecha_creacion: detalle.fecha_creacion,
-                };
+                if (!isCurrentScope()) return;
+                const payload = payloadDetalleRemoto(detalle);
                 const { error } = await withTimeout(() =>
                     supabase.from('venta_detalles').upsert(payload)
                 );
                 if (error) {
                     console.error('[sync] venta_detalles error:', error.code, error.message, error.details, error.hint, '\npayload:', payload);
                 } else {
-                    await db.venta_detalles.update(detalle.id, { estado_sincronizacion: 1 });
+                    await acknowledgeSyncedSnapshot(db.venta_detalles, detalle);
                 }
             }
 
             // ── 2.C  Productos & inventario ───────────────────────────────────
-            const prodPendientes = await db.productos.where('estado_sincronizacion').equals(0).toArray();
+            const prodPendientes = await pendingTenantRows(db.productos, negocioId);
             const prodAEliminar = prodPendientes.filter(p => p.eliminado);
             const prodAUpsert   = prodPendientes.filter(p => !p.eliminado);
 
             // Eliminar de Supabase los productos borrados localmente
             for (const p of prodAEliminar) {
+                if (!isCurrentScope()) return;
                 const { error: delProdErr } = await withTimeout(() =>
-                    supabase.from('productos').delete().eq('id', p.id)
+                    supabase.from('productos').delete().eq('negocio_id', negocioId).eq('id', p.id)
                 );
                 if (!delProdErr) {
                     // Limpiar tablas relacionadas en Supabase
@@ -668,8 +621,11 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                         withTimeout(() => supabase.from('inventario_sucursales').delete().eq('producto_id', p.id)),
                     ]);
                     // Hard-delete local ahora que está confirmado en la nube
-                    await db.productos.delete(p.id);
-                    await db.composiciones.where('producto_padre_id').equals(p.id).delete();
+                    await db.transaction('rw', db.productos, db.composiciones, async () => {
+                        if (await removeSyncedSnapshot(db.productos, p)) {
+                            await db.composiciones.where('producto_padre_id').equals(p.id).delete();
+                        }
+                    });
                 }
             }
 
@@ -677,6 +633,8 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
             // producto rechazado (constraint, dato corrupto) bloqueaba TODOS los
             // cambios de catálogo de este dispositivo para siempre.
             for (const p of prodAUpsert) {
+                if (!isCurrentScope()) return;
+                if (p.inventory_bootstrap?.state === 'BLOCKED') continue;
                 const { error: prodError } = await withTimeout(() =>
                     supabase.from('productos').upsert({
                         id: p.id,
@@ -704,54 +662,85 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                 if (prodError) {
                     console.error('[sync] producto error:', prodError.code, prodError.message, prodError.details, 'id:', p.id, p.nombre);
                 } else {
-                    await db.productos.update(p.id, { estado_sincronizacion: 1 });
+                    if (p.inventory_bootstrap?.state === 'PENDING') {
+                        try { await withTimeout(() => prepareInventoryProduct(supabase, p)); }
+                        catch (error) {
+                            if (error instanceof InventoryRemoteError && !error.retryable && error.code !== 'AUTH_REQUIRED') {
+                                await db.productos.update(p.id, { inventory_bootstrap: {
+                                    ...p.inventory_bootstrap, state: 'BLOCKED', code: error.code } });
+                            }
+                            console.warn('[sync] inventario inicial no preparado; producto y movimientos conservados');
+                            continue;
+                        }
+                    }
+                    await acknowledgeSyncedSnapshot(db.productos, p);
+                    if (p.inventory_bootstrap?.state === 'PENDING') {
+                        await db.productos.update(p.id, { inventory_bootstrap: { ...p.inventory_bootstrap, state: 'READY' } });
+                    }
+                    void inventorySender?.wake();
                 }
             }
 
             // ── 2.C.2  Movimientos de stock (deltas atómicos) ─────────────────
             // Cada movimiento se aplica en la nube con una RPC idempotente:
             // increment/decrement atómico — dos cajas nunca se pisan el stock.
-            const movsPendientes = (await db.movimientos_stock
-                .where('estado_sincronizacion').equals(0).toArray())
+            const movsPendientes = (await pendingTenantRows(db.movimientos_stock, negocioId))
+                // Exactly one v2 dispatcher in controlled ACTIVE QA. Outside
+                // that gate, preserve the existing v1/v2 routing unchanged.
+                .filter(row => row.sync_protocol_version !== 2 || inventoryReceiverMode(
+                    process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.NEXT_PUBLIC_VENTARD_INVENTORY_FEED_MODE, scope) !== 'ACTIVE')
                 .sort((a, b) => a.fecha_creacion - b.fecha_creacion);
-            for (const mov of movsPendientes) {
-                const inicioMovimiento = performance.now();
-                const { error: movErr } = await withTimeout(() =>
-                    supabase.rpc('aplicar_movimiento_stock', {
-                        p_id: mov.id,
-                        p_negocio_id: mov.negocio_id,
-                        p_sucursal_id: mov.sucursal_id ?? null,
-                        p_producto_id: mov.producto_id,
-                        p_delta: mov.delta,
-                        p_tipo: mov.tipo,
-                        p_referencia_id: mov.referencia_id ?? null,
-                        p_fecha_creacion: mov.fecha_creacion,
-                        p_valor_absoluto: mov.valor_absoluto ?? null,
-                    })
+            if (movsPendientes.length > 0) {
+                const inicioMovimientos = performance.now();
+                const repository = new InventoryOperationRepository(db);
+                const remoteV2 = inventoryRemoteClient();
+
+                const result = await procesarColaInventario({
+                    operations: movsPendientes,
+                    repository,
+                    // El timeout no cambia identidad ni reenvía por v1. Un fallo
+                    // conserva la operación v2 visible para recuperación.
+                    remote: remoteV2,
+                    applyLegacy: async mov => {
+                        try {
+                            const { error } = await withTimeout(() =>
+                                supabase.rpc('aplicar_movimiento_stock', {
+                                    p_id: mov.id,
+                                    p_negocio_id: mov.negocio_id,
+                                    p_sucursal_id: mov.sucursal_id ?? null,
+                                    p_producto_id: mov.producto_id,
+                                    p_delta: mov.delta,
+                                    p_tipo: mov.tipo,
+                                    p_referencia_id: mov.referencia_id ?? null,
+                                    p_fecha_creacion: mov.fecha_creacion,
+                                    p_valor_absoluto: mov.valor_absoluto ?? null,
+                                })
+                            );
+                            return error;
+                        } catch {
+                            return { code: '57014' };
+                        }
+                    },
+                    persistLegacyPatch: async (operationId, patch) => {
+                        const current = await db.movimientos_stock.get(operationId);
+                        if (!current) throw new Error('inventory_operation_not_found');
+                        await db.movimientos_stock.put({ ...current, ...patch });
+                    },
+                });
+                registrarMetrica(
+                    'stock.push_confirmacion',
+                    performance.now() - inicioMovimientos,
+                    result.pending > 0 ? 'error' : 'ok',
                 );
-                if (movErr) {
-                    registrarMetrica('stock.push_confirmacion', performance.now() - inicioMovimiento, 'error');
-                    // Errores PERMANENTES (FK rota, dato inválido): reintentar jamás
-                    // funcionará y el break bloquearía TODOS los movimientos futuros
-                    // → descartar esta fila (queda en el log) y seguir con el resto.
-                    const PERMANENTES = ['23503', '23502', '23514', '22P02'];
-                    if (PERMANENTES.includes(movErr.code ?? '')) {
-                        console.error('[sync] movimiento DESCARTADO (error permanente):', movErr.code, movErr.message, 'producto:', mov.producto_id, 'delta:', mov.delta);
-                        await db.movimientos_stock.update(mov.id, { estado_sincronizacion: 1 });
-                        continue;
-                    }
-                    // Error transitorio (red, timeout): mantener el orden y reintentar luego
-                    console.error('[sync] movimiento_stock error:', movErr.code, movErr.message, movErr.details);
-                    break;
-                }
-                await db.movimientos_stock.update(mov.id, { estado_sincronizacion: 1 });
-                registrarMetrica('stock.push_confirmacion', performance.now() - inicioMovimiento, 'ok');
             }
 
             // ── 2.D  Composiciones ────────────────────────────────────────────
-            const compPendientes = await db.composiciones.where('estado_sincronizacion').equals(0).toArray();
+            const activeProductIds = new Set(await db.productos.where('negocio_id').equals(negocioId).primaryKeys());
+            const compPendientes = await db.composiciones.where('estado_sincronizacion').equals(0)
+                .filter(row => activeProductIds.has(row.producto_padre_id)).toArray();
             // FILA POR FILA: un combo con referencia rota no bloquea a los demás.
             for (const c of compPendientes) {
+                if (!isCurrentScope()) return;
                 const { error: compError } = await withTimeout(() =>
                     supabase.from('composiciones').upsert({
                         id: c.id,
@@ -771,8 +760,9 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
             // ── 2.E  Clientes ─────────────────────────────────────────────────
             // FILA POR FILA: un cliente rechazado bloqueaba a TODOS los clientes
             // del dispositivo — y de rebote sus cargos de fiado (FK a clientes).
-            const clientesPendientes = await db.clientes.where('estado_sincronizacion').equals(0).toArray();
+            const clientesPendientes = await pendingTenantRows(db.clientes, negocioId);
             for (const c of clientesPendientes) {
+                if (!isCurrentScope()) return;
                 const { error: cliError } = await withTimeout(() =>
                     supabase.from('clientes').upsert({
                         id: c.id,
@@ -790,7 +780,7 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                 if (cliError) {
                     console.error('[sync] cliente error:', cliError.code, cliError.message, 'id:', c.id, c.nombre);
                 } else {
-                    await db.clientes.update(c.id, { estado_sincronizacion: 1 });
+                    await acknowledgeSyncedSnapshot(db.clientes, c);
                 }
             }
 
@@ -799,35 +789,24 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
             // por la nube (FK rota, cliente borrado, venta sin subir) hacía fallar
             // el lote COMPLETO y ningún cargo posterior volvía a sincronizar —
             // las deudas nuevas quedaban invisibles para el resto de dispositivos.
-            const transPendientes = await db.transacciones_fiado.where('estado_sincronizacion').equals(0).toArray();
+            const transPendientes = await pendingTenantRows(db.transacciones_fiado, negocioId);
             for (const t of transPendientes) {
-                const payload = {
-                    id: t.id,
-                    negocio_id: t.negocio_id,
-                    sucursal_id: t.sucursal_id || sucursalId || null,
-                    cliente_id: t.cliente_id,
-                    venta_id: t.venta_id,
-                    tipo: t.tipo,
-                    monto: t.monto,
-                    concepto: t.concepto,
-                    fecha_creacion: new Date(t.fecha_creacion).toISOString(),
-                    fecha_actualizacion: t.fecha_actualizacion || Date.now(),
-                };
+                if (!isCurrentScope()) return;
+                const payload = payloadFiadoRemoto(t);
                 const { error: transError } = await withTimeout(() =>
                     supabase.from('transacciones_fiado').upsert(payload)
                 );
                 if (transError) {
                     console.error('[sync] transaccion_fiado error:', transError.code, transError.message, transError.details, transError.hint, '\npayload:', payload);
                 } else {
-                    await db.transacciones_fiado.update(t.id, { estado_sincronizacion: 1 });
+                    await acknowledgeSyncedSnapshot(db.transacciones_fiado, t);
                 }
             }
 
             // ── 2.G  Cajas (NUEVO) ────────────────────────────────────────────
-            const cajasPendientes = await db.cajas
-                .filter(c => (c.estado_sincronizacion ?? 0) === 0)
-                .toArray();
+            const cajasPendientes = await pendingTenantRows(db.cajas, negocioId, true);
             for (const caja of cajasPendientes) {
+                if (!isCurrentScope()) return;
                 const { error } = await withTimeout(() =>
                     supabase.from('cajas').upsert({
                         id: caja.id,
@@ -846,12 +825,13 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                         notas: caja.notas,
                     })
                 );
-                if (!error) await db.cajas.update(caja.id, { estado_sincronizacion: 1 });
+                if (!error) await acknowledgeSyncedSnapshot(db.cajas, caja);
             }
 
             // ── 2.H  Devoluciones ────────────────────────────────────────────
-            const devolucionesPendientes = await db.devoluciones.where('estado_sincronizacion').equals(0).toArray();
+            const devolucionesPendientes = await pendingTenantRows(db.devoluciones, negocioId);
             for (const dev of devolucionesPendientes) {
+                if (!isCurrentScope()) return;
                 const { error } = await withTimeout(() =>
                     supabase.from('devoluciones').upsert({
                         id: dev.id,
@@ -863,14 +843,15 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                         fecha_creacion: dev.fecha_creacion,
                     })
                 );
-                if (!error) await db.devoluciones.update(dev.id, { estado_sincronizacion: 1 });
+                if (!error) await acknowledgeSyncedSnapshot(db.devoluciones, dev);
             }
 
             // ── 2.I  Seriales ─────────────────────────────────────────────────
             // FILA POR FILA: un serial rechazado (duplicado, FK) no bloquea las
             // garantías de los demás equipos.
-            const serialesPendientes = await db.seriales.where('estado_sincronizacion').equals(0).toArray();
+            const serialesPendientes = await pendingTenantRows(db.seriales, negocioId);
             for (const s of serialesPendientes) {
+                if (!isCurrentScope()) return;
                 const { error: serErr } = await withTimeout(() =>
                     supabase.from('seriales').upsert({
                         id: s.id,
@@ -890,19 +871,20 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                 if (serErr) {
                     console.error('[sync] serial error:', serErr.code, serErr.message, 'id:', s.id, s.numero_serial);
                 } else {
-                    await db.seriales.update(s.id, { estado_sincronizacion: 1 });
+                    await acknowledgeSyncedSnapshot(db.seriales, s);
                 }
             }
 
             // ── 2.I.2  Gastos ─────────────────────────────────────────────────
-            const gastosPendientes = await db.gastos.where('estado_sincronizacion').equals(0).toArray();
+            const gastosPendientes = await pendingTenantRows(db.gastos, negocioId);
             for (const gasto of gastosPendientes) {
+                if (!isCurrentScope()) return;
                 if (gasto.eliminado) {
                     // Soft delete local → borrar en la nube y luego localmente
                     const { error } = await withTimeout(() =>
-                        supabase.from('gastos').delete().eq('id', gasto.id)
+                        supabase.from('gastos').delete().eq('negocio_id', negocioId).eq('id', gasto.id)
                     );
-                    if (!error) await db.gastos.delete(gasto.id);
+                    if (!error) await removeSyncedSnapshot(db.gastos, gasto);
                     continue;
                 }
                 const { error } = await withTimeout(() =>
@@ -922,19 +904,20 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                 if (error) {
                     console.error('[sync] gastos error:', error.code, error.message, error.details);
                 } else {
-                    await db.gastos.update(gasto.id, { estado_sincronizacion: 1 });
+                    await acknowledgeSyncedSnapshot(db.gastos, gasto);
                 }
             }
 
             // ── 2.J  Cortes de caja ───────────────────────────────────────────
-            const cortesPendientes = await db.cortes_caja.where('estado_sincronizacion').equals(0).toArray();
+            const cortesPendientes = await pendingTenantRows(db.cortes_caja, negocioId);
             for (const corte of cortesPendientes) {
+                if (!isCurrentScope()) return;
                 const { error } = await withTimeout(() =>
                     supabase.from('cortes_caja').upsert({
                         id: corte.id,
                         negocio_id: corte.negocio_id,
                         caja_id: corte.caja_id,
-                        sucursal_id: corte.sucursal_id || sucursalId || null,
+                        sucursal_id: corte.sucursal_id ?? null,
                         tipo: corte.tipo,
                         fecha_creacion: corte.fecha_creacion,
                         efectivo: corte.efectivo,
@@ -943,6 +926,9 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                         fiado: corte.fiado,
                         mixto: corte.mixto,
                         total_ventas: corte.total_ventas,
+                        ...(corte.ingreso_reparaciones !== undefined ? { ingreso_reparaciones: corte.ingreso_reparaciones } : {}),
+                        ...(corte.ingreso_apartados !== undefined ? { ingreso_apartados: corte.ingreso_apartados } : {}),
+                        ...(corte.ingreso_abonos_fiado !== undefined ? { ingreso_abonos_fiado: corte.ingreso_abonos_fiado } : {}),
                         cantidad_transacciones: corte.cantidad_transacciones,
                         monto_apertura: corte.monto_apertura ?? null,
                         monto_esperado: corte.monto_esperado ?? null,
@@ -950,12 +936,13 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                         diferencia: corte.diferencia ?? null,
                     })
                 );
-                if (!error) await db.cortes_caja.update(corte.id, { estado_sincronizacion: 1 });
+                if (!error) await acknowledgeSyncedSnapshot(db.cortes_caja, corte);
             }
 
             // ── 2.K  Reparaciones (Plan Pro) ──────────────────────────────────
-            const reparacionesPendientes = await db.reparaciones.where('estado_sincronizacion').equals(0).toArray();
+            const reparacionesPendientes = await pendingTenantRows(db.reparaciones, negocioId);
             for (const rep of reparacionesPendientes) {
+                if (!isCurrentScope()) return;
                 const { error } = await withTimeout(() =>
                     supabase.from('reparaciones').upsert({
                         id: rep.id,
@@ -998,13 +985,14 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                 if (error) {
                     console.error('[sync] reparaciones error:', error.code, error.message, error.details);
                 } else {
-                    await db.reparaciones.update(rep.id, { estado_sincronizacion: 1 });
+                    await acknowledgeSyncedSnapshot(db.reparaciones, rep);
                 }
             }
 
             // ── 2.L  Apartados (Plan Pro) ─────────────────────────────────────
-            const apartadosPendientes = await db.apartados.where('estado_sincronizacion').equals(0).toArray();
+            const apartadosPendientes = await pendingTenantRows(db.apartados, negocioId);
             for (const ap of apartadosPendientes) {
+                if (!isCurrentScope()) return;
                 const { error } = await withTimeout(() =>
                     supabase.from('apartados').upsert({
                         id: ap.id,
@@ -1029,58 +1017,23 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                 if (error) {
                     console.error('[sync] apartados error:', error.code, error.message, error.details);
                 } else {
-                    await db.apartados.update(ap.id, { estado_sincronizacion: 1 });
+                    await acknowledgeSyncedSnapshot(db.apartados, ap);
                 }
             }
 
             // ══════════════════════════════════════════════════════════════════
             // 3. PURGA LOCAL — mantener IndexedDB liviano (1 vez al día)
-            // Borra datos viejos YA SINCRONIZADOS. Supabase conserva todo;
-            // los reportes de rangos antiguos consultan la nube.
+            // Nunca borra detalles pendientes ni operaciones sin recibo exacto.
+            // Los reportes de rangos antiguos consultan la nube.
             // ══════════════════════════════════════════════════════════════════
-            const PURGE_KEY = 'vrd_purge_ts';
+            const PURGE_KEY = syncStorageKey(TS_PREFIX, 'purge', scope);
             const PURGE_INTERVAL = 24 * 60 * 60 * 1000;
             const lastPurge = parseInt(localStorage.getItem(PURGE_KEY) || '0', 10);
             if (Date.now() - lastPurge > PURGE_INTERVAL) {
-                const corte90d = Date.now() - 90 * 24 * 60 * 60 * 1000;
-                const corte30d = Date.now() - 30 * 24 * 60 * 60 * 1000;
-
-                // Ventas sincronizadas con más de 90 días (y sus detalles)
-                const ventasViejas = await db.ventas
-                    .where('fecha_creacion').below(corte90d)
-                    .filter(v => v.estado_sincronizacion === 1)
-                    .toArray();
-                if (ventasViejas.length > 0) {
-                    const ids = ventasViejas.map(v => v.id);
-                    await db.venta_detalles.where('venta_id').anyOf(ids).delete();
-                    await db.ventas.bulkDelete(ids);
-                }
-
-                // Movimientos de stock sincronizados con más de 30 días
-                // (son solo el outbox local — el kardex completo vive en la nube)
-                await db.movimientos_stock
-                    .where('fecha_creacion').below(corte30d)
-                    .filter(m => m.estado_sincronizacion === 1)
-                    .delete();
-
-                // Devoluciones y cortes sincronizados con más de 90 días
-                await db.devoluciones
-                    .where('fecha_creacion').below(corte90d)
-                    .filter(d => d.estado_sincronizacion === 1)
-                    .delete();
-                await db.cortes_caja
-                    .where('fecha_creacion').below(corte90d)
-                    .filter(c => c.estado_sincronizacion === 1)
-                    .delete();
-                await db.gastos
-                    .where('fecha_creacion').below(corte90d)
-                    .filter(g => g.estado_sincronizacion === 1 && !g.eliminado)
-                    .delete();
-
-                localStorage.setItem(PURGE_KEY, String(Date.now()));
-                if (ventasViejas.length > 0) {
-                    console.log(`[purge] ${ventasViejas.length} ventas antiguas archivadas (siguen en la nube)`);
-                }
+                const result = await purgeAcknowledgedHistory({ database: db, negocioId,
+                    asOf: Date.now(), isCurrentScope });
+                if (isCurrentScope()) localStorage.setItem(PURGE_KEY, String(Date.now()));
+                if (result.sales > 0) console.log(`[purge] ${result.sales} ventas antiguas retiradas del cache local`);
             }
 
             consecutiveErrors = 0;
@@ -1105,21 +1058,35 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
             });
             marcarSyncActivo(false);
             isSyncing = false;
+            finishActivity();
+            if (queuedScopeTick && live()) { queuedScopeTick = false; void tick(); }
         }
     };
 
     activeInterval = setInterval(tick, 15000);
+    unsubscribeInventoryScope = useConfigStore.subscribe((state, previous) => {
+        if (!live()) return;
+        refreshSharedWorker();
+        if (state.negocioId === previous.negocioId && state.sucursalId === previous.sucursalId && state.user?.id===previous.user?.id && state.usuarioCacheId===previous.usuarioCacheId) return;
+        void inventoryReceiver?.wake(); void inventorySender?.wake();
+        if (isSyncing) queuedScopeTick = true;
+        else void tick();
+    });
+    void tick();
 
     // Al volver la pestaña al frente: sincronizar YA (sin esperar el próximo
     // tick) y forzar el reconteo de stock (el gate de 120s se resetea) — la PC
     // del taller que estuvo minimizada se pone al día en segundos.
     onVisibilidad = () => {
         if (!document.hidden) {
-            localStorage.removeItem('vrd_stock_recon_ts');
+            void inventoryReceiver?.wake();
+            void inventorySender?.wake();
+            const { negocioId, sucursalId } = useConfigStore.getState();
+            if (negocioId) localStorage.removeItem(syncStorageKey(TS_PREFIX, 'stock_recon', { negocioId, sucursalId: sucursalId ?? null }));
             tick();
         }
     };
-    onOnline = () => { tick(); };
+    onOnline = () => { void inventoryReceiver?.wake(); void inventorySender?.wake(); void tick(); };
 
     if (typeof document !== 'undefined') {
         document.addEventListener('visibilitychange', onVisibilidad);
@@ -1133,6 +1100,16 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
 };
 
 export const stopSyncWorker = () => {
+    syncGeneration++;
+    resetSharedWorker();
+    inventorySender?.stop();
+    inventorySender = null;
+    unsubscribeInventoryScope?.();
+    unsubscribeInventoryScope = null;
+    inventoryReceiver?.stop();
+    inventoryReceiver = null;
+    unsubscribeInventoryAuth?.();
+    unsubscribeInventoryAuth = null;
     if (activeInterval !== null) {
         clearInterval(activeInterval);
         activeInterval = null;

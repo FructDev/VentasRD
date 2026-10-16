@@ -18,7 +18,7 @@ export function formatDOP(amount: number): string {
  */
 export function formatTicket(numero?: number, cajaCodigo?: string): string {
   if (numero == null) return '-----';
-  const num = String(numero).padStart(5, '0');
+  const num = String(numero).padStart(cajaCodigo&&/^N[a-f0-9]{32}$/.test(cajaCodigo)?6:5, '0');
   return cajaCodigo ? `${cajaCodigo}-${num}` : num;
 }
 

@@ -4,14 +4,16 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useConfigStore } from '@/store/useConfigStore';
 import { useCandado } from '@/lib/useCandado';
-import { db, getCajaAbierta } from '@/lib/db/dexie';
+import { db } from '@/lib/db/dexie';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { CajaLocal } from '@/types/database';
-import { formatDOP, formatTicket } from '@/lib/utils';
+import { formatDOP } from '@/lib/utils';
 import { v4 as uuidv4 } from 'uuid';
 import { useReactToPrint } from 'react-to-print';
 import { TicketCorte, ProductoCorte } from '@/components/TicketCorte';
 import { CorteCajaLocal } from '@/types/database';
+import { calcularResumenCaja } from '@/lib/domain/caja/resumenTurno';
+import { abrirCajaLocal, commitCorteLocal, leerResumenCorte } from '@/lib/domain/caja/commitCorteLocal';
+import { localCommandError } from '@/lib/domain/local/errors';
 
 interface Props {
     isOpen: boolean;
@@ -46,130 +48,29 @@ export default function CajaModal({ isOpen, onClose }: Props) {
 
     const cajaAbierta = useLiveQuery(async () => {
         if (!negocioId) return undefined;
-        return getCajaAbierta(negocioId, sucursalId || undefined);
+        const cajas = await db.cajas.where('negocio_id').equals(negocioId)
+            .filter(c => c.estado === 'abierta' && (c.sucursal_id ?? null) === (sucursalId || null)).toArray();
+        return cajas.length === 1 ? cajas[0] : undefined;
     }, [negocioId, sucursalId]);
 
-    // Todas las ventas desde que se abrió la caja (desglose por método)
-    const ventasDesdeAperturaRaw = useLiveQuery(async () => {
-        if (!cajaAbierta) return [];
-        return db.ventas
-            .where('fecha_creacion')
-            .above(cajaAbierta.fecha_apertura)
-            .toArray();
+    // Una sola lectura coherente para preview y commit. El commit vuelve a leer
+    // todas las fuentes bajo lock; estos valores nunca se envían como autoridad.
+    const resultadoContexto = useLiveQuery(async () => {
+        if (!cajaAbierta) return undefined;
+        try {
+            return { snapshot: await db.transaction('r', [db.ventas, db.venta_detalles, db.devoluciones, db.gastos,
+                db.reparaciones, db.apartados, db.transacciones_fiado, db.shared_entities, db.shared_mutations], () => leerResumenCorte(db, cajaAbierta, Date.now())) };
+        } catch (error) { return { error: localCommandError(error) }; }
     }, [cajaAbierta]);
-    const ventasDesdeApertura = useMemo(() => ventasDesdeAperturaRaw ?? [], [ventasDesdeAperturaRaw]);
-
-    const resumenVentas = useMemo(() => {
-        const r = { efectivo: 0, tarjeta: 0, transferencia: 0, fiado: 0, mixto: 0, total: 0, cantidad: 0 };
-        ventasDesdeApertura.forEach(v => {
-            r[v.metodo_pago as keyof typeof r] = (r[v.metodo_pago as keyof typeof r] as number) + v.total;
-            r.total += v.total;
-            r.cantidad++;
-        });
-        return r;
-    }, [ventasDesdeApertura]);
-
-    // Efectivo de ventas en el turno: ventas en efectivo + la porción en efectivo
-    // de los pagos mixtos (lo demás no entra a la gaveta).
-    const ventasEfectivoDesdeApertura = useMemo(() =>
-        ventasDesdeApertura.reduce((s, v) =>
-            s + (v.metodo_pago === 'efectivo' ? v.total : v.metodo_pago === 'mixto' ? (v.monto_efectivo ?? 0) : 0)
-        , 0),
-        [ventasDesdeApertura]);
-
-    // Gastos en EFECTIVO desde la apertura — salen de la gaveta, afectan el cuadre
-    const gastosEfectivoTurno = useLiveQuery(async () => {
-        if (!cajaAbierta || !negocioId) return 0;
-        const gastos = await db.gastos
-            .where('[negocio_id+fecha_creacion]')
-            .between([negocioId, cajaAbierta.fecha_apertura], [negocioId, Infinity])
-            .toArray();
-        return gastos
-            .filter(g => !g.eliminado && g.metodo === 'efectivo')
-            .reduce((s, g) => s + g.monto, 0);
-    }, [cajaAbierta, negocioId]) ?? 0;
-
-    const SIN_INGRESO = { efectivo: 0, tarjeta: 0, transferencia: 0, total: 0 };
-    // Ingresos de REPARACIONES en el turno, desglosados por método (abonos + saldo)
-    const ingresosReparacionesTurno = useLiveQuery(async () => {
-        if (!cajaAbierta || !negocioId) return { ...SIN_INGRESO };
-        const reps = await db.reparaciones.where('negocio_id').equals(negocioId).toArray();
-        const ap = cajaAbierta.fecha_apertura;
-        const acc = { efectivo: 0, tarjeta: 0, transferencia: 0, total: 0 };
-        const sumar = (metodo: string, monto: number) => {
-            if (metodo === 'efectivo') acc.efectivo += monto;
-            else if (metodo === 'tarjeta') acc.tarjeta += monto;
-            else if (metodo === 'transferencia') acc.transferencia += monto;
-            acc.total += monto;
-        };
-        for (const r of reps) {
-            if (r.pagos && r.pagos.length) {
-                for (const p of r.pagos) if (p.fecha > ap) sumar(p.metodo, p.monto);
-            } else {
-                // Legado: abono inicial + saldo a la entrega
-                if (r.abono > 0 && r.fecha_creacion > ap) sumar(r.metodo_abono ?? 'efectivo', r.abono);
-                if (r.estado === 'entregado' && r.fecha_entrega && r.fecha_entrega > ap) sumar(r.metodo_pago_final ?? 'efectivo', Math.max(0, r.total - r.abono));
-            }
-        }
-        return acc;
-    }, [cajaAbierta, negocioId]) ?? { ...SIN_INGRESO };
-
-    // Ingresos de APARTADOS en el turno, desglosados por método (cada abono por su fecha)
-    const ingresosApartadosTurno = useLiveQuery(async () => {
-        if (!cajaAbierta || !negocioId) return { ...SIN_INGRESO };
-        const aps = await db.apartados.where('negocio_id').equals(negocioId).toArray();
-        const ap = cajaAbierta.fecha_apertura;
-        const acc = { efectivo: 0, tarjeta: 0, transferencia: 0, total: 0 };
-        for (const a of aps) {
-            for (const ab of a.abonos) {
-                if (ab.fecha <= ap) continue;
-                if (ab.metodo === 'efectivo') acc.efectivo += ab.monto;
-                else if (ab.metodo === 'tarjeta') acc.tarjeta += ab.monto;
-                else if (ab.metodo === 'transferencia') acc.transferencia += ab.monto;
-                acc.total += ab.monto;
-            }
-        }
-        return acc;
-    }, [cajaAbierta, negocioId]) ?? { ...SIN_INGRESO };
-
-    // Atajos de efectivo (para el cuadre de la gaveta)
-    const efectivoReparacionesTurno = ingresosReparacionesTurno.efectivo;
-    const efectivoApartadosTurno = ingresosApartadosTurno.efectivo;
-
-    // Detalle del efectivo del turno (hilo de dinero): cada movimiento que entra
-    // o sale de la gaveta, para auditar de dónde sale el "efectivo esperado".
-    const detalleEfectivo = useLiveQuery(async () => {
-        if (!cajaAbierta || !negocioId) return [];
-        const ap = cajaAbierta.fecha_apertura;
-        const items: { key: string; fecha: number; tipo: string; titulo: string; monto: number; signo: 'in' | 'out' }[] = [];
-
-        const ventas = await db.ventas.where('negocio_id').equals(negocioId).filter(v => v.fecha_creacion > ap).toArray();
-        ventas.forEach(v => {
-            const cash = v.metodo_pago === 'efectivo' ? v.total : v.metodo_pago === 'mixto' ? (v.monto_efectivo ?? 0) : 0;
-            if (cash > 0) items.push({ key: `v-${v.id}`, fecha: v.fecha_creacion, tipo: 'Venta', titulo: `Venta #${formatTicket(v.numero_ticket, v.caja_codigo)}`, monto: cash, signo: 'in' });
-        });
-
-        const reps = await db.reparaciones.where('negocio_id').equals(negocioId).toArray();
-        reps.forEach(r => {
-            if (r.pagos && r.pagos.length) {
-                r.pagos.forEach((p, i) => {
-                    if (p.metodo === 'efectivo' && p.fecha > ap) items.push({ key: `rp-${r.id}-${i}`, fecha: p.fecha, tipo: 'Reparación', titulo: `${r.folio} · ${p.tipo === 'final' ? 'saldo' : 'abono'}`, monto: p.monto, signo: 'in' });
-                });
-            } else {
-                if (r.metodo_abono === 'efectivo' && r.abono > 0 && r.fecha_creacion > ap) items.push({ key: `ra-${r.id}`, fecha: r.fecha_creacion, tipo: 'Reparación', titulo: `${r.folio} · abono`, monto: r.abono, signo: 'in' });
-                if (r.estado === 'entregado' && r.metodo_pago_final === 'efectivo' && r.fecha_entrega && r.fecha_entrega > ap) items.push({ key: `rf-${r.id}`, fecha: r.fecha_entrega, tipo: 'Reparación', titulo: `${r.folio} · saldo`, monto: Math.max(0, r.total - r.abono), signo: 'in' });
-            }
-        });
-
-        const aps = await db.apartados.where('negocio_id').equals(negocioId).toArray();
-        aps.forEach(a => a.abonos.forEach((ab, i) => { if (ab.metodo === 'efectivo' && ab.fecha > ap) items.push({ key: `ap-${a.id}-${i}`, fecha: ab.fecha, tipo: 'Apartado', titulo: `${a.folio} · abono`, monto: ab.monto, signo: 'in' }); }));
-
-        const gastos = await db.gastos.where('[negocio_id+fecha_creacion]').between([negocioId, ap], [negocioId, Infinity]).toArray();
-        gastos.forEach(g => { if (!g.eliminado && g.metodo === 'efectivo') items.push({ key: `g-${g.id}`, fecha: g.fecha_creacion, tipo: 'Gasto', titulo: g.descripcion || 'Gasto', monto: g.monto, signo: 'out' }); });
-
-        items.sort((a, b) => b.fecha - a.fecha);
-        return items;
-    }, [cajaAbierta, negocioId]) ?? [];
+    const contexto = resultadoContexto?.snapshot;
+    const resumenVentas = contexto?.resumen ?? calcularResumenCaja([], []);
+    const ventasEfectivoDesdeApertura = resumenVentas.efectivo;
+    const gastosEfectivoTurno = contexto?.gastos ?? 0;
+    const efectivoReparacionesTurno = contexto?.reparaciones.efectivo ?? 0;
+    const efectivoApartadosTurno = contexto?.apartados.efectivo ?? 0;
+    const abonosFiadoTurno = contexto?.abonos;
+    const ingresosFiado = abonosFiadoTurno ?? { efectivo: 0, tarjeta: 0, transferencia: 0, total: 0, noClasificados: 0 };
+    const detalleEfectivo = contexto?.detalleEfectivo ?? [];
 
     const [verDetalle, setVerDetalle] = useState(false);
 
@@ -179,9 +80,7 @@ export default function CajaModal({ isOpen, onClose }: Props) {
         }, 0);
     }, [denominaciones]);
 
-    const montoEsperado = cajaAbierta
-        ? cajaAbierta.monto_apertura + ventasEfectivoDesdeApertura + efectivoReparacionesTurno + efectivoApartadosTurno - gastosEfectivoTurno
-        : 0;
+    const montoEsperado = contexto?.esperado ?? 0;
     const diferencia = totalContado - montoEsperado;
 
     useEffect(() => {
@@ -192,76 +91,29 @@ export default function CajaModal({ isOpen, onClose }: Props) {
     }, [isOpen]);
 
     const handleDenominacion = (valor: number, cantidad: string) => {
+        if (cantidad && !/^\d+$/.test(cantidad)) { showToast('Las denominaciones requieren cantidades enteras no negativas.', 'error'); return; }
         setDenominaciones(prev => ({
             ...prev,
             [String(valor)]: parseInt(cantidad) || 0
         }));
     };
 
-    // Genera y guarda un registro de corte, luego imprime
-    const generarCorte = async (tipo: 'X' | 'Z', extras?: { monto_contado: number; monto_esperado: number; diferencia: number }) => {
-        if (!negocioId || !cajaAbierta) return;
-
-        // Cargar detalles de todas las ventas del turno y agrupar por producto
-        const ventaIds = ventasDesdeApertura.map(v => v.id);
-        const detalles = ventaIds.length > 0
-            ? await db.venta_detalles.where('venta_id').anyOf(ventaIds).toArray()
-            : [];
-
-        // Agregar por producto_id
-        const mapaProductos = new Map<string, { cantidad: number; subtotal: number }>();
-        detalles.forEach(d => {
-            const prev = mapaProductos.get(d.producto_id) ?? { cantidad: 0, subtotal: 0 };
-            mapaProductos.set(d.producto_id, {
-                cantidad: prev.cantidad + d.cantidad,
-                subtotal: prev.subtotal + d.subtotal,
-            });
-        });
-
-        // Resolver nombres desde Dexie
-        const productosAgrupados: ProductoCorte[] = [];
-        for (const [productoId, agg] of mapaProductos.entries()) {
-            const prod = await db.productos.get(productoId);
-            productosAgrupados.push({
-                nombre: prod?.nombre ?? 'Producto eliminado',
-                cantidad: agg.cantidad,
-                subtotal: agg.subtotal,
-            });
-        }
-        // Ordenar por subtotal descendente
-        productosAgrupados.sort((a, b) => b.subtotal - a.subtotal);
-
-        const corte: CorteCajaLocal = {
-            id: uuidv4(),
-            negocio_id: negocioId,
-            caja_id: cajaAbierta.id,
-            sucursal_id: sucursalId || undefined,
-            tipo,
-            fecha_creacion: Date.now(),
-            // Método combinado: ventas + reparaciones + apartados (todo el dinero del turno)
-            efectivo: resumenVentas.efectivo + ingresosReparacionesTurno.efectivo + ingresosApartadosTurno.efectivo,
-            tarjeta: resumenVentas.tarjeta + ingresosReparacionesTurno.tarjeta + ingresosApartadosTurno.tarjeta,
-            transferencia: resumenVentas.transferencia + ingresosReparacionesTurno.transferencia + ingresosApartadosTurno.transferencia,
-            fiado: resumenVentas.fiado,
-            mixto: resumenVentas.mixto,
-            total_ventas: resumenVentas.total,
-            ingreso_reparaciones: ingresosReparacionesTurno.total,
-            ingreso_apartados: ingresosApartadosTurno.total,
-            cantidad_transacciones: resumenVentas.cantidad,
-            ...(tipo === 'Z' && extras && {
-                monto_apertura: cajaAbierta.monto_apertura,
-                monto_esperado: extras.monto_esperado,
-                monto_contado: extras.monto_contado,
-                diferencia: extras.diferencia,
-            }),
-            estado_sincronizacion: 0,
-        };
-
-        await db.cortes_caja.add(corte);
-        setProductosCorte(productosAgrupados);
+    // Renderizado/impresión siempre después del commit, nunca dentro de Dexie.
+    const presentarCorte = (corte: CorteCajaLocal, productos: ProductoCorte[]) => {
+        setProductosCorte(productos);
         setCorteActual(corte);
-        // Pequeño delay para que React renderice el ticket oculto antes de imprimir
         setTimeout(() => handleImprimirCorte(), 120);
+    };
+    const generarCorte = async () => {
+        if (!negocioId || !cajaAbierta) return;
+        setLoading(true);
+        try {
+            const result = await commitCorteLocal(db, { operationId: uuidv4(), negocioId,
+                sucursalId: sucursalId || undefined, cajaId: cajaAbierta.id, tipo: 'X' });
+            presentarCorte(result.corte, result.snapshot.productos);
+            showToast('Corte X guardado. Preparando impresión…', 'info');
+        } catch (error) { showToast(localCommandError(error), 'error'); }
+        finally { setLoading(false); }
     };
 
     const abrirCaja = async () => {
@@ -270,7 +122,7 @@ export default function CajaModal({ isOpen, onClose }: Props) {
 
         try {
             const ahora = Date.now();
-            await db.cajas.add({
+            await abrirCajaLocal(db, {
                 id: uuidv4(),
                 negocio_id: negocioId,
                 sucursal_id: sucursalId || undefined,
@@ -288,37 +140,33 @@ export default function CajaModal({ isOpen, onClose }: Props) {
                 'success'
             );
             onClose();
-        } catch (e) {
-            showToast('Error al abrir la caja', 'error');
+        } catch (error) {
+            showToast(localCommandError(error), 'error');
         }
         setLoading(false);
     };
 
     const cerrarCaja = async () => {
         if (!negocioId || !cajaAbierta) return;
+        if (!abonosFiadoTurno) { showToast('Espera a que termine de cargar el resumen de abonos.', 'info'); return; }
         setLoading(true);
 
         try {
-            await db.cajas.update(cajaAbierta.id, {
-                estado: 'cerrada',
-                monto_cierre: totalContado,
-                monto_esperado: montoEsperado,
-                diferencia: diferencia,
-                denominaciones_cierre: { ...denominaciones },
-                fecha_cierre: Date.now(),
-                notas: notas || undefined,
-                // Marcar para que el worker suba el cierre a la nube y no vuelva
-                // a traerse como "abierta" en otro dispositivo o tras limpiar caché.
-                estado_sincronizacion: 0,
-                fecha_actualizacion: Date.now(),
+            // Serializa el cierre con registrarAbonoLocal: un abono confirmado
+            // antes del cierre entra; después del cierre se rechaza.
+            const { corte, snapshot } = await commitCorteLocal(db, {
+                operationId: uuidv4(), cajaId: cajaAbierta.id, negocioId, sucursalId: sucursalId || undefined,
+                tipo: 'Z', contado: totalContado, denominaciones: { ...denominaciones }, notas: notas || undefined,
             });
-
-            // Generar Corte Z (guarda + imprime automáticamente)
-            await generarCorte('Z', {
-                monto_contado: totalContado,
-                monto_esperado: montoEsperado,
-                diferencia,
-            });
+            const montoEsperado = corte.monto_esperado!;
+            const diferencia = corte.diferencia!;
+            const abonos = snapshot.abonos;
+            const ventasEfectivoDesdeApertura = snapshot.resumen.efectivo;
+            const resumenVentas = snapshot.resumen;
+            const efectivoReparacionesTurno = snapshot.reparaciones.efectivo;
+            const efectivoApartadosTurno = snapshot.apartados.efectivo;
+            const gastosEfectivoTurno = snapshot.gastos;
+            presentarCorte(corte, snapshot.productos);
 
             showToast(
                 diferencia === 0
@@ -329,18 +177,21 @@ export default function CajaModal({ isOpen, onClose }: Props) {
 
             // Generar reporte de WhatsApp
             if (negocioWhatsapp) {
-                const fecha = new Date().toLocaleDateString('es-DO');
+                const fecha = new Date(corte.fecha_creacion).toLocaleDateString('es-DO');
                 const horaApertura = new Date(cajaAbierta.fecha_apertura).toLocaleTimeString('es-DO', { hour: '2-digit', minute: '2-digit' });
-                const horaCierre = new Date().toLocaleTimeString('es-DO', { hour: '2-digit', minute: '2-digit' });
+                const horaCierre = new Date(corte.fecha_creacion).toLocaleTimeString('es-DO', { hour: '2-digit', minute: '2-digit' });
 
                 const reporte = `*Cierre de Caja - ${negocioNombre || 'Mi Negocio'}*\n` +
                     `📅 Fecha: ${fecha}\n` +
                     `⏰ Turno: ${horaApertura} a ${horaCierre}\n\n` +
                     `*Resumen Efectivo:*\n` +
                     `💵 Apertura: ${formatDOP(cajaAbierta.monto_apertura)}\n` +
-                    `📈 Ventas Efectivo: ${formatDOP(ventasEfectivoDesdeApertura)}\n` +
+                    `📈 Ventas Efectivo (neto): ${formatDOP(ventasEfectivoDesdeApertura)}\n` +
+                    (resumenVentas.efectivoDevuelto > 0 ? `↩️ Devoluciones Efectivo: -${formatDOP(resumenVentas.efectivoDevuelto)}\n` : '') +
                     (efectivoReparacionesTurno > 0 ? `🔧 Reparaciones Efectivo: ${formatDOP(efectivoReparacionesTurno)}\n` : '') +
                     (efectivoApartadosTurno > 0 ? `🔖 Apartados Efectivo: ${formatDOP(efectivoApartadosTurno)}\n` : '') +
+                    (abonos.efectivo > 0 ? `💵 Abonos Fiado Efectivo: ${formatDOP(abonos.efectivo)}\n` : '') +
+                    (abonos.noClasificados > 0 ? `⚠️ ${abonos.noClasificados} abono(s) sin contexto verificable: no incluidos en cuadre.\n` : '') +
                     (gastosEfectivoTurno > 0 ? `🧾 Gastos Efectivo: -${formatDOP(gastosEfectivoTurno)}\n` : '') +
                     `💰 Efectivo Esperado: ${formatDOP(montoEsperado)}\n` +
                     `🏦 Efectivo Físico Contado: ${formatDOP(totalContado)}\n\n` +
@@ -354,8 +205,8 @@ export default function CajaModal({ isOpen, onClose }: Props) {
             }
 
             onClose();
-        } catch (e) {
-            showToast('Error al cerrar la caja', 'error');
+        } catch (error) {
+            showToast(localCommandError(error), 'error');
         }
         setLoading(false);
     };
@@ -385,10 +236,13 @@ export default function CajaModal({ isOpen, onClose }: Props) {
     return (
         <>
         {ticketOculto}
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-md z-50 flex items-center justify-center p-4 animate-fade-in">
-            <div className={`bg-navy-2 w-full ${esCierre ? 'max-w-2xl' : 'max-w-lg'} rounded-2xl border border-navy-3 shadow-2xl overflow-hidden animate-scale-in max-h-[95vh] flex flex-col`}>
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-md z-50 flex items-center justify-center p-2 sm:p-4 animate-fade-in">
+            <div className={`bg-navy-2 w-full ${esCierre
+                ? 'max-w-5xl md:grid md:grid-cols-[minmax(15rem,0.85fr)_minmax(24rem,1.15fr)] md:grid-rows-[auto_minmax(0,1fr)_auto]'
+                : 'max-w-3xl flex flex-col'
+            } rounded-2xl border border-navy-3 shadow-2xl overflow-hidden animate-scale-in max-h-[calc(100dvh-1rem)] sm:max-h-[calc(100dvh-2rem)]`}>
                 {/* Header */}
-                <div className="p-4 sm:p-6 border-b border-navy-3 flex justify-between items-start shrink-0 gap-3">
+                <div className="p-4 sm:px-6 sm:py-4 border-b border-navy-3 flex justify-between items-start shrink-0 gap-3 md:col-span-2 md:col-start-1 md:row-start-1">
                     <div>
                         <h2 className="text-xl font-display font-bold text-white">
                             {esCierre ? '🔒 Cerrar Caja' : '🔓 Abrir Caja'}
@@ -403,11 +257,8 @@ export default function CajaModal({ isOpen, onClose }: Props) {
                     <div className="flex items-center gap-2 shrink-0">
                         {esCierre && (
                             <button
-                                onClick={async () => {
-                                    await generarCorte('X');
-                                    showToast('Corte X imprimiendo…', 'info');
-                                }}
-                                disabled={loading}
+                                onClick={() => void conCandado(generarCorte)()}
+                                disabled={loading || !abonosFiadoTurno}
                                 className="px-3 py-1.5 text-xs font-bold bg-navy-3 border border-navy-3 hover:border-gold/40 hover:text-gold text-vr-gray rounded-lg transition-all"
                             >
                                 📊 Corte Parcial
@@ -419,8 +270,11 @@ export default function CajaModal({ isOpen, onClose }: Props) {
 
                 {/* Info panel for closing */}
                 {esCierre && (
-                    <div className="px-4 sm:px-6 pt-4 shrink-0 space-y-3">
+                    <div className="px-4 py-4 sm:px-5 min-h-0 space-y-3 md:col-start-1 md:row-start-2 md:overflow-y-auto md:border-r md:border-navy-3">
                         {/* Desglose de ventas del turno */}
+                        {resultadoContexto?.error && (
+                            <p role="alert" className="text-sm text-vr-red bg-vr-red/5 p-3 rounded-xl">{resultadoContexto.error}</p>
+                        )}
                         <div className="bg-navy rounded-xl border border-navy-3 overflow-hidden">
                             <div className="px-3 py-2 border-b border-navy-3 flex justify-between items-center">
                                 <p className="text-[10px] font-bold text-vr-gray uppercase tracking-wider">Ventas del turno</p>
@@ -433,7 +287,7 @@ export default function CajaModal({ isOpen, onClose }: Props) {
                                     { label: 'Transfer.',     val: resumenVentas.transferencia, color: 'text-purple-400' },
                                     { label: 'Fiado',         val: resumenVentas.fiado,         color: 'text-vr-orange' },
                                     { label: 'Mixto',         val: resumenVentas.mixto,         color: 'text-gold' },
-                                ].filter(l => l.val > 0).map(l => (
+                                ].filter(l => l.val !== 0).map(l => (
                                     <div key={l.label} className="flex justify-between gap-2">
                                         <span className="text-vr-gray">{l.label}</span>
                                         <span className={`font-mono font-bold ${l.color}`}>{formatDOP(l.val)}</span>
@@ -449,15 +303,21 @@ export default function CajaModal({ isOpen, onClose }: Props) {
                             </div>
                         </div>
 
-                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                        <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
                             <div className="bg-navy p-3 rounded-xl border border-navy-3">
                                 <p className="text-[10px] font-bold text-vr-gray uppercase tracking-wider">Apertura</p>
                                 <p className="text-lg font-black font-mono text-white">{formatDOP(cajaAbierta!.monto_apertura)}</p>
                             </div>
                             <div className="bg-navy p-3 rounded-xl border border-navy-3">
-                                <p className="text-[10px] font-bold text-vr-gray uppercase tracking-wider">Ventas Efectivo</p>
+                                <p className="text-[10px] font-bold text-vr-gray uppercase tracking-wider">Ventas Efectivo Neto</p>
                                 <p className="text-lg font-black font-mono text-vr-green">{formatDOP(ventasEfectivoDesdeApertura)}</p>
                             </div>
+                            {resumenVentas.efectivoDevuelto > 0 && (
+                                <div className="bg-navy p-3 rounded-xl border border-vr-red/20">
+                                    <p className="text-[10px] font-bold text-vr-red uppercase tracking-wider">Devoluciones Efectivo</p>
+                                    <p className="text-lg font-black font-mono text-vr-red">- {formatDOP(resumenVentas.efectivoDevuelto)}</p>
+                                </div>
+                            )}
                             {efectivoReparacionesTurno > 0 && (
                                 <div className="bg-navy p-3 rounded-xl border border-navy-3">
                                     <p className="text-[10px] font-bold text-vr-gray uppercase tracking-wider">Reparac. Efectivo</p>
@@ -470,6 +330,9 @@ export default function CajaModal({ isOpen, onClose }: Props) {
                                     <p className="text-lg font-black font-mono text-vr-green">{formatDOP(efectivoApartadosTurno)}</p>
                                 </div>
                             )}
+                            {(contexto?.depositosDevueltos ?? 0) > 0 && (
+                                <div className="bg-navy p-3 rounded-xl border border-vr-red/20"><p className="text-[10px] font-bold text-vr-red uppercase tracking-wider">Depósitos devueltos · efectivo</p><p className="text-lg font-black font-mono text-vr-red">- {formatDOP(contexto!.depositosDevueltos)}</p></div>
+                            )}
                             {gastosEfectivoTurno > 0 && (
                                 <div className="bg-navy p-3 rounded-xl border border-vr-red/20">
                                     <p className="text-[10px] font-bold text-vr-red uppercase tracking-wider">Gastos Efectivo</p>
@@ -477,6 +340,21 @@ export default function CajaModal({ isOpen, onClose }: Props) {
                                 </div>
                             )}
                         </div>
+                        {ingresosFiado.total > 0 && (
+                            <div className="bg-navy p-3 rounded-xl border border-vr-green/20">
+                                <p className="text-xs font-bold text-vr-gray">Abonos fiado · efectivo</p>
+                                <p className="text-lg font-black font-mono text-vr-green">{formatDOP(ingresosFiado.efectivo)}</p>
+                                <p className="text-xs text-vr-gray">Tarjeta: {formatDOP(ingresosFiado.tarjeta)} · Transferencia: {formatDOP(ingresosFiado.transferencia)}</p>
+                            </div>
+                        )}
+                        {ingresosFiado.noClasificados > 0 && (
+                            <p role="status" className="text-xs text-gold bg-gold/5 p-3 rounded-xl">Hay {ingresosFiado.noClasificados} abono(s) sin caja, sucursal o método verificable en esta ventana. No se incluyeron en el cuadre; revisa el histórico antes de cerrar.</p>
+                        )}
+                        {!!contexto?.limites.length && (
+                            <p role="status" className="text-xs text-gold bg-gold/5 p-3 rounded-xl">
+                                El resumen incluye limitaciones históricas. Los registros legacy se atribuyen por ventana cuando falta vínculo de turno; los métodos desconocidos no se inventan. Devolver stock no prueba un reintegro bancario.
+                            </p>
+                        )}
                         <div className="bg-gold/5 border border-gold/15 p-3 rounded-xl flex justify-between items-center">
                             <span className="text-sm font-bold text-gold">Deberías tener:</span>
                             <span className="text-xl font-black font-mono text-gold">{formatDOP(montoEsperado)}</span>
@@ -511,8 +389,11 @@ export default function CajaModal({ isOpen, onClose }: Props) {
                 )}
 
                 {/* Denominaciones */}
-                <div className="flex-1 overflow-y-auto p-4 sm:p-6">
-                    <p className="text-sm font-bold text-white uppercase tracking-wider mb-3">Conteo de denominaciones</p>
+                <div className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-5 md:col-start-2 md:row-start-2">
+                    <div className="flex items-center justify-between gap-3 mb-3">
+                        <p className="text-sm font-bold text-white uppercase tracking-wider">Conteo de denominaciones</p>
+                        <span className="text-xs text-vr-gray">Billetes y monedas</span>
+                    </div>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         {DENOMINACIONES.map(d => (
                             <label
@@ -553,30 +434,34 @@ export default function CajaModal({ isOpen, onClose }: Props) {
                 </div>
 
                 {/* Footer con total y botón */}
-                <div className="p-6 border-t border-navy-3 shrink-0">
-                    <div className="flex justify-between items-center mb-4">
-                        <span className="text-lg font-bold text-white">Total Contado</span>
-                        <span className="text-3xl font-black font-mono text-gold">{formatDOP(totalContado)}</span>
-                    </div>
+                <div className="p-4 sm:px-6 border-t border-navy-3 shrink-0 md:col-span-2 md:col-start-1 md:row-start-3">
+                    <div className="md:flex md:items-stretch md:gap-5">
+                        <div className="flex-1">
+                            <div className="flex justify-between items-center mb-3 md:mb-0">
+                                <span className="text-lg font-bold text-white">Total Contado</span>
+                                <span className="text-3xl font-black font-mono text-gold">{formatDOP(totalContado)}</span>
+                            </div>
 
-                    {esCierre && totalContado > 0 && (
-                        <div className={`mb-4 p-3 rounded-xl text-center font-bold text-sm ${diferencia === 0 ? 'bg-vr-green/10 border border-vr-green/20 text-vr-green' :
-                                diferencia > 0 ? 'bg-gold/10 border border-gold/20 text-gold' :
-                                    'bg-vr-red/10 border border-vr-red/20 text-vr-red'
-                            }`}>
-                            {diferencia === 0 ? '✓ Cuadre perfecto' :
-                                diferencia > 0 ? `↑ Sobrante: ${formatDOP(diferencia)}` :
-                                    `↓ Faltante: ${formatDOP(Math.abs(diferencia))}`}
+                            {esCierre && totalContado > 0 && (
+                                <div className={`mb-3 md:mt-2 md:mb-0 px-3 py-2 rounded-xl text-center font-bold text-sm ${diferencia === 0 ? 'bg-vr-green/10 border border-vr-green/20 text-vr-green' :
+                                        diferencia > 0 ? 'bg-gold/10 border border-gold/20 text-gold' :
+                                            'bg-vr-red/10 border border-vr-red/20 text-vr-red'
+                                    }`}>
+                                    {diferencia === 0 ? '✓ Cuadre perfecto' :
+                                        diferencia > 0 ? `↑ Sobrante: ${formatDOP(diferencia)}` :
+                                            `↓ Faltante: ${formatDOP(Math.abs(diferencia))}`}
+                                </div>
+                            )}
                         </div>
-                    )}
 
-                    <button
-                        onClick={conCandado(esCierre ? cerrarCaja : abrirCaja)}
-                        disabled={loading}
-                        className="w-full py-4 bg-gold-gradient text-navy font-extrabold rounded-xl hover:brightness-110 transition-all disabled:opacity-30 text-lg"
-                    >
-                        {loading ? 'Procesando...' : esCierre ? '🔒 Cerrar Caja' : '🔓 Abrir Caja'}
-                    </button>
+                        <button
+                            onClick={() => void conCandado(esCierre ? cerrarCaja : abrirCaja)()}
+                            disabled={loading || (esCierre && !abonosFiadoTurno)}
+                            className="w-full md:w-72 md:self-stretch py-3 bg-gold-gradient text-navy font-extrabold rounded-xl hover:brightness-110 transition-all disabled:opacity-30 text-lg"
+                        >
+                            {loading ? 'Procesando...' : esCierre ? '🔒 Cerrar Caja' : '🔓 Abrir Caja'}
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>

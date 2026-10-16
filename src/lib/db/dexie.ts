@@ -1,6 +1,11 @@
 // src/lib/db/dexie.ts
 import Dexie, { Table } from 'dexie';
-import { VentaLocal, ProductoLocal, ComposicionLocal, ClienteLocal, TransaccionFiadoLocal, VentaDetalleLocal, CajaLocal, SucursalLocal, DevolucionLocal, CorteCajaLocal, SerialLocal, MovimientoStockLocal, GastoLocal, ReparacionLocal, ApartadoLocal, SecuenciaLocal } from '@/types/database';
+import type {SharedInbox,SharedOutbox,SharedState} from '@/lib/sync/shared-journal';
+import type {SharedEntity,SharedCapture} from '@/lib/sync/shared-bootstrap';
+import {attachSharedCapture,type SharedMutation} from '@/lib/sync/shared-capture';
+import {reserveSharedFolio} from '@/lib/sync/shared-folio';
+import type { OperacionLocal } from '@/types/database';
+import { VentaLocal, ProductoLocal, ComposicionLocal, ClienteLocal, TransaccionFiadoLocal, VentaDetalleLocal, CajaLocal, SucursalLocal, DevolucionLocal, CorteCajaLocal, SerialLocal, MovimientoStockLocal, GastoLocal, ReparacionLocal, ApartadoLocal, SecuenciaLocal, InventarioSyncCursorLocal } from '@/types/database';
 
 export class VentaRDDatabase extends Dexie {
     ventas!: Table<VentaLocal>;
@@ -19,6 +24,14 @@ export class VentaRDDatabase extends Dexie {
     reparaciones!: Table<ReparacionLocal>;
     apartados!: Table<ApartadoLocal>;
     secuencias!: Table<SecuenciaLocal>;
+    inventario_sync_cursors!: Table<InventarioSyncCursorLocal>;
+    operaciones_locales!: Table<OperacionLocal>;
+    shared_outbox!: Table<SharedOutbox>;
+    shared_inbox!: Table<SharedInbox>;
+    shared_state!: Table<SharedState>;
+    shared_entities!: Table<SharedEntity>;
+    shared_captures!: Table<SharedCapture>;
+    shared_mutations!: Table<SharedMutation>;
 
     constructor(nombre = 'VentaRD_Vault') {
         super(nombre);
@@ -102,6 +115,27 @@ export class VentaRDDatabase extends Dexie {
         this.version(21).stores({
             secuencias: 'id, negocio_id, caja_codigo, tipo',
         });
+
+        // v22: metadata/indices del protocolo de inventario recuperable. La
+        // apertura no backfillea: los movimientos legacy se adoptan al leerlos.
+        this.version(22).stores({
+            movimientos_stock: 'id, negocio_id, producto_id, tipo, estado_sincronizacion, fecha_creacion, [negocio_id+sync_state], [negocio_id+next_attempt_at], [negocio_id+sucursal_id+producto_id]',
+            inventario_sync_cursors: 'id, negocio_id, sucursal_id, last_remote_sequence, [negocio_id+sucursal_id]',
+        });
+        // v23 es expansiva: no altera hechos/flags/recibos de versiones anteriores.
+        this.version(23).stores({
+            operaciones_locales: 'id, negocio_id, operation_id, tipo, [negocio_id+operation_id]',
+        });
+        // Additive shared-journal custody. Existing browser facts are untouched.
+        this.version(24).stores({
+            shared_outbox:'id, scopeKey, [scopeKey+order], [scopeKey+operationId]',
+            shared_inbox:'id, scopeKey, &[scopeKey+operationId]',
+            shared_state:'id',
+            shared_entities:'id, scopeKey, [scopeKey+kind]',
+            shared_captures:'id, scopeKey',
+            shared_mutations:'id, scopeKey, [scopeKey+order]',
+        });
+        attachSharedCapture(this);
     }
 }
 
@@ -150,6 +184,7 @@ export async function getNextTicketNumber(negocioId: string, cajaCodigo?: string
  * Consecutivo simple por negocio basado en el máximo existente local.
  */
 export async function getNextFolioReparacion(negocioId: string): Promise<string> {
+    const shared=await reserveSharedFolio(db,negocioId,'REPAIR');if(shared)return shared;
     const reps = await db.reparaciones.where('negocio_id').equals(negocioId).toArray();
     let max = 0;
     for (const r of reps) {
@@ -163,6 +198,7 @@ export async function getNextFolioReparacion(negocioId: string): Promise<string>
  * Genera el siguiente folio de apartado para el negocio (ej. "AP-001").
  */
 export async function getNextFolioApartado(negocioId: string): Promise<string> {
+    const shared=await reserveSharedFolio(db,negocioId,'LAYAWAY');if(shared)return shared;
     const aps = await db.apartados.where('negocio_id').equals(negocioId).toArray();
     let max = 0;
     for (const a of aps) {

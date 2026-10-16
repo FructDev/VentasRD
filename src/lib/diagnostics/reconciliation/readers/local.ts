@@ -22,7 +22,7 @@ export async function captureLocalSnapshot(database: VentaRDDatabase, rawRequest
     const startedAt = now();
     if (request.asOf > startedAt) throw new Error('asOf is later than local capture');
     const tenant = request.negocioId;
-    const branchMatch = (value: { sucursal_id?: string }) => !request.sucursalId || value.sucursal_id === request.sucursalId;
+    const branchMatch = (value: { sucursal_id?: string | null }) => !request.sucursalId || value.sucursal_id === request.sucursalId;
     const inPeriod = (date: number) => date >= request.desde && date <= request.hasta;
 
     const tables = [database.ventas, database.venta_detalles, database.productos, database.movimientos_stock,
@@ -60,7 +60,7 @@ export async function captureLocalSnapshot(database: VentaRDDatabase, rawRequest
         const repairs = repairsRaw.filter(r => branchMatch(r) && (inPeriod(r.fecha_creacion) || (r.pagos ?? []).some(p => inPeriod(p.fecha))));
         const layaways = layawaysRaw.filter(a => branchMatch(a) && (inPeriod(a.fecha_creacion) || a.abonos.some(p => inPeriod(p.fecha))));
         const observedAt = startedAt;
-        const common = (row: { id: string; negocio_id: string; sucursal_id?: string }) => ({ id: row.id, negocioId: row.negocio_id, ...(row.sucursal_id && { sucursalId: row.sucursal_id }), sourceId: options.sourceId, observedAt });
+        const common = (row: { id: string; negocio_id: string; sucursal_id?: string | null }) => ({ id: row.id, negocioId: row.negocio_id, ...(row.sucursal_id && { sucursalId: row.sucursal_id }), sourceId: options.sourceId, observedAt });
         const records: SnapshotRecords = {
             ventas: sales.map(row => normalizeSale(row, options.sourceId, observedAt)),
             ventaDetalles: lines.map(row => ({ ...common({ ...row, negocio_id: row.negocio_id ?? tenant }), ventaId: row.venta_id, productoId: row.producto_id, cantidad: normalizeQuantity(row.cantidad), precioUnitario: normalizeMoney(row.precio_unitario), subtotal: normalizeMoney(row.subtotal), fecha: row.fecha_creacion, syncFlag: row.estado_sincronizacion })),

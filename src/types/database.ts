@@ -1,5 +1,14 @@
 // src/types/database.ts
 
+import type {
+    InventoryConflictEvidence,
+    InventoryErrorClass,
+    InventoryFeedCursor,
+    InventoryOutcomeCode,
+    InventorySyncState,
+    RemoteInventoryReceipt,
+} from '@/lib/sync/inventory/contract';
+
 export interface Negocio {
     id: string; // ID único del negocio/tenant
     nombre: string;
@@ -14,6 +23,21 @@ export interface SecuenciaLocal {
     tipo: 'ticket';
     ultimo: number;
     fecha_actualizacion: number;
+}
+
+/** Journal de commit LOCAL, nunca un recibo ni cola habilitada de negocio remoto.
+ * Se conserva con los hechos; sin backfill ni atribución de operaciones legacy. */
+export interface OperacionLocal {
+    id: string;
+    negocio_id: string;
+    operation_id: string;
+    tipo: string;
+    contract_version: 1;
+    payload_hash: string;
+    estado_local: 'PREPARED' | 'COMMITTED' | 'ABANDONED';
+    estado_remoto: 'NOT_ENABLED';
+    fecha_origen: number;
+    resultado: unknown;
 }
 
 export interface ProductoLocal {
@@ -35,12 +59,20 @@ export interface ProductoLocal {
     eliminado?: boolean;
     estado_sincronizacion?: 0 | 1;
     fecha_actualizacion?: number;
+    /** Metadata local opcional; no convierte la proyección en autoridad remota. */
+    inventory_sync_protocol_version?: 2;
+    inventory_last_local_operation_id?: string;
+    /** Local projections only; neither a remote receipt nor an APPLIED flag. */
+    inventory_stock_by_scope?: Record<string, number>;
+    inventory_bootstrap?: { sucursalId: string | null; state: 'PENDING' | 'READY' | 'BLOCKED'; code?: InventoryOutcomeCode };
 }
 
 export interface VentaLocal {
     id: string;
     negocio_id: string;
     sucursal_id?: string;
+    /** Solo vínculo local explícito. El worker legacy no envía este campo todavía. */
+    caja_id?: string;
     numero_ticket?: number; // Secuencial por caja (ver caja_codigo)
     caja_codigo?: string;   // Código de la caja que emitió (ej: "C7K") — evita tickets duplicados entre cajas
     ncf?: string;           // Comprobante Fiscal (ej: B0200000001)
@@ -74,6 +106,9 @@ export interface CorteCajaLocal {
     // transferencia ya los incluyen; estos son los subtotales para el desglose.
     ingreso_reparaciones?: number;
     ingreso_apartados?: number;
+    ingreso_abonos_fiado?: number;
+    /** Evidencia local del snapshot; no modifica el contrato remoto legacy. */
+    limites_locales?: string[];
     // Solo Z: datos del conteo físico
     monto_apertura?: number;
     monto_esperado?: number;
@@ -86,6 +121,9 @@ export interface DevolucionLocal {
     id: string;
     negocio_id: string;
     venta_id: string;
+    sucursal_id?: string;
+    caja_id?: string;
+    serial_ids_devueltos?: string[];
     items_devueltos: { producto_id: string; cantidad: number; precio_unitario: number }[];
     monto_devuelto: number;
     razon: string;
@@ -97,6 +135,8 @@ export interface VentaDetalleLocal {
     id: string;
     venta_id: string;
     producto_id: string;
+    /** Línea sin inventario: referencia LOCAL = id del detalle; remoto producto_id=null. */
+    sin_stock?: true;
     negocio_id: string;
     sucursal_id?: string;
     nombre?: string;         // nombre del producto al momento de la venta (sobrevive a borrados y venta libre)
@@ -123,6 +163,8 @@ export interface ClienteLocal {
     nombre: string;
     telefono: string | null;
     limite_credito: number; // 0 significa sin límite
+    /** Authoritative opening offset, never a synthetic debt/cash transaction. */
+    shared_balance_offset_cents?: string;
     tipo_precio?: 1 | 2 | 3; // Tier de precio asignado (1 = menudeo, 2 = mayoreo, 3 = especial)
     al_por_mayor?: boolean;  // Indicador visual de cliente mayorista
     eliminado?: boolean;     // Borrado suave (se oculta; se conserva para historial)
@@ -133,7 +175,10 @@ export interface ClienteLocal {
 export interface TransaccionFiadoLocal {
     id: string;
     negocio_id: string;
-    sucursal_id?: string;
+    // null = GLOBAL explícito; undefined = contexto legacy desconocido.
+    sucursal_id?: string | null;
+    caja_id?: string | null;
+    metodo_pago?: 'efectivo' | 'tarjeta' | 'transferencia' | null;
     cliente_id: string;
     venta_id: string | null;
     tipo: 'cargo' | 'abono';
@@ -167,7 +212,7 @@ export interface SerialLocal {
     negocio_id: string;
     producto_id: string;
     numero_serial: string;           // IMEI, serie, código único
-    estado: 'disponible' | 'vendido' | 'apartado';
+    estado: 'disponible' | 'vendido' | 'apartado' | 'merma';
     venta_id?: string | null;        // Venta en la que se vendió
     fecha_venta?: number | null;
     // Garantía (Plan Pro) — se fija al vender. Denormalizamos algunos datos para
@@ -197,6 +242,7 @@ export type MetodoPagoReparacion = 'efectivo' | 'tarjeta' | 'transferencia';
 
 /** Un pago de una reparación (abono parcial, saldo final o cargo de revisión). */
 export interface PagoReparacion {
+    caja_id?: string; // vínculo explícito nuevo; ausente en historia legacy
     monto: number;
     metodo: MetodoPagoReparacion;
     fecha: number;
@@ -264,6 +310,7 @@ export interface ReparacionLocal {
 
 // ─── Apartados (Plan Pro — layaway / plan separe) ─────────────────────────────
 export interface AbonoApartado {
+    caja_id?: string; // vínculo explícito nuevo; ausente en historia legacy
     monto: number;
     metodo: MetodoPagoReparacion;   // efectivo | tarjeta | transferencia
     fecha: number;
@@ -306,13 +353,37 @@ export interface MovimientoStockLocal {
     negocio_id: string;
     sucursal_id?: string;
     producto_id: string;
+    /** V2 exige integer int4-safe; filas legacy pueden conservar valores incompatibles sin convertirse. */
     delta: number;             // negativo = salida (venta/merma), positivo = entrada
+    /** V2 exige integer int4-safe y expected_remote_sequence. */
     valor_absoluto?: number;   // solo para conteos físicos (establece el stock exacto)
     tipo: 'venta' | 'devolucion' | 'entrada' | 'merma' | 'conteo' | 'importacion' | 'reparacion' | 'apartado';
     referencia_id?: string;    // venta_id / devolucion_id que lo originó
     fecha_creacion: number;
     estado_sincronizacion: 0 | 1;
+    sync_protocol_version?: 2;
+    sync_state?: InventorySyncState;
+    payload_hash?: string;
+    /** Identificador técnico de dispositivo. Nunca nombre, correo o teléfono. */
+    origin_device_id?: string;
+    /** Entero >= 0; validado por el repositorio antes de persistir. */
+    attempt_count?: number;
+    last_attempt_at?: number;
+    next_attempt_at?: number;
+    /** Código de allowlist; nunca mensaje/respuesta cruda. */
+    last_outcome_code?: InventoryOutcomeCode;
+    error_class?: InventoryErrorClass;
+    claim_id?: string;
+    lease_until?: number;
+    /** Obligatorio cuando sync_state=APPLIED. */
+    remote_receipt?: RemoteInventoryReceipt;
+    conflict?: InventoryConflictEvidence;
+    sync_updated_at?: number;
+    /** Obligatorio para valor_absoluto/conteo v2. */
+    expected_remote_sequence?: string;
 }
+
+export type InventarioSyncCursorLocal = InventoryFeedCursor;
 
 export type GastoCategoria = 'mercancia' | 'servicios' | 'alquiler' | 'sueldos' | 'transporte' | 'otro';
 
@@ -320,6 +391,7 @@ export interface GastoLocal {
     id: string;
     negocio_id: string;
     sucursal_id?: string;
+    caja_id?: string;
     categoria: GastoCategoria;
     descripcion: string;
     monto: number;

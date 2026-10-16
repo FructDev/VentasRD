@@ -1,9 +1,10 @@
 import { create, StateCreator } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { User } from '@supabase/supabase-js';
-import { firmarAcceso } from '@/lib/firmaAcceso';
+import { firmarAcceso, verificarFirmaAcceso } from '@/lib/firmaAcceso';
+import {sharedTicketPrefix} from '@/lib/sync/shared-device';
 
-/** Bloque de números NCF reservado para este dispositivo (emisión offline segura) */
+/** Bloque legacy sin procedencia/tenant verificables. Se conserva, no se consume. */
 export interface NcfBloque {
     desde: number;
     hasta: number;
@@ -11,11 +12,12 @@ export interface NcfBloque {
 }
 
 interface NcfConfig {
+    negocioId?: string; // ámbito del último espejo central verificado; ausente en legacy
     habilitado: boolean;
     tipo: 'B02' | 'B01'; // B02 = consumidor final, B01 = crédito fiscal
     desde: number;       // Inicio del rango autorizado (espejo de la nube)
     hasta: number;       // Fin del rango autorizado
-    actual: number;      // LEGADO: último emitido local (solo para sembrar la nube una vez)
+    actual: number;      // LEGADO: no sembrar ni reiniciar secuencia con este valor
     // Secuencia centralizada (Fase 2): la nube asigna bloques a cada dispositivo
     bloques: NcfBloque[];     // bloques reservados para esta caja
     proximoGlobal: number;    // siguiente sin asignar en la nube (informativo)
@@ -66,6 +68,8 @@ interface ConfigState {
     sucursalId: string | null;
     isOnline: boolean;
     user: User | null;
+    /** Usuario para el que se valido el negocio cacheado en este dispositivo. */
+    usuarioCacheId: string | null;
     pinAdmin: string | null;
     // Rol del usuario autenticado en este negocio
     rolUsuario: RolUsuario;
@@ -85,11 +89,13 @@ interface ConfigState {
     trialHasta: number | null; // timestamp ms (legado)
     accesoHasta: number | null; // hasta cuándo es válido el acceso (trial o pago). Vence solo.
     ultimaFechaVista: number;   // marca de agua anti-retroceso de reloj (máx tiempo real visto)
+    ultimaConexionServidor: number;
     // Aperturas de la app sin contacto exitoso con el servidor. No depende del
     // reloj: cierra el truco de congelar la fecha del dispositivo para no vencer.
     aperturasSinServidor: number;
     registrarApertura: () => void;
     resetAperturasServidor: () => void;
+    registrarConexionExitosa: () => void;
     // NCF / Comprobantes Fiscales
     ncf: NcfConfig;
     // Ajustes de impresión (por dispositivo)
@@ -136,7 +142,7 @@ interface ConfigState {
     setAdminMode: (status: boolean) => void;
     showToast: (message: string, type?: 'success' | 'error' | 'info') => void;
     setNcfConfig: (config: Partial<NcfConfig>) => void;
-    /** Consume el siguiente NCF disponible. Devuelve el string formateado o null si está deshabilitado/agotado. */
+    /** @deprecated No asignar NCF fuera del checkout Dexie transaccional. */
     consumirNcf: () => string | null;
     cerrarSesionUsuario: () => void;
     desconectarDispositivo: () => void;
@@ -150,6 +156,7 @@ const configCreator: StateCreator<ConfigState> = (set) => ({
             sucursalId: null,
             isOnline: typeof window !== 'undefined' ? navigator.onLine : true,
             user: null,
+            usuarioCacheId: null,
             pinAdmin: null,
             rolUsuario: 'admin',
             nombreUsuario: null,
@@ -167,6 +174,7 @@ const configCreator: StateCreator<ConfigState> = (set) => ({
             trialHasta: null,
             accesoHasta: null,
             ultimaFechaVista: 0,
+            ultimaConexionServidor: 0,
             aperturasSinServidor: 0,
             ncf: NCF_DEFAULT,
             impresion: IMPRESION_DEFAULT,
@@ -182,6 +190,7 @@ const configCreator: StateCreator<ConfigState> = (set) => ({
             marcarTiempoVisto: () => set(s => ({ ultimaFechaVista: Math.max(s.ultimaFechaVista, Date.now()) })),
             registrarApertura: () => set(s => ({ aperturasSinServidor: s.aperturasSinServidor + 1 })),
             resetAperturasServidor: () => set({ aperturasSinServidor: 0 }),
+            registrarConexionExitosa: () => set({ ultimaConexionServidor: Date.now() }),
 
             setNcfConfig: (config) => set(state => ({ ncf: { ...state.ncf, ...config } })),
             setImpresion: (config) => set(state => ({ impresion: { ...state.impresion, ...config } })),
@@ -194,38 +203,9 @@ const configCreator: StateCreator<ConfigState> = (set) => ({
             setCobrarRepuestosAparte: (v) => set({ cobrarRepuestosAparte: v }),
 
             consumirNcf: () => {
-                const state = useConfigStore.getState();
-                const { habilitado, tipo, desde, hasta, actual, bloques, sembrado } = state.ncf;
-                if (!habilitado) return null;
-
-                // Consumir del primer bloque reservado con números disponibles
-                for (let i = 0; i < bloques.length; i++) {
-                    const b = bloques[i];
-                    if (b.proximo <= b.hasta) {
-                        const num = b.proximo;
-                        useConfigStore.setState(s => ({
-                            ncf: {
-                                ...s.ncf,
-                                bloques: s.ncf.bloques
-                                    .map((x, j) => j === i ? { ...x, proximo: x.proximo + 1 } : x)
-                                    // descartar bloques ya agotados
-                                    .filter(x => x.proximo <= x.hasta),
-                            },
-                        }));
-                        return `${tipo}${String(num).padStart(8, '0')}`;
-                    }
-                }
-
-                // LEGADO: dispositivo que aún no migró su secuencia a la nube
-                // (sigue funcionando igual que antes hasta el primer sync online)
-                if (!sembrado) {
-                    const siguiente = actual === 0 ? desde : actual + 1;
-                    if (siguiente > hasta) return null;
-                    useConfigStore.setState(s => ({ ncf: { ...s.ncf, actual: siguiente } }));
-                    return `${tipo}${String(siguiente).padStart(8, '0')}`;
-                }
-
-                return null; // sin bloques disponibles — requiere internet para reservar más
+                // Preservar los datos antiguos. No fabricar procedencia ni consumir
+                // antes de que el número y el checkout se confirmen juntos en Dexie.
+                return null;
             },
 
             setRol: (rol, nombre) => set({ rolUsuario: rol, nombreUsuario: nombre ?? null }),
@@ -240,9 +220,18 @@ const configCreator: StateCreator<ConfigState> = (set) => ({
                 setTimeout(() => set({ toast: null }), 4000);
             },
 
-            setAuth: (user, negocioId, negocioNombre, pinAdmin, whatsapp, rnc, direccion, mensaje, telefono, logo) => set({
+            setAuth: (user, negocioId, negocioNombre, pinAdmin, whatsapp, rnc, direccion, mensaje, telefono, logo) => set(state => ({
                 user,
+                usuarioCacheId: user?.id ?? null,
                 negocioId: negocioId || null,
+                // Notify the worker/UI once: never publish a new tenant with
+                // the previous tenant's branch. Preserve all underlying data.
+                ...(state.negocioId !== (negocioId || null) ? { sucursalId: null } : {}),
+                // A refresh of the same identity must retain offline context;
+                // a different identity must earn its own role/PIN unlock.
+                ...(state.negocioId !== (negocioId || null) || state.usuarioCacheId !== (user?.id ?? null)
+                    ? { isAdminMode: false, isOfflineUnlocked: false, rolUsuario: 'cajero' as const, nombreUsuario: null }
+                    : {}),
                 negocioNombre: negocioNombre || null,
                 pinAdmin: pinAdmin || null,
                 negocioWhatsapp: whatsapp || null,
@@ -251,7 +240,7 @@ const configCreator: StateCreator<ConfigState> = (set) => ({
                 negocioDireccion: direccion || null,
                 negocioMensajeTicket: mensaje || null,
                 negocioLogo: logo || null
-            }),
+            })),
 
             setLogo: (logo) => set({ negocioLogo: logo }),
             setPinAdmin: (pin) => set({ pinAdmin: pin }),
@@ -259,11 +248,14 @@ const configCreator: StateCreator<ConfigState> = (set) => ({
             // Cerrar sesión del usuario (no borra el negocio)
             cerrarSesionUsuario: () => set({
                 user: null,
+                isAdminMode: false,
+                isOfflineUnlocked: false,
             }),
 
             // Desconectar el negocio del dispositivo (acción destructiva)
             desconectarDispositivo: () => set({
                 user: null,
+                usuarioCacheId: null,
                 negocioId: null,
                 negocioNombre: null,
                 sucursalId: null,
@@ -287,6 +279,9 @@ const configCreator: StateCreator<ConfigState> = (set) => ({
  * nunca generen el mismo número, incluso offline.
  */
 export function getDispositivoId(): string {
+    const state=useConfigStore.getState();
+    const shared=sharedTicketPrefix(state.negocioId,state.user?.id??state.usuarioCacheId,state.sucursalId);
+    if(shared)return shared;
     const actual = useConfigStore.getState().dispositivoId;
     if (actual) return actual;
     const chars = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // sin caracteres ambiguos (0/O, 1/I/L)
@@ -303,6 +298,7 @@ export const useConfigStore = create<ConfigState>()(
             dispositivoId: state.dispositivoId,
             ultimoTicket: state.ultimoTicket,
             negocioId: state.negocioId,
+            usuarioCacheId: state.usuarioCacheId,
             negocioNombre: state.negocioNombre,
             sucursalId: state.sucursalId,
             pinAdmin: state.pinAdmin,
@@ -319,6 +315,7 @@ export const useConfigStore = create<ConfigState>()(
             trialHasta: state.trialHasta,
             accesoHasta: state.accesoHasta,
             ultimaFechaVista: state.ultimaFechaVista,
+            ultimaConexionServidor: state.ultimaConexionServidor,
             aperturasSinServidor: state.aperturasSinServidor,
             // Firma de integridad de los campos de acceso (anti-edición manual)
             firmaAcc: firmarAcceso({
@@ -327,6 +324,7 @@ export const useConfigStore = create<ConfigState>()(
                 trialHasta: state.trialHasta,
                 planActivo: state.planActivo,
                 ultimaFechaVista: state.ultimaFechaVista,
+            ultimaConexionServidor: state.ultimaConexionServidor,
                 aperturasSinServidor: state.aperturasSinServidor,
             }),
             ncf: state.ncf,
@@ -349,15 +347,16 @@ export const useConfigStore = create<ConfigState>()(
             // versión anterior), se acepta una vez y se firma en el próximo guardado.
             let acceso: Partial<ConfigState> = {};
             if (p.firmaAcc !== undefined) {
-                const esperada = firmarAcceso({
+                const valida = verificarFirmaAcceso({
                     negocioId: p.negocioId ?? null,
                     accesoHasta: p.accesoHasta ?? null,
                     trialHasta: p.trialHasta ?? null,
                     planActivo: p.planActivo ?? false,
                     ultimaFechaVista: p.ultimaFechaVista ?? 0,
+                    ultimaConexionServidor: p.ultimaConexionServidor,
                     aperturasSinServidor: p.aperturasSinServidor ?? 0,
-                });
-                if (p.firmaAcc !== esperada) {
+                }, p.firmaAcc);
+                if (!valida) {
                     acceso = { planActivo: false, accesoHasta: null, trialHasta: null };
                 }
             }

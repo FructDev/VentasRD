@@ -1,11 +1,11 @@
 // src/components/TicketVenta.tsx
 import { forwardRef, Fragment } from 'react';
-import { CartItem } from '@/store/useCartStore';
+import type { ComprobanteItem } from '@/lib/domain/ventas/checkoutLocal';
 import { useConfigStore } from '@/store/useConfigStore';
 import { formatTicket } from '@/lib/utils';
 
 interface TicketProps {
-    items: CartItem[];
+    items: ComprobanteItem[];
     subtotal: number;
     itbis: number;
     descuento?: number;
@@ -24,16 +24,17 @@ interface TicketProps {
     vendedor?: string; // Nombre de quien atendió la venta
     cajaCodigo?: string; // Prefijo de la caja emisora (ej: "C7K")
     clienteNombre?: string; // Cliente de la venta (clave para pedidos por delivery)
+    fechaVenta?: number; // Reimpresión: fecha del hecho persistido, no la del reloj actual.
 }
 
 export const TicketVenta = forwardRef<HTMLDivElement, TicketProps>(({
     items, subtotal, itbis, descuento = 0, total, metodoPago, montoRecibido, devuelta,
     nombreNegocio = 'Mi Negocio', rnc, direccion = 'Ciudad, RD', telefono = '809-000-0000',
-    numeroTicket, mensajePie, ncf, logoUrl, vendedor, cajaCodigo, clienteNombre
+    numeroTicket, mensajePie, ncf, logoUrl, vendedor, cajaCodigo, clienteNombre, fechaVenta
 }, ref) => {
     const { impresion } = useConfigStore();
 
-    const fechaActual = new Date().toLocaleString('es-DO');
+    const fechaActual = (fechaVenta === undefined ? new Date() : new Date(fechaVenta)).toLocaleString('es-DO');
     const ticketNum = formatTicket(numeroTicket, cajaCodigo);
 
     const es58 = impresion.anchoPapel === '58mm';

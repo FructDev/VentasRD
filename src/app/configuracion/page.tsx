@@ -6,16 +6,29 @@ import { useConfigStore } from '@/store/useConfigStore';
 import TopBar from '@/components/shared/TopBar';
 import PinGuard from '@/components/ui/PinGuard';
 import WebMigrationExport from '@/components/settings/WebMigrationExport';
+import SharedBusinessSync from '@/components/settings/SharedBusinessSync';
+import {sharedWebEnabled} from '@/lib/sync/shared-worker';
+import {queueSharedConfiguration} from '@/lib/sync/shared-configuration';
+import {getSharedCaptureContext} from '@/lib/sync/shared-capture';
+import {sharedRemote} from '@/lib/sync/shared-remote';
 import EstadoSistema from '@/components/shared/EstadoSistema';
 import { AlertTriangle } from 'lucide-react';
+import { db } from '@/lib/db/dexie';
+import { useLiveQuery } from 'dexie-react-hooks';
+import { estadoNcfLocal, abandonarSolicitudNcf } from '@/lib/domain/ventas/ncfLocal';
+import { localCommandError } from '@/lib/domain/local/errors';
+import ConfirmModal from '@/components/ui/ConfirmModal';
 
-import { comprimirImagen } from '@/lib/imagen';
+import { comprimirImagen,comprimirImagenCompartida } from '@/lib/imagen';
 import { PALETAS, FUENTES } from '@/lib/marca';
 
 export default function ConfiguracionPage() {
     const { negocioId, showToast, negocioNombre, negocioWhatsapp, negocioTelefono, negocioRnc, negocioDireccion, negocioMensajeTicket, negocioLogo, setAuth, user, pinAdmin, isOnline, ncf, setNcfConfig, impresion, setImpresion, colorMarca, setColorMarca, fuenteMarca, setFuenteMarca, catalogoPublico, setCatalogoPublico, datosPago, setDatosPago } = useConfigStore();
 
     const [loading, setLoading] = useState(false);
+    const ncfLocal = useLiveQuery(async () => negocioId ? estadoNcfLocal(db, negocioId, ncf.tipo) : undefined, [negocioId, ncf.tipo]);
+    const [abandonarNcf, setAbandonarNcf] = useState<{ negocioId: string; requestId: string } | null>(null);
+    const [revisandoNcf, setRevisandoNcf] = useState(false);
     const [logoData, setLogoData] = useState<string | null>(null);
     const [copiado, setCopiado] = useState(false);
     const [pago, setPago] = useState({ banco: '', cuenta: '', titular: '' });
@@ -28,6 +41,11 @@ export default function ConfiguracionPage() {
 
     const toggleCatalogo = async (activar: boolean) => {
         if (!negocioId || guardandoCat) return;
+        if(sharedWebEnabled(negocioId)){
+            setGuardandoCat(true);
+            try{const c=getSharedCaptureContext(db);if(!c)throw Error('SHARED_PREPARATION_REQUIRED');const current=await sharedRemote(supabase,process.env.NEXT_PUBLIC_SUPABASE_URL??'',negocioId).catalogue(c) as {enabled:boolean;revision:string};if(current.enabled!==activar)await queueSharedConfiguration(db,'CATALOGUE_PUBLISH',{at:String(Date.now()),expectedEnabled:current.enabled,expectedRevision:current.revision,enabled:activar});showToast('Cambio del catálogo guardado, pendiente de confirmación.','info')}
+            catch(error){showToast(localCommandError(error),'error')}finally{setGuardandoCat(false)}return;
+        }
         setGuardandoCat(true);
         const { error } = await supabase.from('negocios').update({ catalogo_publico: activar }).eq('id', negocioId);
         if (error) { showToast('No se pudo actualizar el catálogo.', 'error'); }
@@ -91,7 +109,7 @@ export default function ConfiguracionPage() {
             return;
         }
         try {
-            const dataUrl = await comprimirImagen(file);
+            const dataUrl = await (negocioId&&sharedWebEnabled(negocioId)?comprimirImagenCompartida(file):comprimirImagen(file));
             setLogoData(dataUrl);
         } catch {
             showToast('No se pudo procesar la imagen.', 'error');
@@ -104,6 +122,11 @@ export default function ConfiguracionPage() {
         setLoading(true);
 
         try {
+            if(sharedWebEnabled(negocioId)){
+                if(logoData&& !logoData.startsWith('data:image/png;base64,'))throw Error('SHARED_PHOTO_REQUIRES_PNG');
+                await queueSharedConfiguration(db,'BUSINESS_SAVE',{at:String(Date.now()),definition:{name:formData.nombre.trim(),whatsapp:formData.whatsapp_dueno.trim(),phone:formData.telefono.trim(),rnc:formData.rnc.trim(),address:formData.direccion.trim(),footer:formData.mensaje_ticket.trim(),logo:logoData||null,color:colorMarca,font:fuenteMarca,bank:pago.cuenta.trim()?{name:pago.banco.trim(),account:pago.cuenta.trim(),holder:pago.titular.trim()}:null}});
+                showToast('Datos guardados en este navegador, pendientes de confirmación.','info');setLoading(false);return;
+            }
             // Si el logo es nuevo (data URL local), subirlo a Cloudinary primero
             let logoFinal = logoData;
             if (logoData && logoData.startsWith('data:')) {
@@ -188,6 +211,7 @@ export default function ConfiguracionPage() {
                         </div>
 
                         <WebMigrationExport />
+                        <SharedBusinessSync />
                         <div className="bg-navy-2 rounded-2xl border border-navy-3 overflow-hidden shadow-2xl mt-6">
                             <form onSubmit={handleSave} className="p-4 sm:p-8 space-y-6">
                                 
@@ -509,10 +533,10 @@ export default function ConfiguracionPage() {
 
                                             {/* Estado actual */}
                                             {(() => {
-                                                const reservadosCaja = ncf.bloques.reduce((s, b) => s + Math.max(0, b.hasta - b.proximo + 1), 0);
-                                                const proximoCaja = ncf.bloques.find(b => b.proximo <= b.hasta)?.proximo ?? null;
-                                                const disponiblesNube = ncf.proximoGlobal > 0 ? Math.max(0, ncf.hasta - ncf.proximoGlobal + 1) : Math.max(0, ncf.hasta - ncf.desde + 1);
-                                                const disponiblesTotal = disponiblesNube + reservadosCaja;
+                                                const reservadosCaja = ncfLocal?.disponibles ?? 0;
+                                                const proximoCaja = ncfLocal?.proximo ?? null;
+                                                const disponiblesNube = ncf.negocioId === negocioId && ncf.proximoGlobal > 0 ? Math.max(0, ncf.hasta - ncf.proximoGlobal + 1) : null;
+                                                const disponiblesTotal = disponiblesNube === null ? null : disponiblesNube + reservadosCaja;
                                                 return (
                                                     <>
                                                         <div className="bg-navy-3/50 rounded-xl p-4 flex flex-wrap gap-6 text-sm">
@@ -529,15 +553,15 @@ export default function ConfiguracionPage() {
                                                                 <p className="text-white font-bold font-mono">{reservadosCaja}</p>
                                                             </div>
                                                             <div>
-                                                                <p className="text-vr-gray text-xs font-semibold uppercase tracking-wider mb-1">Disponibles (negocio)</p>
-                                                                <p className={`font-bold font-mono ${disponiblesTotal <= 10 ? 'text-vr-red' : 'text-vr-green'}`}>
-                                                                    {ncf.hasta > 0 ? disponiblesTotal : '—'}
+                                                                <p className="text-vr-gray text-xs font-semibold uppercase tracking-wider mb-1">Nube + este dispositivo (última lectura)</p>
+                                                                <p className="font-bold font-mono text-white">
+                                                                    {disponiblesTotal ?? 'No verificado'}
                                                                 </p>
                                                             </div>
                                                         </div>
 
                                                         {/* Alerta de stock bajo */}
-                                                        {ncf.hasta > 0 && disponiblesTotal <= 10 && (
+                                                        {ncf.hasta > 0 && disponiblesTotal !== null && disponiblesTotal <= 10 && (
                                                             <div className="flex items-start gap-2 bg-vr-red/10 border border-vr-red/20 rounded-xl p-3 text-sm text-vr-red">
                                                                 <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
                                                                 <span>Quedan pocos NCF disponibles. Solicita una nueva secuencia a la DGII antes de agotar el rango.</span>
@@ -546,6 +570,13 @@ export default function ConfiguracionPage() {
                                                     </>
                                                 );
                                             })()}
+                                            {ncf.bloques.length > 0 && <p className="text-xs text-vr-orange">Bloques anteriores conservados como legacy: no se adoptan ni consumen sin procedencia verificable.</p>}
+                                            {ncfLocal?.incierta && <div className="rounded-xl border border-vr-orange/30 p-3 text-sm text-vr-orange">
+                                                <p>Abastecimiento incierto. No se vuelve a ejecutar esa solicitud. Un rango pudo quedar asignado remotamente.</p>
+                                                <button type="button" className="mt-2 underline font-bold" onClick={() => {
+                                                    if (negocioId && ncfLocal.requestId) setAbandonarNcf({ negocioId, requestId: ncfLocal.requestId });
+                                                }}>Revisar y abandonar solicitud incierta</button>
+                                            </div>}
 
                                             <p className="text-[11px] text-vr-gray/70">
                                                 La secuencia es compartida por todas tus cajas: cada una reserva un bloque de números
@@ -847,6 +878,19 @@ export default function ConfiguracionPage() {
                     </div>
                 </div>
             </div>
+            <ConfirmModal isOpen={abandonarNcf !== null} title="Abandonar abastecimiento incierto"
+                mensaje="Revisa primero el intento. Esta acción conserva el historial y renuncia a cualquier rango de respuesta perdida: no lo recupera, no vuelve atrás la secuencia y puede dejar huecos fiscales. Luego podrá solicitarse un bloque nuevo. Nunca borres la caché para resolverlo."
+                confirmLabel="Abandonar sin reutilizar" procesando={revisandoNcf}
+                onClose={() => setAbandonarNcf(null)} onConfirm={async () => {
+                    if (!abandonarNcf || revisandoNcf) return;
+                    setRevisandoNcf(true);
+                    try {
+                        if (useConfigStore.getState().negocioId !== abandonarNcf.negocioId) throw new Error('ncf_contexto_invalido');
+                        await abandonarSolicitudNcf(db, abandonarNcf.negocioId, abandonarNcf.requestId, Date.now());
+                        setAbandonarNcf(null); showToast('Intento conservado como abandonado; ningún número se reutilizó.', 'info');
+                    } catch (error) { showToast(localCommandError(error), 'error'); }
+                    finally { setRevisandoNcf(false); }
+                }} />
         </PinGuard>
     );
 }

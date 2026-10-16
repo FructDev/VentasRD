@@ -467,6 +467,7 @@ impl AccessState {
         let r = c
             .post(format!("{HOST}/rest/v1/rpc/{function}"))
             .header("apikey", &n.config.publishable_key)
+            .header("x-ventard-journal", "stock-merge-1")
             .bearer_auth(&*n.token)
             .json(&body)
             .send()

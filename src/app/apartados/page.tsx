@@ -1,13 +1,15 @@
 // src/app/apartados/page.tsx
 'use client';
+import SharedDepositRefund from '@/components/shared/SharedDepositRefund';
 
 import { useMemo, useState, useRef } from 'react';
-import { db, getNextFolioApartado } from '@/lib/db/dexie';
-import { registrarMovimientoStock } from '@/lib/db/stock';
-import { useConfigStore } from '@/store/useConfigStore';
+import { db } from '@/lib/db/dexie';
+import { commitServicioLocal } from '@/lib/domain/local/servicios';
+import { localCommandError } from '@/lib/domain/local/errors';
+import { useConfigStore, getDispositivoId } from '@/store/useConfigStore';
 import { useProductosTenant } from '@/lib/db/tenantQuery';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { ApartadoLocal, ItemApartado, MetodoPagoReparacion, AbonoApartado } from '@/types/database';
+import { ApartadoLocal, ItemApartado, MetodoPagoReparacion, AbonoApartado, ClienteLocal } from '@/types/database';
 import { formatDOP } from '@/lib/utils';
 import { linkWhatsApp } from '@/lib/whatsapp';
 import { v4 as uuidv4 } from 'uuid';
@@ -21,7 +23,6 @@ import ConfirmModal from '@/components/ui/ConfirmModal';
 import ClientePicker from '@/components/shared/ClientePicker';
 import { SkeletonTable } from '@/components/ui/Skeleton';
 
-const DIA = 24 * 60 * 60 * 1000;
 const WHATSAPP_NUMBER_SOPORTE = '18294515303';
 const METODOS: MetodoPagoReparacion[] = ['efectivo', 'tarjeta', 'transferencia'];
 
@@ -38,7 +39,10 @@ const FORM_VACIO = {
 
 export default function ApartadosPage() {
     const { negocioId, sucursalId, planTier, garantiaDiasDefault, showToast, negocioNombre, negocioRnc, negocioDireccion, negocioTelefono } = useConfigStore();
-    const { ocupado, conCandado } = useCandado();
+    const { ocupado, conCandado: locked } = useCandado();
+    const conCandado = <A extends unknown[],>(fn: (...args: A) => Promise<void> | void) => locked(async (...args: A) => {
+        try { await fn(...args); } catch (error) { showToast(localCommandError(error), 'error'); }
+    });
     const productos = useProductosTenant();
 
     const apartadosRaw = useLiveQuery(
@@ -80,8 +84,8 @@ export default function ApartadosPage() {
     // Seriales disponibles del producto a apartar
     const serialesModal = useLiveQuery(async () => {
         if (!productoParaSerial) return [];
-        return db.seriales.where('producto_id').equals(productoParaSerial.id).filter(s => s.estado === 'disponible').toArray();
-    }, [productoParaSerial]) ?? [];
+        return db.seriales.where('producto_id').equals(productoParaSerial.id).filter(s => s.negocio_id === negocioId && s.estado === 'disponible').toArray();
+    }, [productoParaSerial, negocioId]) ?? [];
 
     const totalForm = useMemo(() => formData.items.reduce((s, it) => s + it.precio_unitario * it.cantidad, 0), [formData.items]);
 
@@ -168,14 +172,17 @@ export default function ApartadosPage() {
         setGuardando(true);
         try {
             const id = uuidv4();
+            // Evento de submit, nunca render: timestamp del comando confirmado.
+            // eslint-disable-next-line react-hooks/purity
             const ahora = Date.now();
-            const folio = await getNextFolioApartado(negocioId);
+            const folio = ''; // El UnitOfWork reserva el folio bajo lock.
 
             // Cliente: si es nuevo y se pidió guardar, crearlo y enlazarlo
             let clienteId = formData.cliente_id;
+            let clienteNuevo: ClienteLocal | undefined;
             if (!clienteId && formData.guardar_cliente && formData.cliente_nombre.trim()) {
                 clienteId = uuidv4();
-                await db.clientes.add({
+                clienteNuevo = {
                     id: clienteId,
                     negocio_id: negocioId,
                     nombre: formData.cliente_nombre.trim(),
@@ -183,7 +190,7 @@ export default function ApartadosPage() {
                     limite_credito: 0,
                     estado_sincronizacion: 0,
                     fecha_actualizacion: ahora,
-                });
+                };
             }
 
             const total = formData.items.reduce((s, it) => s + it.precio_unitario * it.cantidad, 0);
@@ -191,14 +198,6 @@ export default function ApartadosPage() {
             const abonos: AbonoApartado[] = abonoInicial > 0
                 ? [{ monto: abonoInicial, metodo: formData.metodo_abono, fecha: ahora }]
                 : [];
-
-            // Reservar: descontar stock y marcar seriales como apartados
-            for (const it of formData.items) {
-                await registrarMovimientoStock({ productoId: it.producto_id, tipo: 'apartado', delta: -Math.abs(it.cantidad), referenciaId: id });
-                if (it.serial_id) {
-                    await db.seriales.update(it.serial_id, { estado: 'apartado', estado_sincronizacion: 0, fecha_actualizacion: ahora });
-                }
-            }
 
             const ap: ApartadoLocal = {
                 id, negocio_id: negocioId, sucursal_id: sucursalId || undefined,
@@ -216,13 +215,16 @@ export default function ApartadosPage() {
                 estado_sincronizacion: 0,
                 fecha_actualizacion: ahora,
             };
-            await db.apartados.put(ap);
+            const { documento } = await commitServicioLocal(db, { operationId: id, negocioId,
+                sucursalId: sucursalId || undefined, originDeviceId: getDispositivoId(), fecha: ahora,
+                tipo: 'APARTADO', accion: 'GUARDAR', documento: ap, clienteNuevo });
+            const confirmado = documento as ApartadoLocal;
             setIsModalOpen(false);
-            showToast(`Apartado ${folio} creado.`, 'success');
-            setTimeout(() => imprimir(ap, 'contrato'), 150);
+            showToast(`Apartado ${confirmado.folio} creado.`, 'success');
+            setTimeout(() => imprimir(confirmado, 'contrato'), 150);
         } catch (err) {
             console.error('[apartado]', err);
-            showToast('No se pudo crear el apartado.', 'error');
+            showToast(localCommandError(err), 'error');
         }
         setGuardando(false);
     };
@@ -231,11 +233,16 @@ export default function ApartadosPage() {
         if (!abonando) return;
         const monto = parseFloat(montoAbono) || 0;
         if (monto <= 0) { showToast('Ingresa un monto válido.', 'error'); return; }
+        // Evento de abono; el reloj no se evalúa al renderizar.
+        // eslint-disable-next-line react-hooks/purity
         const ahora = Date.now();
         const nuevosAbonos = [...abonando.abonos, { monto, metodo: metodoAbono, fecha: ahora }];
         const abonado = abonando.abonado + monto;
-        await db.apartados.update(abonando.id, { abonos: nuevosAbonos, abonado, estado_sincronizacion: 0, fecha_actualizacion: ahora });
-        const actualizado: ApartadoLocal = { ...abonando, abonos: nuevosAbonos, abonado };
+        const { documento } = await commitServicioLocal(db, { operationId: uuidv4(), negocioId: negocioId!,
+            sucursalId: sucursalId || undefined, originDeviceId: getDispositivoId(), fecha: ahora,
+            tipo: 'APARTADO', accion: 'GUARDAR', previo: abonando,
+            documento: { ...abonando, abonos: nuevosAbonos, abonado } });
+        const actualizado = documento as ApartadoLocal;
         setAbonando(null);
         setMontoAbono('');
         showToast('Abono registrado.', 'success');
@@ -244,6 +251,8 @@ export default function ApartadosPage() {
 
     const confirmarCompletar = async () => {
         if (!completando) return;
+        // Callback de clic protegido por candado; no se ejecuta durante render.
+        // eslint-disable-next-line react-hooks/purity
         const ahora = Date.now();
         const saldo = Math.max(0, completando.total - completando.abonado);
         const abonos = [...completando.abonos];
@@ -252,24 +261,11 @@ export default function ApartadosPage() {
             abonos.push({ monto: saldo, metodo: metodoFinal, fecha: ahora });
             abonado += saldo;
         }
-        // Marcar seriales como vendidos + garantía (Pro)
-        const dias = garantiaDiasDefault || 0;
-        for (const it of completando.items) {
-            if (it.serial_id) {
-                await db.seriales.update(it.serial_id, {
-                    estado: 'vendido',
-                    fecha_venta: ahora,
-                    garantia_dias: dias,
-                    garantia_hasta: dias > 0 ? ahora + dias * DIA : null,
-                    precio_venta: it.precio_unitario,
-                    cliente_nombre: completando.cliente_nombre,
-                    estado_sincronizacion: 0,
-                    fecha_actualizacion: ahora,
-                });
-            }
-        }
-        await db.apartados.update(completando.id, { estado: 'completado', abonos, abonado, fecha_completado: ahora, estado_sincronizacion: 0, fecha_actualizacion: ahora });
-        const actualizado: ApartadoLocal = { ...completando, estado: 'completado', abonos, abonado, fecha_completado: ahora };
+        const { documento } = await commitServicioLocal(db, { operationId: uuidv4(), negocioId: negocioId!,
+            sucursalId: sucursalId || undefined, originDeviceId: getDispositivoId(), fecha: ahora,
+            tipo: 'APARTADO', accion: 'COMPLETAR', previo: completando, garantiaDias: garantiaDiasDefault || 0,
+            documento: { ...completando, estado: 'completado', abonos, abonado, fecha_completado: ahora } });
+        const actualizado = documento as ApartadoLocal;
         setCompletando(null);
         showToast('Apartado entregado.', 'success');
         setTimeout(() => imprimir(actualizado, 'entrega'), 150);
@@ -277,15 +273,13 @@ export default function ApartadosPage() {
 
     const confirmarCancelar = async () => {
         if (!cancelando) return;
+        // Callback de confirmación; timestamp capturado al ejecutar el comando.
+        // eslint-disable-next-line react-hooks/purity
         const ahora = Date.now();
-        // Devolver stock y liberar seriales
-        for (const it of cancelando.items) {
-            await registrarMovimientoStock({ productoId: it.producto_id, tipo: 'devolucion', delta: Math.abs(it.cantidad), referenciaId: cancelando.id });
-            if (it.serial_id) {
-                await db.seriales.update(it.serial_id, { estado: 'disponible', estado_sincronizacion: 0, fecha_actualizacion: ahora });
-            }
-        }
-        await db.apartados.update(cancelando.id, { estado: 'cancelado', fecha_cancelado: ahora, estado_sincronizacion: 0, fecha_actualizacion: ahora });
+        await commitServicioLocal(db, { operationId: uuidv4(), negocioId: negocioId!,
+            sucursalId: sucursalId || undefined, originDeviceId: getDispositivoId(), fecha: ahora,
+            tipo: 'APARTADO', accion: 'CANCELAR', previo: cancelando,
+            documento: { ...cancelando, estado: 'cancelado', fecha_cancelado: ahora } });
         setCancelando(null);
         showToast('Apartado cancelado. El stock volvió al inventario.', 'info');
     };
@@ -393,6 +387,7 @@ export default function ApartadosPage() {
                                                     </div>
                                                 )}
                                                 {/* Acciones */}
+                                                <SharedDepositRefund family="layaway" id={a.id}/>
                                                 <div className="flex items-center gap-2 flex-wrap mt-3">
                                                     {activo && (
                                                         <>
@@ -564,7 +559,7 @@ export default function ApartadosPage() {
                                             <p className="text-[11px] text-vr-gray">Al entregar, los equipos con número de serie quedan vendidos con su garantía.</p>
                                             <div className="flex gap-3">
                                                 <button type="button" onClick={() => setCompletando(null)} className="flex-1 py-3 font-bold text-vr-gray hover:text-white border border-navy-3 rounded-xl transition-colors">Cancelar</button>
-                                                <button type="button" onClick={confirmarCompletar} className="flex-1 py-3 bg-gold-gradient text-navy font-extrabold rounded-xl hover:brightness-110 transition-all">{saldo > 0 ? 'Cobrar y entregar' : 'Entregar'}</button>
+                                                <button type="button" onClick={conCandado(confirmarCompletar)} disabled={ocupado} className="flex-1 py-3 bg-gold-gradient text-navy font-extrabold rounded-xl hover:brightness-110 transition-all">{saldo > 0 ? 'Cobrar y entregar' : 'Entregar'}</button>
                                             </div>
                                         </>
                                     );
@@ -595,7 +590,7 @@ export default function ApartadosPage() {
                 title="Cancelar apartado"
                 mensaje={<>¿Cancelar el apartado <span className="font-bold text-white">{cancelando?.folio}</span>? Los artículos vuelven al inventario. Los abonos quedan registrados.</>}
                 confirmLabel="Sí, cancelar"
-                onConfirm={confirmarCancelar}
+                onConfirm={conCandado(confirmarCancelar)}
                 onClose={() => setCancelando(null)}
             />
         </PinGuard>

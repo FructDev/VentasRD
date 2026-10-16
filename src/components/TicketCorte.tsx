@@ -126,9 +126,15 @@ export const TicketCorte = forwardRef<HTMLDivElement, TicketCorteProps>(({
                     <span>RD$ {fmtDOP(corte.ingreso_apartados ?? 0)}</span>
                 </div>
             )}
+            {(corte.ingreso_abonos_fiado ?? 0) > 0 && (
+                <div className="flex justify-between text-xs mb-0.5">
+                    <span>Abonos fiado (no son ventas nuevas)</span>
+                    <span>RD$ {fmtDOP(corte.ingreso_abonos_fiado ?? 0)}</span>
+                </div>
+            )}
             <div className="flex justify-between font-bold text-sm mb-0.5 border-t border-dashed border-black pt-1">
                 <span>TOTAL INGRESOS</span>
-                <span>RD$ {fmtDOP(corte.total_ventas + (corte.ingreso_reparaciones ?? 0) + (corte.ingreso_apartados ?? 0))}</span>
+                <span>RD$ {fmtDOP(corte.total_ventas + (corte.ingreso_reparaciones ?? 0) + (corte.ingreso_apartados ?? 0) + (corte.ingreso_abonos_fiado ?? 0))}</span>
             </div>
             <div className="flex justify-between text-xs text-gray-600 mb-3">
                 <span>Transacciones (ventas)</span>

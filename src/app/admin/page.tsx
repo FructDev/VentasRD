@@ -13,11 +13,33 @@ import { db } from '@/lib/db/dexie';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { formatDOP, hashPin } from '@/lib/utils';
 import TopBar from '@/components/shared/TopBar';
+import {sharedWebEnabled} from '@/lib/sync/shared-worker';
 import OfflineBanner from '@/components/shared/OfflineBanner';
 
 export default function AdminDashboard() {
     const { negocioId, negocioNombre, sucursalId, user, isOnline, planTier, setSucursal, setAuth, setPinAdmin, showToast, cerrarSesionUsuario, desconectarDispositivo } = useConfigStore();
     const router = useRouter();
+    const compartido = !!negocioId && sharedWebEnabled(negocioId);
+    const resumenCompartido = useLiveQuery(async () => {
+        if (!compartido || !negocioId) return null;
+        const scope = (r: { sucursal_id?: string | null }) => (r.sucursal_id ?? null) === (sucursalId ?? null);
+        const [sales, products, details] = await Promise.all([
+            db.ventas.where('negocio_id').equals(negocioId).filter(scope).toArray(),
+            db.productos.where('negocio_id').equals(negocioId).toArray(),
+            db.venta_detalles.where('negocio_id').equals(negocioId).toArray(),
+        ]);
+        const ids = new Set(sales.map(s => s.id));
+        const ranking = new Map<string, { nombre: string; cantidad: number; total: number }>();
+        for (const d of details.filter(d => ids.has(d.venta_id))) {
+            const row = ranking.get(d.producto_id) ?? { nombre: d.nombre || products.find(p => p.id === d.producto_id)?.nombre || 'Artículo histórico', cantidad: 0, total: 0 };
+            row.cantidad += d.cantidad; row.total += d.subtotal; ranking.set(d.producto_id, row);
+        }
+        return { negocioId, sucursalId, sales, ranking: [...ranking.values()].sort((a, b) => b.cantidad - a.cantidad) };
+    }, [compartido, negocioId, sucursalId]);
+    useEffect(() => {
+        if (!compartido || resumenCompartido?.negocioId !== negocioId || resumenCompartido.sucursalId !== sucursalId) return;
+        setVentas(resumenCompartido.sales); setRankingProductos(resumenCompartido.ranking); setIsLoading(false);
+    }, [compartido, resumenCompartido, negocioId, sucursalId]);
 
     // Pro: métricas de reparaciones y apartados (lectura local)
     const esPro = planTier === 'pro';
@@ -49,7 +71,8 @@ export default function AdminDashboard() {
                 .select('*')
                 .eq('negocio_id', negocioId)
                 .order('fecha_creacion', { ascending: false });
-            
+
+            if (compartido) { setSucursales(dataSucursales || []); return; }
             // Fetch Ventas (Solo un resumen rápido)
             const { data: dataVentas } = await supabase
                 .from('ventas')
@@ -92,7 +115,7 @@ export default function AdminDashboard() {
         };
 
         fetchData();
-    }, [negocioId]);
+    }, [negocioId, compartido]);
 
     const crearSucursal = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -107,7 +130,7 @@ export default function AdminDashboard() {
         };
 
         const { error } = await supabase.from('sucursales').insert(nuevaSucursal);
-        
+
         if (!error) {
             setSucursales([nuevaSucursal, ...sucursales]);
             setIsModalOpen(false);
@@ -121,7 +144,7 @@ export default function AdminDashboard() {
     const cambiarPin = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!negocioId || newPin.length !== 4) return;
-        
+
         setIsPinSaving(true);
         // Guardar siempre hasheado (nunca texto plano en la BD)
         const pinHasheado = await hashPin(newPin);
@@ -141,6 +164,7 @@ export default function AdminDashboard() {
     };
 
     const repararBaseDatosLocal = async () => {
+        if (compartido) { showToast('El registro compartido conserva cada negocio y operación original. Revisa los pendientes en Configuración.', 'info'); return; }
         if (!negocioId || !sucursalId) {
             showToast("Falta negocio o sucursal. Inicia sesión y ve al POS antes de usar esto.", "error");
             return;
@@ -183,6 +207,9 @@ export default function AdminDashboard() {
     const [confirmDesvincular, setConfirmDesvincular] = useState(false);
 
     const desvincularDispositivo = async () => {
+        if (compartido && (await db.shared_mutations.filter(r => r.state !== 'APPLIED').count() || await db.shared_outbox.filter(r => r.state !== 'APPLIED').count())) {
+            showToast('Sincroniza o conserva un respaldo de los pendientes antes de desvincular este navegador.', 'error'); return;
+        }
         try {
             await supabase.auth.signOut();
             // Borramos la base de datos local
@@ -230,7 +257,7 @@ export default function AdminDashboard() {
                 <div className="max-w-6xl mx-auto">
                 <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 mb-6 sm:mb-8">
                     <div>
-                        <h1 className="text-2xl sm:text-3xl font-display font-extrabold text-white">Panel Administrativo</h1>
+                        <h1 className="text-2xl sm:text-3xl font-display font-extrabold text-white">Panel Administrativo</h1>{compartido && <p className="text-sm text-gold mt-1">Registro compartido · datos descargados de la sucursal seleccionada</p>}
                         <p className="text-vr-gray mt-1 text-sm truncate max-w-xs">{user?.email}</p>
                     </div>
                     <div className="flex flex-wrap gap-2">
@@ -247,15 +274,7 @@ export default function AdminDashboard() {
                 </div>
 
                 {/* Banner de Rescate Local */}
-                <div className="mb-6 sm:mb-8 bg-gold/5 border border-gold/15 rounded-2xl p-4 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
-                    <div>
-                        <h3 className="text-gold font-bold text-sm sm:text-base">¿Faltan ventas de antes de limpiar la base de datos?</h3>
-                        <p className="text-xs sm:text-sm text-vr-gray">Presiona aquí para enlazar tus ventas locales y resubirlas a la nube.</p>
-                    </div>
-                    <button onClick={repararBaseDatosLocal} className="px-4 py-2 bg-gold-gradient text-navy font-bold rounded-lg hover:brightness-110 transition-all text-sm shrink-0">
-                        Forzar Resincronización
-                    </button>
-                </div>
+
 
                 {/* Métricas Globales */}
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 sm:gap-6 mb-6 sm:mb-8">
@@ -377,8 +396,8 @@ export default function AdminDashboard() {
                 <div className="bg-navy-2 rounded-2xl border border-navy-3 overflow-hidden">
                     <div className="p-4 sm:p-6 border-b border-navy-3 flex justify-between items-center">
                         <h2 className="text-lg font-display font-bold text-white">Mis Sucursales</h2>
-                        <button 
-                            onClick={() => setIsModalOpen(true)} 
+                        <button
+                            onClick={() => setIsModalOpen(true)}
                             disabled={!isOnline}
                             className="px-4 py-2 bg-gold/10 text-gold font-bold rounded-lg hover:bg-gold/20 border border-gold/20 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
                             title={!isOnline ? "Requiere conexión a internet" : ""}

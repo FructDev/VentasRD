@@ -37,7 +37,9 @@ const withPWA = withPWAInit({
       // reparaciones, gastos, reportes, configuración… que offline fallaban
       // SIEMPRE; (3) expirar en 24h dejaba la app vacía tras un día sin abrir.
       {
-        urlPattern: /^https:\/\/[^/]+\/($|login|registro|landing|pin|select-branch|onboarding|historial|inventario|clientes|gastos|dashboard|reportes|configuracion|admin|reparaciones|garantias|apartados|ayuda|offline)([/?#].*)?$/i,
+        urlPattern: ({ url, sameOrigin }) => sameOrigin
+          && /^https?:$/.test(url.protocol)
+          && /^\/($|login|registro|landing|pin|select-branch|onboarding|historial|inventario|clientes|gastos|dashboard|reportes|configuracion|admin|reparaciones|garantias|apartados|ayuda|offline)(\/.*)?$/i.test(url.pathname),
         handler: "StaleWhileRevalidate",
         options: {
           cacheName: "ventard-pages",
@@ -52,8 +54,14 @@ const withPWA = withPWAInit({
 });
 
 const nextConfig: NextConfig = {
-  // turbopack: {},
-  /* config options here */
+  // Identidad inmutable del bundle. El cliente la compara con /api/version
+  // para detectar cajas que siguen abiertas con un deploy anterior.
+  env: {
+    NEXT_PUBLIC_VENTARD_BUILD_ID:
+      (process.env.VERCEL_GIT_COMMIT_SHA
+        || process.env.NEXT_PUBLIC_VENTARD_BUILD_ID
+        || 'local').slice(0, 12),
+  },
 };
 
 export default withSentryConfig(withPWA(nextConfig), {

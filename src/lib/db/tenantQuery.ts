@@ -5,13 +5,28 @@
 import { useLiveQuery } from 'dexie-react-hooks';
 import { useConfigStore } from '@/store/useConfigStore';
 import { db } from './dexie';
+import { leerResumenVentas } from '@/lib/domain/reportes/leerResumenVentas';
+import { catalogAtScope } from '@/lib/sync/inventory/scope-stock';
+
+/** Ventas + devoluciones + bases de margen, en una única lectura reactiva. */
+export function useResumenVentasRangoTenant(desde: number, hasta: number) {
+    const { negocioId } = useConfigStore();
+    const snapshot = useLiveQuery(
+        () => negocioId ? leerResumenVentas(db, negocioId, desde, hasta) : undefined,
+        [negocioId, desde, hasta],
+    );
+    // useLiveQuery puede conservar el resultado anterior mientras relee.
+    // Nunca mostrar datos del tenant/período anterior durante esa transición.
+    return snapshot?.negocioId === negocioId && snapshot.desde === desde && snapshot.hasta === hasta
+        ? snapshot : undefined;
+}
 
 /**
  * Productos del negocio actual (excluye insumos por defecto).
  */
 export function useProductosTenant(incluirInsumos = true) {
-    const { negocioId } = useConfigStore();
-    return useLiveQuery(
+    const { negocioId, sucursalId } = useConfigStore();
+    const rows = useLiveQuery(
         () => negocioId
             ? db.productos.where('negocio_id').equals(negocioId)
                 .filter(p => !p.eliminado && (incluirInsumos || p.tipo !== 'insumo'))
@@ -19,6 +34,7 @@ export function useProductosTenant(incluirInsumos = true) {
             : [],
         [negocioId, incluirInsumos]
     ) || [];
+    return negocioId ? catalogAtScope(rows, { negocioId, sucursalId: sucursalId ?? null }) : [];
 }
 
 /**
@@ -130,15 +146,7 @@ export function useVentasRangoTenant(desde: number, hasta: number) {
  * Productos con stock bajo/agotado del negocio actual.
  */
 export function useProductosBajoStockTenant() {
-    const { negocioId } = useConfigStore();
-    return useLiveQuery(
-        () => negocioId
-            ? db.productos.where('negocio_id').equals(negocioId)
-                .filter(p => !p.eliminado && p.stock_actual <= p.stock_minimo)
-                .toArray()
-            : [],
-        [negocioId]
-    ) || [];
+    return useProductosTenant().filter(p => p.stock_actual <= p.stock_minimo);
 }
 
 /**

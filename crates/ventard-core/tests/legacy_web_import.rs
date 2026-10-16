@@ -2,6 +2,27 @@
 use serde_json::json;
 use ventard_core::storage::{cipher::CipherKey, legacy_web as web, writer::VaultWriter};
 const TENANT: &str = "96000000-0000-4000-8000-000000000001";
+#[test]
+fn browser_schema_24_preserves_shared_journal_bytes_without_replaying_them() {
+    use sha2::{Digest, Sha256};
+    let mut body: serde_json::Value = serde_json::from_str(fixture().raw_body()).unwrap();
+    body["schemaVersion"] = json!(24);
+    for name in web::SHARED_TABLES {
+        let rows = if name == "shared_outbox" { json!([{"id":"shared-fixture/op","state":"UNCERTAIN","wire":{"intent":"original exact bytes"}}]) } else { json!([]) };
+        let text = rows.to_string();
+        body["tables"].as_array_mut().unwrap().push(json!({"name":name,"count":rows.as_array().unwrap().len(),"rowsJson":text,"sha256":format!("{:x}",Sha256::digest(text.as_bytes()))}));
+    }
+    let package = web::parse(body.to_string()).unwrap();
+    let dir = Dir::new();
+    let mut writer = VaultWriter::create_encrypted(&dir.0, &CipherKey::new([0x76;32])).unwrap();
+    let summary = web::store(writer.connection(), TENANT, &package).unwrap();
+    assert_eq!(summary["canActivate"], false);
+    assert_eq!(web::rows(writer.connection(), TENANT, package.export_id(), "shared_outbox", 0).unwrap()["rows"][0]["wire"]["intent"], "original exact bytes");
+    let live: i64 = writer.connection().query_row("SELECT count(*) FROM operation_journal", [], |r| r.get(0)).unwrap();
+    assert_eq!(live, 0);
+    body["tables"].as_array_mut().unwrap().pop();
+    assert!(web::parse(body.to_string()).is_err());
+}
 fn fixture() -> web::Package {
     web::decrypt(
         include_bytes!("fixtures/legacy-web-v1.vrweb"),

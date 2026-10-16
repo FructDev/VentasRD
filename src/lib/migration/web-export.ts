@@ -2,10 +2,11 @@ import type {VentaRDDatabase} from '@/lib/db/dexie';
 
 // A portable preservation package, not an operational cutover or a remote receipt.
 export const TABLES = ['apartados','cajas','clientes','composiciones','cortes_caja','devoluciones','gastos','inventario_sync_cursors','movimientos_stock','operaciones_locales','productos','reparaciones','secuencias','seriales','sucursales','transacciones_fiado','venta_detalles','ventas'] as const;
+export const SHARED_TABLES=['shared_captures','shared_entities','shared_inbox','shared_mutations','shared_outbox','shared_state'] as const;
 export const MAX_BYTES = 32 * 1024 * 1024;
 export function tablesForSchema(version:number){
-    if(![21,22,23].includes(version))fail('WEB_EXPORT_SCHEMA');
-    return TABLES.filter(name=>name!=='operaciones_locales'||version>=23).filter(name=>name!=='inventario_sync_cursors'||version>=22);
+    if(![21,22,23,24].includes(version))fail('WEB_EXPORT_SCHEMA');
+    return [...TABLES.filter(name=>name!=='operaciones_locales'||version>=23).filter(name=>name!=='inventario_sync_cursors'||version>=22),...(version>=24?SHARED_TABLES:[])].sort();
 }
 const CONFIG_FIELDS = ['dispositivoId','ultimoTicket','negocioId','usuarioCacheId','negocioNombre','sucursalId','rolUsuario','nombreUsuario','negocioWhatsapp','negocioTelefono','negocioRnc','negocioDireccion','negocioMensajeTicket','negocioLogo','ncf','impresion','garantiaDiasDefault','tema','colorMarca','fuenteMarca','catalogoPublico','datosPago','cobrarRepuestosAparte'];
 const SECRET_KEYS = /^(pinAdmin|pin|access_token|refresh_token|password|secret|session|firmaAcc|recoverySecret)$/i;

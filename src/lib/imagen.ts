@@ -45,3 +45,13 @@ export function comprimirImagen(file: File, maxDim = 480): Promise<string> {
         img.src = url;
     });
 }
+
+/** Inline photo accepted by the existing native PNG contract (96 KiB/480px).
+ * Re-encode smaller until it fits; never drop a selected offline photo. */
+export async function comprimirImagenCompartida(file:File):Promise<string>{
+ const url=URL.createObjectURL(file);
+ try{const img=await new Promise<HTMLImageElement>((resolve,reject)=>{const image=new Image();image.onload=()=>resolve(image);image.onerror=()=>reject(Error('SHARED_PHOTO_INVALID'));image.src=url});
+  for(const size of [360,280,220,160,128]){const scale=Math.min(1,size/Math.max(img.width,img.height)),canvas=document.createElement('canvas');canvas.width=Math.max(1,Math.round(img.width*scale));canvas.height=Math.max(1,Math.round(img.height*scale));const ctx=canvas.getContext('2d');if(!ctx)throw Error('SHARED_PHOTO_INVALID');ctx.drawImage(img,0,0,canvas.width,canvas.height);const result=canvas.toDataURL('image/png');if(result.startsWith('data:image/png;base64,')&&(result.length-22)*3/4<=98304)return result}
+  throw Error('SHARED_PHOTO_TOO_LARGE');
+ }finally{URL.revokeObjectURL(url)}
+}

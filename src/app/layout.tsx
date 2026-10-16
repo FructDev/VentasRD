@@ -11,6 +11,7 @@ import InstalarApp from "@/components/ui/InstalarApp";
 import { ErrorBoundary } from "@/components/ui/ErrorBoundary";
 import ThemeApplier from "@/components/providers/ThemeApplier";
 import { RendimientoProvider } from "@/components/providers/RendimientoProvider";
+import ActualizacionDisponible from "@/components/ui/ActualizacionDisponible";
 
 // Aplica el tema y el color de marca guardados ANTES de pintar (evita parpadeo)
 const themeInitScript = `(function(){try{
@@ -100,6 +101,7 @@ export default function RootLayout({
                 <TutorialChecklist />
                 <Novedades />
                 <InstalarApp />
+                <ActualizacionDisponible />
               </AuthProvider>
             </SyncProvider>
           </RendimientoProvider>

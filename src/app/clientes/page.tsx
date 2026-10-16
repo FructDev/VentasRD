@@ -15,6 +15,8 @@ import OfflineBanner from '@/components/shared/OfflineBanner';
 import Pagination from '@/components/ui/Pagination';
 import { SkeletonTable } from '@/components/ui/Skeleton';
 import ConfirmModal from '@/components/ui/ConfirmModal';
+import { registrarAbonoLocal, type MetodoAbono } from '@/lib/domain/fiado/abonos';
+import {sharedBalanceCents} from '@/lib/sync/shared-balance';
 
 const norm = (s: string | null | undefined): string =>
     (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
@@ -23,7 +25,7 @@ type FiltroCliente = 'todos' | 'deuda' | 'aldia' | 'mayor';
 type OrdenCliente = 'nombre' | 'deuda' | 'atraso';
 
 export default function ClientesPage() {
-    const { negocioId, showToast, negocioNombre, planTier } = useConfigStore();
+    const { negocioId, sucursalId, showToast, negocioNombre, planTier } = useConfigStore();
     const { ocupado, conCandado } = useCandado();
     const clientes = useClientesTenant();
     const transacciones = useTransaccionesFiadoTenant();
@@ -47,10 +49,7 @@ export default function ClientesPage() {
 
     const clientesConSaldo = useMemo(() => {
         return clientes.map(cliente => {
-            const txsCliente = transacciones.filter(t => t.cliente_id === cliente.id);
-            const totalCargos = txsCliente.filter(t => t.tipo === 'cargo').reduce((acc, t) => acc + t.monto, 0);
-            const totalAbonos = txsCliente.filter(t => t.tipo === 'abono').reduce((acc, t) => acc + t.monto, 0);
-            return { ...cliente, saldo_pendiente: totalCargos - totalAbonos };
+            return { ...cliente, saldo_pendiente: sharedBalanceCents(cliente,transacciones)/100 };
         });
     }, [clientes, transacciones]);
 
@@ -106,9 +105,11 @@ export default function ClientesPage() {
         setIsModalClienteOpen(false);
         showToast('Cliente eliminado.', 'info');
     };
-    const [clienteParaAbono, setClienteParaAbono] = useState<any>(null);
+    const [clienteParaAbono, setClienteParaAbono] = useState<(ClienteLocal & { saldo_pendiente: number }) | null>(null);
     const [abonoMonto, setAbonoMonto] = useState('');
     const [abonoConcepto, setAbonoConcepto] = useState('Abono en efectivo');
+    const [abonoMetodo, setAbonoMetodo] = useState<MetodoAbono>('efectivo');
+    const [abonoContexto, setAbonoContexto] = useState<{ id: string; cajaId: string; negocioId: string; sucursalId: string | null } | null>(null);
 
     const abrirModalNuevoCliente = () => {
         setClienteEditando(null);
@@ -147,26 +148,36 @@ export default function ClientesPage() {
         showToast(clienteEditando ? "Cliente actualizado" : "Cliente creado", "success");
     };
 
-    const abrirModalAbono = (cliente: any) => {
+    const abrirModalAbono = async (cliente: ClienteLocal & { saldo_pendiente: number }) => {
+        if (!negocioId || cliente.negocio_id !== negocioId) return;
+        const cajas = await db.cajas.where('negocio_id').equals(negocioId)
+            .filter(c => c.estado === 'abierta' && (c.sucursal_id ?? null) === (sucursalId || null)).toArray();
+        if (cajas.length !== 1) { showToast('Abre una caja única en esta sucursal antes de recibir el abono.', 'error'); return; }
+        setAbonoContexto({ id: uuidv4(), cajaId: cajas[0].id, negocioId, sucursalId: sucursalId || null });
         setClienteParaAbono(cliente);
         setAbonoMonto('');
-        setAbonoConcepto('Abono en efectivo');
+        setAbonoConcepto('Abono');
+        setAbonoMetodo('efectivo');
         setIsModalAbonoOpen(true);
     };
 
     const registrarAbono = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!negocioId || !clienteParaAbono) return;
-        const monto = parseFloat(abonoMonto);
-        if (monto <= 0) { showToast("Monto debe ser mayor a 0", "error"); return; }
-
-        await db.transacciones_fiado.add({
-            id: uuidv4(), negocio_id: negocioId, cliente_id: clienteParaAbono.id,
-            venta_id: null, tipo: 'abono', monto, concepto: abonoConcepto,
-            fecha_creacion: Date.now(), estado_sincronizacion: 0, fecha_actualizacion: Date.now()
-        });
-        setIsModalAbonoOpen(false);
-        showToast(`Abono de ${formatDOP(monto)} registrado`, "success");
+        if (!negocioId || !clienteParaAbono || !abonoContexto) return;
+        const actual = useConfigStore.getState();
+        if (actual.negocioId !== abonoContexto.negocioId || (actual.sucursalId || null) !== abonoContexto.sucursalId) {
+            showToast('El negocio o la sucursal cambió. Vuelve a abrir el abono.', 'error'); return;
+        }
+        try {
+            const abono = await registrarAbonoLocal(db, {
+                ...abonoContexto, clienteId: clienteParaAbono.id, monto: abonoMonto,
+                metodo: abonoMetodo, concepto: abonoConcepto, fecha: Date.now(),
+            });
+            setIsModalAbonoOpen(false);
+            showToast(`Abono de ${formatDOP(abono.monto)} registrado en caja (${abonoMetodo})`, 'success');
+        } catch (error) {
+            showToast(error instanceof Error ? error.message : 'No se pudo registrar el abono.', 'error');
+        }
     };
 
     const enviarWhatsApp = (cliente: any) => {
@@ -571,14 +582,23 @@ export default function ClientesPage() {
                                     <h2 className="text-xl font-display font-bold text-vr-green">Registrar Abono</h2>
                                     <button onClick={() => setIsModalAbonoOpen(false)} className="text-vr-gray hover:text-white font-bold text-xl transition-colors">✕</button>
                                 </div>
-                                <form onSubmit={conCandado(registrarAbono)} className="p-4 sm:p-6 space-y-4">
+                                <form onSubmit={e => { e.preventDefault(); void conCandado(registrarAbono)(e); }} className="p-4 sm:p-6 space-y-4">
                                     <div className="text-center mb-2">
                                         <p className="text-vr-gray text-sm">Deuda de {clienteParaAbono.nombre}</p>
                                         <p className="text-3xl font-black font-mono text-vr-red">{formatDOP(clienteParaAbono.saldo_pendiente)}</p>
                                     </div>
                                     <div>
                                         <label className="block text-sm font-bold text-vr-gray mb-1.5">Monto del Abono (RD$) *</label>
-                                        <input required type="number" step="0.01" max={clienteParaAbono.saldo_pendiente} className="w-full bg-navy-3 border border-vr-green/30 rounded-xl p-3 text-white focus:border-vr-green outline-none text-xl font-bold font-mono text-center transition-all" value={abonoMonto} onChange={e => setAbonoMonto(e.target.value)} />
+                                        <input aria-label="Monto del abono" required type="number" min="0.01" step="0.01" max={clienteParaAbono.saldo_pendiente} className="w-full bg-navy-3 border border-vr-green/30 rounded-xl p-3 text-white focus:border-vr-green outline-none text-xl font-bold font-mono text-center transition-all" value={abonoMonto} onChange={e => setAbonoMonto(e.target.value)} />
+                                    </div>
+                                    <div>
+                                        <label htmlFor="metodo-abono" className="block text-sm font-bold text-vr-gray mb-1.5">Método recibido</label>
+                                        <select id="metodo-abono" value={abonoMetodo} onChange={e => setAbonoMetodo(e.target.value as MetodoAbono)} className="w-full bg-navy-3 rounded-xl p-3 text-white">
+                                            <option value="efectivo">Efectivo</option>
+                                            <option value="tarjeta">Tarjeta</option>
+                                            <option value="transferencia">Transferencia</option>
+                                        </select>
+                                        <p className="text-xs text-vr-gray mt-2">Quedará vinculado a la caja abierta. Solo efectivo entra en la gaveta.</p>
                                     </div>
                                     <div>
                                         <label className="block text-sm font-bold text-vr-gray mb-1.5">Concepto</label>

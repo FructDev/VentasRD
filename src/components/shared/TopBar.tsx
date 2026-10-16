@@ -10,6 +10,8 @@ import { db } from '@/lib/db/dexie';
 import { supabase } from '@/lib/supabase/client';
 import { ACCESOS } from '@/lib/acceso';
 import ConfirmModal from '@/components/ui/ConfirmModal';
+import { readLocalQueues } from '@/lib/sync/queue-reader';
+import { browserConnectivityLabel } from '@/lib/sync/queue-status';
 
 const navItems = [
     { href: '/',              label: 'Ventas',       icon: '💰' },
@@ -31,15 +33,31 @@ const ROL_LABEL: Record<string, string> = { admin: 'Admin', vendedor: 'Vendedor'
 export default function TopBar() {
     const pathname = usePathname();
     const router = useRouter();
-    const { isOnline, isAdminMode, negocioNombre, negocioLogo, rolUsuario, nombreUsuario, planTier, tema, setTema, cerrarSesionUsuario } = useConfigStore();
+    const { negocioId, sucursalId, isOnline, isAdminMode, negocioNombre, negocioLogo, rolUsuario, nombreUsuario, planTier, tema, setTema, cerrarSesionUsuario } = useConfigStore();
 
     const [menuOpen, setMenuOpen] = useState(false);
     const [confirmLogout, setConfirmLogout] = useState(false);
 
-    const ventasPendientes = useLiveQuery(
-        () => db.ventas.where('estado_sincronizacion').equals(0).count(),
-        []
-    ) || 0;
+    const colas = useLiveQuery(
+        () => negocioId ? readLocalQueues(db, { negocioId, sucursalId: sucursalId ?? null }).catch(() => null) : null,
+        [negocioId, sucursalId]
+    );
+    // A live query may briefly retain the previous result during a scope switch.
+    // Never show another tenant/branch's counts, or equate an unavailable read with zero.
+    const colaActual = colas?.scope.negocioId === negocioId && colas.scope.sucursalId === (sucursalId ?? null) ? colas : null;
+    const pendientes = colaActual ? colaActual.salesPending + colaActual.inventoryPending : 0;
+    const etiquetas = colaActual ? [
+        pendientes > 0 ? `${pendientes} pendiente${pendientes === 1 ? '' : 's'}` : '',
+        colaActual.attention > 0 ? `${colaActual.attention} atención` : '',
+        colaActual.unknown > 0 ? `${colaActual.unknown} no verificables` : '',
+        colaActual.unscoped > 0 ? `${colaActual.unscoped} sin ámbito` : '',
+    ].filter(Boolean) : [];
+    const estadoColas = !negocioId ? 'Sin negocio activo' : colaActual
+        ? etiquetas.join(' · ') || 'Sin pendientes locales'
+        : colas === null ? 'Estado no disponible' : 'Leyendo colas';
+    const detalleColas = colaActual
+        ? `Sucursal seleccionada: ${colaActual.salesPending} ventas pendientes y ${colaActual.inventoryPending} ${colaActual.protocol==='SHARED_JOURNAL'?'operaciones del registro compartido':'movimientos pendientes'}; ${colaActual.attention} requieren atención; ${colaActual.unknown} no verificables. ${colaActual.unscoped} registros del negocio sin ámbito comprobable. No confirma la venta completa ni el estado de otra PC.`
+        : 'Lectura local de ventas e inventario; no confirma conexión con el servidor.';
 
     // Nombre y rol a mostrar: empleado usa su nombre; el dueño no tiene nombreUsuario
     const displayNombre = nombreUsuario || negocioNombre || 'Mi cuenta';
@@ -93,6 +111,8 @@ export default function TopBar() {
                         <Link
                             key={item.href}
                             href={item.href}
+                            aria-label={`${item.icon} ${item.label}`}
+                            title={item.label}
                             className={`
                                 flex items-center gap-1 sm:gap-1.5 px-2.5 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-semibold transition-all whitespace-nowrap
                                 ${isActive
@@ -102,7 +122,7 @@ export default function TopBar() {
                             `}
                         >
                             <span className="text-sm sm:text-base">{item.icon}</span>
-                            <span className="hidden md:inline">{item.label}</span>
+                            <span className="hidden xl:inline">{item.label}</span>
                         </Link>
                     );
                 })}
@@ -110,23 +130,19 @@ export default function TopBar() {
 
             {/* Estado derecho */}
             <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
-                {/* Ventas Pendientes */}
-                {ventasPendientes > 0 && (
-                    <div className="flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-1.5 bg-gold/10 border border-gold/20 rounded-lg">
-                        <div className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-gold animate-pulse" />
-                        <span className="text-xs font-bold text-gold hidden sm:inline">{ventasPendientes} pendiente{ventasPendientes > 1 ? 's' : ''}</span>
-                        <span className="text-xs font-bold text-gold sm:hidden">{ventasPendientes}</span>
-                    </div>
-                )}
+                <div role="status" title={detalleColas} className="max-w-32 sm:max-w-52 truncate px-2 py-1.5 border border-gold/20 rounded-lg text-xs text-gold">
+                    {estadoColas}
+                </div>
 
                 {/* Online/Offline */}
-                <div className={`flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-1.5 rounded-lg border text-xs font-bold ${
+                <div title="Señal del navegador: no confirma disponibilidad de Supabase ni sincronización."
+                    aria-label={browserConnectivityLabel(isOnline)} className={`flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-1.5 rounded-lg border text-xs font-bold ${
                     isOnline
-                        ? 'bg-vr-green/10 border-vr-green/20 text-vr-green'
+                        ? 'bg-navy-3 border-navy-4 text-vr-gray'
                         : 'bg-vr-red/10 border-vr-red/20 text-vr-red'
                 }`}>
-                    <div className={`w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full ${isOnline ? 'bg-vr-green' : 'bg-vr-red animate-pulse'}`} />
-                    <span className="hidden sm:inline">{isOnline ? 'Online' : 'Offline'}</span>
+                    <div className={`w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full ${isOnline ? 'bg-vr-gray' : 'bg-vr-red animate-pulse'}`} />
+                    <span className="hidden sm:inline">{browserConnectivityLabel(isOnline)}</span>
                 </div>
 
                 {/* Menú de usuario — disponible para todos (incluido cajero/vendedor) */}

@@ -2,8 +2,10 @@
 // No contiene PII ni se transmite automáticamente: vive en localStorage y el
 // usuario decide si exporta el diagnóstico desde Configuración.
 
+import { APP_BUILD_ID } from './app-version';
+
 export const VERSION_DIAGNOSTICO = 2;
-export const VERSION_APP = process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA?.slice(0, 7) || 'local';
+export const VERSION_APP = APP_BUILD_ID;
 const STORAGE_KEY = 'ventard-performance-v1';
 const MAX_MUESTRAS = 300;
 let syncActivo = false;

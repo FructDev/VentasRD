@@ -15,10 +15,12 @@ export interface CamposAcceso {
     planActivo: boolean;
     ultimaFechaVista: number;
     aperturasSinServidor: number;
+    ultimaConexionServidor?: number;
 }
 
-export function firmarAcceso(c: CamposAcceso): string {
-    const s = `${SAL}|${c.negocioId || ''}|${c.accesoHasta ?? ''}|${c.trialHasta ?? ''}|${c.planActivo ? 1 : 0}|${c.ultimaFechaVista || 0}|${c.aperturasSinServidor || 0}`;
+function digestAcceso(c: CamposAcceso, incluirConexion: boolean): string {
+    const base = `${SAL}|${c.negocioId || ''}|${c.accesoHasta ?? ''}|${c.trialHasta ?? ''}|${c.planActivo ? 1 : 0}|${c.ultimaFechaVista || 0}|${c.aperturasSinServidor || 0}`;
+    const s = incluirConexion ? `${base}|${c.ultimaConexionServidor || 0}` : base;
     let h1 = 0x811c9dc5;
     let h2 = 0x01000193;
     for (let i = 0; i < s.length; i++) {
@@ -27,4 +29,18 @@ export function firmarAcceso(c: CamposAcceso): string {
         h2 = (Math.imul(h2, 31) + ch) >>> 0;
     }
     return `${h1.toString(36)}.${h2.toString(36)}`;
+}
+
+export function firmarAcceso(c: CamposAcceso): string {
+    return `v2.${digestAcceso(c, true)}`;
+}
+
+/** Compatibilidad de formato, no autenticación criptográfica del cliente. */
+export function verificarFirmaAcceso(c: CamposAcceso, firma: string): boolean {
+    if (firma.startsWith('v2.')) {
+        return c.ultimaConexionServidor !== undefined && firma === firmarAcceso(c);
+    }
+    // El formato distribuido originalmente no firmaba contacto remoto. Solo
+    // se admite cuando el campo todavía está ausente; nunca se inventa fecha.
+    return firma === digestAcceso(c, c.ultimaConexionServidor !== undefined);
 }

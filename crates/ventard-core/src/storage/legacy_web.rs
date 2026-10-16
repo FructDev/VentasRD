@@ -33,6 +33,7 @@ pub const TABLES: [&str; 18] = [
     "venta_detalles",
     "ventas",
 ];
+pub const SHARED_TABLES: [&str; 6] = ["shared_captures", "shared_entities", "shared_inbox", "shared_mutations", "shared_outbox", "shared_state"];
 #[derive(Debug, Clone, Copy)]
 pub struct ImportError(&'static str);
 impl ImportError {
@@ -169,10 +170,10 @@ pub fn parse(raw: String) -> Result<Package, ImportError> {
     if e.migration_version != 1
         || e.source_build.is_empty()
         || e.source_build.len() > 160
-        || ![21, 22, 23].contains(&e.schema_version)
+        || ![21, 22, 23, 24].contains(&e.schema_version)
         || e.writers_stopped
         || e.boundary != "IDB_ATOMIC_STORAGE_OBSERVED"
-        || e.tables.len() != 16 + (e.schema_version - 21) as usize
+        || e.tables.len() != if e.schema_version == 24 { 24 } else { 16 + (e.schema_version.saturating_sub(21)) as usize }
         || e.database_name.is_empty()
         || e.database_name.len() > 160
         || e.profile_alias.trim().is_empty()
@@ -217,7 +218,7 @@ pub fn parse(raw: String) -> Result<Package, ImportError> {
     let mut names = BTreeSet::new();
     let mut all_rows = BTreeMap::new();
     for t in &e.tables {
-        if !TABLES.contains(&t.name.as_str())
+        if !(TABLES.contains(&t.name.as_str()) || e.schema_version == 24 && SHARED_TABLES.contains(&t.name.as_str()))
             || (t.name == "operaciones_locales" && e.schema_version < 23)
             || (t.name == "inventario_sync_cursors" && e.schema_version < 22)
             || !names.insert(t.name.clone())
@@ -350,7 +351,7 @@ pub fn rows(
     table: &str,
     page: u32,
 ) -> Result<Value, ImportError> {
-    if !TABLES.contains(&table) || page > 20_000 {
+    if !(TABLES.contains(&table) || SHARED_TABLES.contains(&table)) || page > 20_000 {
         return Err(invalid());
     }
     let (raw,digest,count):(String,String,usize)=c.query_row("SELECT t.rows_json,t.sha256,t.row_count FROM legacy_web_tables_v1 t JOIN legacy_web_packages_v1 p USING(export_id) WHERE p.tenant_id=?1 AND p.export_id=?2 AND t.table_name=?3",rusqlite::params![tenant,export_id,table],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?;
