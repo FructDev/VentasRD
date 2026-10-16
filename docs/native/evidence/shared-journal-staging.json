@@ -1,0 +1,21 @@
+{
+  "date": "2026-10-16",
+  "projectRef": "blzzinivvzadqjbnpsre",
+  "sourceCommit": "6d05046",
+  "migration": "20261016165440_native_web_shared_journal_staging_v1.sql",
+  "migrationSha256": "e17a3af39ec45560f571a53d01f5b0a5521e310bddf85203dfa9f6af1b2591cf",
+  "deployment": "APPLIED",
+  "dryRunAndPush": {"migrations": 1, "seeds": 0, "roles": 0, "vault": "SKIPPED"},
+  "readOnlyVerification": {"status": "SHARED_JOURNAL_READONLY_PASS", "existingContexts": 7, "transaction": "READ_ONLY_ROLLBACK"},
+  "qaBBaseline": {
+    "products": 200,
+    "sales": 2,
+    "journalOperations": 2,
+    "browserChannels": 0,
+    "originalProductsMd5": "f25b199372c3410bab300c89f90527c8",
+    "originalSalesMd5": "d5be9a37d33734c2ee61c3a2e4670df1"
+  },
+  "integratedAcceptance": "PENDING_HUMAN_AUTH",
+  "production": "UNTOUCHED",
+  "fiscal": "EXCLUDED"
+}
