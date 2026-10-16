@@ -1,0 +1,42 @@
+{
+  "protocol": "ventard.hosted.provision.readiness.v1",
+  "date": "2026-10-16",
+  "projectRef": "blzzinivvzadqjbnpsre",
+  "function": "native-provision-staging",
+  "remoteDeployment": "NOT_APPLIED_AUTHORIZATION_REQUIRED",
+  "privateKeyUpload": "NOT_PERFORMED",
+  "realSessionHostedRegistration": "NOT_YET_VERIFIED",
+  "productionChanges": false,
+  "fiscalChanges": false,
+  "tests": {
+    "sharedNodeHandlerAndDependencies": {"passed": 25, "network": "SYNTHETIC_HTTP"},
+    "denoRuntime": {"passed": 2, "version": "2.9.6", "signature": "REAL_ED25519_TEST_VECTOR", "network": "SYNTHETIC_HTTP"},
+    "nativeBroker": {"passed": 35},
+    "packagingAndDeploymentContracts": {"passed": 5},
+    "rootTypecheck": "PASS",
+    "nativeTypecheckAndBuild": "PASS",
+    "scopedEslint": "PASS",
+    "brokerClippy": "PASS"
+  },
+  "installer": {
+    "version": "0.1.5",
+    "file": "scratch/windows-qa-distribution/0.1.5/VentaRD QA_0.1.5_x64-setup.exe",
+    "bytes": 10444767,
+    "sha256": "670b2b6649be0272d09522feefa8a321ebfe5b06c75b2e5d681efcabda0d8dff",
+    "binarySha256": "4d4f45338f9ff1934e19e6f92fa676742d2ca332cfd20c27eb534f3f00aab9de",
+    "publicConfigSha256": "91e3c864d07034f269c09658ef062f6929c05dd040088b4683dfcaaaeb0cd2d5",
+    "channel": "UNSIGNED_DEBUG_STAGING_QA_ONLY",
+    "hostedFunctionActivationRequired": true
+  },
+  "actualWindowsInstallerAcceptance": {
+    "upgrade": "0.1.4_TO_0.1.5",
+    "installedWebViewStartup": "PASS_BEFORE_AND_AFTER",
+    "preservedConfigAndOpaqueFixtureHashes": true,
+    "installedBinaryMatchesManifest": true,
+    "olderInstallerRejected": true,
+    "temporaryInstallationRemoved": true,
+    "remoteWrites": false,
+    "humanProfilesModified": false,
+    "initialHarnessIssue": "Windows PowerShell lacks the static RandomNumberGenerator overload; owned incomplete fixture removed and harness made compatible before successful rerun"
+  }
+}

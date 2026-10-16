@@ -3,6 +3,7 @@ import {installerConfiguration,validatePublicConfig} from './package-windows-qa.
 const config={publishableKey:'sb_publishable_fixture',keyId:'fixture-only',publicHex:'d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a',issuerUrl:'http://127.0.0.1:3107/api/native/provision'};
 test('QA delivery: public-only configuration and fixed Staging issuer, never privileged credentials',()=>{
  assert.deepEqual(validatePublicConfig(config),config);
+ assert.equal(validatePublicConfig({...config,issuerUrl:'https://blzzinivvzadqjbnpsre.supabase.co/functions/v1/native-provision-staging'}).issuerUrl.endsWith('/native-provision-staging'),true);
  for(const value of [{...config,password:'do-not-bundle'},{...config,privateKey:'do-not-bundle'},{...config,issuerUrl:'https://production.test'},{...config,publishableKey:'sb_secret_fixture'},{...config,webOrigin:'https://staging.test/path'},{...config,publicHex:'0'.repeat(64)}])assert.throws(()=>validatePublicConfig(value));
  const token=claims=>'header.'+Buffer.from(JSON.stringify(claims)).toString('base64url')+'.signature';
  assert.throws(()=>validatePublicConfig({...config,publishableKey:token({role:'service_role',ref:'blzzinivvzadqjbnpsre'})}));

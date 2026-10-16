@@ -1,4 +1,5 @@
 import {sign, type KeyObject} from 'node:crypto';
+import {Buffer} from 'node:buffer';
 import {z} from 'zod';
 
 const uuid = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
@@ -99,7 +100,7 @@ export function createProvisionHandler(dep: ProvisionDependencies) {
         issuedAtMs: receipt.issuedAtMs, actorExpiresAtMs: null,
         license: {...receipt.license, graceDays: '5', warnAfterOpenings: '200', blockAfterOpenings: '300'},
       };
-      const signature = sign(null, Buffer.from(canonicalGrant(payload)), dep.privateKey).toString('hex');
+      const signature = (await new Promise<Buffer>((resolve,reject)=>sign(null,Buffer.from(canonicalGrant(payload)),dep.privateKey!, (err,value)=>err?reject(err):resolve(value)))).toString('hex');
       return reply(200, {payload, signature});
     } catch (error) {
       // No token, SQL diagnostic or private-key exception is returned/logged.

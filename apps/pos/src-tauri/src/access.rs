@@ -50,6 +50,8 @@ use ventard_core::{
 use zeroize::Zeroizing;
 const HOST: &str = "https://blzzinivvzadqjbnpsre.supabase.co";
 const ISSUER: &str = "http://127.0.0.1:3107/api/native/provision";
+const HOSTED_ISSUER: &str =
+    "https://blzzinivvzadqjbnpsre.supabase.co/functions/v1/native-provision-staging";
 const TENANTS: [&str; 2] = [
     "96000000-0000-4000-8000-000000000001",
     "96000000-0000-4000-8000-000000000002",
@@ -104,7 +106,9 @@ impl Config {
         {
             return Err(error("ACCESS_CONFIG_INVALID"));
         }
-        if !public_key(&self.publishable_key) || self.issuer_url != ISSUER {
+        if !public_key(&self.publishable_key)
+            || ![ISSUER, HOSTED_ISSUER].contains(&self.issuer_url.as_str())
+        {
             return Err(error("ACCESS_CONFIG_INVALID"));
         }
         self.trust().map(|_| ())
@@ -358,6 +362,29 @@ impl AccessState {
     pub fn with_bundled_config(mut self, path: PathBuf) -> Self {
         self.bundled_config = Some(path);
         self
+    }
+    fn provision_issuer(&self, config: &Config) -> Result<String, AccessError> {
+        config.validate()?;
+        // Upgrade only the transport advertised by the installed package. Never
+        // replace a vault's identity, key trust or saved configuration. A key
+        // rotation requires its own explicit recovery/renewal procedure.
+        if config.issuer_url == ISSUER {
+            if let Some(bundled) = self
+                .bundled_config
+                .as_ref()
+                .and_then(|p| read_json::<Config>(p).ok())
+                .filter(|c| c.validate().is_ok())
+            {
+                if bundled.issuer_url == HOSTED_ISSUER
+                    && bundled.publishable_key == config.publishable_key
+                    && bundled.key_id == config.key_id
+                    && bundled.public_hex == config.public_hex
+                {
+                    return Ok(HOSTED_ISSUER.into());
+                }
+            }
+        }
+        Ok(config.issuer_url.clone())
     }
     fn config(&self, inner: &mut Inner) -> Result<Config, AccessError> {
         if let Some(c) = &inner.config {
@@ -957,9 +984,10 @@ impl AccessState {
         let mut request = ventard_core::security::registration_requests::load_or_create(&rp)
             .map_err(|_| error("ACCESS_STORAGE_UNAVAILABLE"))?;
         let client = Self::client()?;
+        let issuer_url = self.provision_issuer(&config)?;
         let mut accepted = None;
         for attempt in 0..2 {
-            let r = client.post(&config.issuer_url).bearer_auth(&*session.token)
+            let r = client.post(&issuer_url).header("apikey",&config.publishable_key).bearer_auth(&*session.token)
                 .json(&json!({"registrationId":request,"tenantId":identity.tenant_id,"deviceId":identity.device_id,"installationId":identity.installation_id,"scopeType":identity.scope_type,"branchId":identity.branch_id}))
                 .send().map_err(|_| error("ACCESS_ISSUER_UNAVAILABLE"))?;
             if r.status().is_success() {
@@ -1556,6 +1584,47 @@ mod tests {
             persisted
         );
         assert_eq!(std::fs::read(vault.join("vault.db")).unwrap(), original);
+        let resolved = root.canonicalize().unwrap();
+        assert!(resolved.starts_with(std::env::temp_dir().canonicalize().unwrap()));
+        std::fs::remove_dir_all(resolved).unwrap();
+    }
+    #[test]
+    fn hosted_staging_transport_requires_fixed_destination_and_identical_existing_trust() {
+        let endpoint =
+            "https://blzzinivvzadqjbnpsre.supabase.co/functions/v1/native-provision-staging";
+        let root = std::env::temp_dir().join(format!(
+            "ventard-access-broker-fixture-{}",
+            EntityId::new_random()
+        ));
+        std::fs::create_dir(&root).unwrap();
+        let bundled = root.join("public.json");
+        let mut hosted = config();
+        hosted.issuer_url = endpoint.into();
+        assert!(hosted.validate().is_ok());
+        std::fs::write(&bundled, serde_json::to_vec(&hosted).unwrap()).unwrap();
+        let state = AccessState::new(root.clone()).with_bundled_config(bundled.clone());
+        assert_eq!(state.provision_issuer(&config()).unwrap(), endpoint);
+        let mut different = config();
+        different.key_id = "another-fixture".into();
+        assert_eq!(state.provision_issuer(&different).unwrap(), ISSUER);
+        let mut different = config();
+        different.publishable_key = "sb_publishable_another_fixture".into();
+        assert_eq!(state.provision_issuer(&different).unwrap(), ISSUER);
+        let mut different = config();
+        different.public_hex =
+            "3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c".into();
+        assert_eq!(state.provision_issuer(&different).unwrap(), ISSUER);
+        assert_eq!(state.provision_issuer(&hosted).unwrap(), endpoint);
+        assert_eq!(
+            AccessState::new(root.clone())
+                .provision_issuer(&config())
+                .unwrap(),
+            ISSUER
+        );
+        hosted.issuer_url = format!("{endpoint}/unexpected");
+        assert!(hosted.validate().is_err());
+        std::fs::write(&bundled, serde_json::to_vec(&hosted).unwrap()).unwrap();
+        assert_eq!(state.provision_issuer(&config()).unwrap(), ISSUER);
         let resolved = root.canonicalize().unwrap();
         assert!(resolved.starts_with(std::env::temp_dir().canonicalize().unwrap()));
         std::fs::remove_dir_all(resolved).unwrap();

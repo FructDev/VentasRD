@@ -1,0 +1,8 @@
+{
+  "nodeModulesDir": "none",
+  "imports": {
+    "zod": "npm:zod@4.4.0",
+    "../../../src/lib/native-access/provision-handler": "../../../src/lib/native-access/provision-handler.ts",
+    "../../../src/lib/native-access/staging-dependencies": "../../../src/lib/native-access/staging-dependencies.ts"
+  }
+}

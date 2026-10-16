@@ -1,4 +1,5 @@
 import {createPrivateKey} from 'node:crypto';
+import {Buffer} from 'node:buffer';
 import type {ProvisionDependencies, RegistrationInput} from './provision-handler';
 
 export const NATIVE_STAGING_URL = 'https://blzzinivvzadqjbnpsre.supabase.co';

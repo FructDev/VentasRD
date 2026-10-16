@@ -59,7 +59,10 @@ try{
  $config=Join-Path $profile 'vault/native-access/public-staging-config.json'
  $configHash=(Get-FileHash -LiteralPath $config).Hash
  $preserved=Join-Path $profile 'vault/native-access/installer-preserved.dat'
- [IO.File]::WriteAllBytes($preserved,[Security.Cryptography.RandomNumberGenerator]::GetBytes(512))
+ $preservedBytes=New-Object byte[] 512
+ $random=[Security.Cryptography.RandomNumberGenerator]::Create()
+ try{$random.GetBytes($preservedBytes)}finally{$random.Dispose()}
+ [IO.File]::WriteAllBytes($preserved,$preservedBytes)
  $preservedHash=(Get-FileHash -LiteralPath $preserved).Hash
  Write-Output "PASS QA installer $FromVersion, installed WebView2 startup and public config seeded"
  if((Invoke-Setup $to) -ne 0){throw 'INSTALLER_SMOKE_UPGRADE_FAILED'}

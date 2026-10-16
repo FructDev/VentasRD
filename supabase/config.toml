@@ -4,6 +4,15 @@
 # working directory name when running `supabase init`.
 project_id = "ventard"
 
+# This dedicated function authenticates every POST through Supabase Auth and
+# invokes registration with that same user's JWT. New API keys/asymmetric JWTs
+# are handled inside the existing strict handler, never by a service-role client.
+[functions.native-provision-staging]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/native-provision-staging/index.ts"
+import_map = "./functions/native-provision-staging/deno.json"
+
 [api]
 enabled = true
 # Port to use for the API URL.
