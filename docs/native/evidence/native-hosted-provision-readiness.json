@@ -3,8 +3,23 @@
   "date": "2026-10-16",
   "projectRef": "blzzinivvzadqjbnpsre",
   "function": "native-provision-staging",
-  "remoteDeployment": "NOT_APPLIED_AUTHORIZATION_REQUIRED",
-  "privateKeyUpload": "NOT_PERFORMED",
+  "remoteDeployment": "ACTIVE_STAGING_ONLY",
+  "privateKeyUpload": "EXISTING_QA_KEY_UPLOADED_TO_AUTHORIZED_STAGING_SECRETS_ONLY",
+  "deployment": {
+    "authorizedCommit": "cdc0d77",
+    "approvedSourceDigest": "5040999e69862eb95d93ef988bde6e1441d88f039914bac2bca12c11bfbb9532",
+    "verifiedAtUtc": "2026-10-16T16:46:16Z",
+    "functionId": "1e9f41cd-427c-492b-8289-274c10e29708",
+    "version": 1,
+    "status": "ACTIVE",
+    "gatewayVerifyJwt": false,
+    "authentication": "STRICT_SHARED_HANDLER_AUTH_USER_THEN_SAME_USER_JWT_RPC",
+    "publicHealth": "MATCHING_EXISTING_KEY_ID_AND_PUBLIC_KEY",
+    "unauthenticatedPost": "HTTP_401_NATIVE_AUTH_REQUIRED",
+    "temporarySecretFileRemoved": true,
+    "usersOrContextsCreated": false,
+    "businessDataChanged": false
+  },
   "realSessionHostedRegistration": "NOT_YET_VERIFIED",
   "productionChanges": false,
   "fiscalChanges": false,
@@ -26,7 +41,7 @@
     "binarySha256": "4d4f45338f9ff1934e19e6f92fa676742d2ca332cfd20c27eb534f3f00aab9de",
     "publicConfigSha256": "91e3c864d07034f269c09658ef062f6929c05dd040088b4683dfcaaaeb0cd2d5",
     "channel": "UNSIGNED_DEBUG_STAGING_QA_ONLY",
-    "hostedFunctionActivationRequired": true
+    "hostedFunctionActivationRequired": false
   },
   "actualWindowsInstallerAcceptance": {
     "upgrade": "0.1.4_TO_0.1.5",
