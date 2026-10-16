@@ -45,9 +45,16 @@ pub fn run() {
             } else {
                 None
             };
-            app.manage(std::sync::Arc::new(access::AccessState::new(
-                access_root.unwrap_or(app.path().app_data_dir()?.join("staging-access-v1")),
-            )));
+            app.manage(std::sync::Arc::new(
+                access::AccessState::new(
+                    access_root.unwrap_or(app.path().app_data_dir()?.join("staging-access-v1")),
+                )
+                .with_bundled_config(
+                    app.path()
+                        .resource_dir()?
+                        .join("public-staging-config.json"),
+                ),
+            ));
         }
         let config = app
             .config()

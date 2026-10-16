@@ -1,0 +1,10 @@
+{
+  "status": "QA_INSTALLER_UPGRADE_SMOKE_PASS",
+  "from": "0.1.3",
+  "to": "0.1.4",
+  "profileConfigPreserved": true,
+  "opaqueFilePreserved": true,
+  "downgradeRejected": true,
+  "testInstallationRemoved": true,
+  "remoteWrites": false
+}

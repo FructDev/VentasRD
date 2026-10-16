@@ -262,6 +262,7 @@ pub struct AccessState {
     archive_selection: Mutex<Option<AccessView>>,
     recovery: Mutex<backup::RecoveryState>,
     root: PathBuf,
+    bundled_config: Option<PathBuf>,
     inner: Mutex<Inner>,
     launch: Arc<OperationalLaunch>,
 }
@@ -343,6 +344,7 @@ impl AccessState {
             recovery: Mutex::new(backup::RecoveryState::default()),
             archive_selection: Mutex::new(None),
             root,
+            bundled_config: None,
             inner: Mutex::new(Inner {
                 config: None,
                 session: None,
@@ -353,6 +355,10 @@ impl AccessState {
             launch: Arc::new(OperationalLaunch::new()),
         }
     }
+    pub fn with_bundled_config(mut self, path: PathBuf) -> Self {
+        self.bundled_config = Some(path);
+        self
+    }
     fn config(&self, inner: &mut Inner) -> Result<Config, AccessError> {
         if let Some(c) = &inner.config {
             return Ok(c.clone());
@@ -362,15 +368,19 @@ impl AccessState {
         let c = if p.exists() {
             read_json::<Config>(&p)?
         } else {
-            let c = Config {
-                web_origin: std::env::var("VENTARD_NATIVE_WEB_ORIGIN").ok(),
-                publishable_key: std::env::var("VENTARD_NATIVE_STAGING_PUBLISHABLE_KEY")
-                    .map_err(|_| error("ACCESS_NOT_CONFIGURED"))?,
-                key_id: std::env::var("VENTARD_NATIVE_GRANT_KEY_ID")
-                    .map_err(|_| error("ACCESS_NOT_CONFIGURED"))?,
-                public_hex: std::env::var("VENTARD_NATIVE_GRANT_PUBLIC_HEX")
-                    .map_err(|_| error("ACCESS_NOT_CONFIGURED"))?,
-                issuer_url: ISSUER.into(),
+            let c = if let Some(path) = self.bundled_config.as_ref().filter(|p| p.exists()) {
+                read_json::<Config>(path)?
+            } else {
+                Config {
+                    web_origin: std::env::var("VENTARD_NATIVE_WEB_ORIGIN").ok(),
+                    publishable_key: std::env::var("VENTARD_NATIVE_STAGING_PUBLISHABLE_KEY")
+                        .map_err(|_| error("ACCESS_NOT_CONFIGURED"))?,
+                    key_id: std::env::var("VENTARD_NATIVE_GRANT_KEY_ID")
+                        .map_err(|_| error("ACCESS_NOT_CONFIGURED"))?,
+                    public_hex: std::env::var("VENTARD_NATIVE_GRANT_PUBLIC_HEX")
+                        .map_err(|_| error("ACCESS_NOT_CONFIGURED"))?,
+                    issuer_url: ISSUER.into(),
+                }
             };
             c.validate()?;
             create_json(&p, &c)?;
@@ -1511,6 +1521,75 @@ mod tests {
         assert!(i.validate().is_ok());
         i.tenant_id = "96000000-0000-4000-8000-000000000099".into();
         assert!(i.validate().is_err());
+    }
+    #[test]
+    fn bundled_public_configuration_seeds_once_and_upgrade_preserves_existing_files() {
+        let root = std::env::temp_dir().join(format!(
+            "ventard-access-broker-fixture-{}",
+            EntityId::new_random()
+        ));
+        std::fs::create_dir(&root).unwrap();
+        let vault = root.join("installed-vault");
+        std::fs::create_dir(&vault).unwrap();
+        let bundled = root.join("public-staging-config.json");
+        std::fs::write(&bundled, serde_json::to_vec(&config()).unwrap()).unwrap();
+        let original = b"opaque existing encrypted data and pending operations";
+        std::fs::write(vault.join("vault.db"), original).unwrap();
+        let state = AccessState::new(vault.clone()).with_bundled_config(bundled.clone());
+        let key = state
+            .config(&mut state.inner.lock().unwrap())
+            .unwrap()
+            .public_hex;
+        let persisted = std::fs::read(vault.join("public-staging-config.json")).unwrap();
+        // Even a damaged replacement package cannot overwrite a configured vault.
+        std::fs::write(&bundled, b"invalid-new-package").unwrap();
+        let updated = AccessState::new(vault.clone()).with_bundled_config(bundled);
+        assert_eq!(
+            updated
+                .config(&mut updated.inner.lock().unwrap())
+                .unwrap()
+                .public_hex,
+            key
+        );
+        assert_eq!(
+            std::fs::read(vault.join("public-staging-config.json")).unwrap(),
+            persisted
+        );
+        assert_eq!(std::fs::read(vault.join("vault.db")).unwrap(), original);
+        let resolved = root.canonicalize().unwrap();
+        assert!(resolved.starts_with(std::env::temp_dir().canonicalize().unwrap()));
+        std::fs::remove_dir_all(resolved).unwrap();
+    }
+    #[test]
+    fn invalid_bundled_configuration_never_creates_a_profile_or_repairs_existing_config() {
+        let root = std::env::temp_dir().join(format!(
+            "ventard-access-broker-fixture-{}",
+            EntityId::new_random()
+        ));
+        std::fs::create_dir(&root).unwrap();
+        let vault = root.join("profile");
+        let bundled = root.join("public.json");
+        let mut bad = serde_json::to_value(config()).unwrap();
+        bad["password"] = json!("forbidden-fixture-field");
+        std::fs::write(&bundled, bad.to_string()).unwrap();
+        let state = AccessState::new(vault.clone()).with_bundled_config(bundled.clone());
+        assert!(state.config(&mut state.inner.lock().unwrap()).is_err());
+        assert!(!vault.join("public-staging-config.json").exists());
+        std::fs::write(&bundled, serde_json::to_vec(&config()).unwrap()).unwrap();
+        std::fs::write(
+            vault.join("public-staging-config.json"),
+            b"original-needs-recovery",
+        )
+        .unwrap();
+        let updated = AccessState::new(vault.clone()).with_bundled_config(bundled);
+        assert!(updated.config(&mut updated.inner.lock().unwrap()).is_err());
+        assert_eq!(
+            std::fs::read(vault.join("public-staging-config.json")).unwrap(),
+            b"original-needs-recovery"
+        );
+        let resolved = root.canonicalize().unwrap();
+        assert!(resolved.starts_with(std::env::temp_dir().canonicalize().unwrap()));
+        std::fs::remove_dir_all(resolved).unwrap();
     }
     #[test]
     fn new_session_does_not_restore_previous_actor_and_transport_token_is_not_serialized() {
