@@ -49,7 +49,7 @@ test('POS definitivo: buscar/HID, ticket, navegación sin perder carrito, modal 
   await page.getByRole('textbox',{name:'Buscar producto',exact:true}).fill('000001');
   await page.getByRole('textbox',{name:'Buscar producto',exact:true}).press('Enter');
   await page.locator('[data-cart-total]').getByText('RD$ 118.00',{exact:true}).waitFor();
-  await page.getByRole('link',{name:'Clientes',exact:true}).click();await page.getByRole('heading',{name:'Clientes',exact:true}).waitFor();
+  await page.getByRole('link',{name:'Clientes',exact:true}).click();await page.getByRole('heading',{name:'Clientes & Fiados',exact:true}).waitFor();
   await page.getByRole('link',{name:'Ventas',exact:true}).click();await page.locator('[data-ticket-line]').waitFor();assert.equal(await page.locator('[data-ticket-line]').count(),1);
   await page.getByRole('button',{name:'Aumentar cantidad de Producto QA 01'}).click();await page.locator('[data-cart-total]').getByText('RD$ 236.00',{exact:true}).waitFor();
   await page.getByRole('button',{name:'Disminuir cantidad de Producto QA 01'}).click();await page.locator('[data-cart-total]').getByText('RD$ 118.00',{exact:true}).waitFor();

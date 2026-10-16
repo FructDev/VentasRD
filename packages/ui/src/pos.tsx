@@ -263,6 +263,7 @@ export function SalesWorkspace({
   onPay,
   onDrawer,
   onFree,
+  onScan,
 }: {
   products: ProductView[];
   items: TicketLineView[];
@@ -287,6 +288,7 @@ export function SalesWorkspace({
   onPay: () => void;
   onDrawer: (open: boolean) => void;
   onFree?: () => void;
+  onScan?: () => void;
 }) {
   return (
     <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
@@ -319,8 +321,11 @@ export function SalesWorkspace({
               </span>
             </div>
             <button
-              disabled
-              title="Cámara pendiente; lector HID disponible en el buscador"
+              type="button"
+              aria-label="Escanear producto"
+              disabled={!onScan || busy || pending}
+              onClick={onScan}
+              title="Escanear código con la cámara; lector HID disponible en el buscador"
               className="px-3 py-3 border border-navy-3 rounded-xl text-vr-gray disabled:opacity-50"
             >
               📷 <span className="hidden sm:inline">Escanear</span>

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import Pagination from "@ventard/ui/pagination";
 import {
   SalesWorkspace,
@@ -13,11 +13,13 @@ import { CashDialog } from "../cash/cash-dialog";
 import { TicketDialog } from "./ticket-dialog";
 import {QrTransfer} from './qr-transfer';
 import {useProductPhotos} from '../catalog/use-product-photos';
+const BarcodeScanner=lazy(()=>import('../services/barcode-scanner'));
 
 export function SalesPage() {
   const s = useSales();
   const [pageState, setPage] = useState({ query: "", page: 1 });
   const [abandonConfirmation, setAbandonConfirmation] = useState(false);
+  const [scanOpen,setScanOpen]=useState(false),[scanNotice,setScanNotice]=useState('');
   const [freeOpen, setFreeOpen] = useState(false),
     [freeName, setFreeName] = useState(""),
     [freePrice, setFreePrice] = useState(""),
@@ -83,6 +85,7 @@ export function SalesPage() {
     : null;
   useEffect(() => {
     function key(e: KeyboardEvent) {
+      if(scanOpen||freeOpen)return;
       if (e.key === "F2") {
         e.preventDefault();
         if (!s.paymentOpen && !s.result && !s.waitingOpen && !s.cashOpen)
@@ -107,7 +110,7 @@ export function SalesPage() {
     }
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
-  }, [s]);
+  }, [s,scanOpen,freeOpen]);
   if (s.loading)
     return (
       <div role="status" className="p-6 text-vr-gray">
@@ -142,6 +145,7 @@ export function SalesPage() {
         <CashDialog read={s.readCash} open={s.openTurn} management={s.management} synchronize={s.synchronize} onClose={() =>{s.setCashOpen(false);void s.refresh();}} />
       )}
       <SalesWorkspace
+        onScan={!s.locked?()=>{setScanNotice('');setScanOpen(true)}:undefined}
         onFree={
           s.snapshot.mode !== "staging-readonly" && s.snapshot.mode !== "recovery-readonly" && !s.locked
             ? () => {
@@ -184,6 +188,7 @@ export function SalesPage() {
         }
         notice={
           <>
+            {scanNotice&&<p role="status" className="px-4 py-2 text-sm text-vr-orange">{scanNotice}</p>}
             {s.snapshot.mode==='staging-readonly' && s.snapshot.supportsDrafts && (
               <p className="px-4 py-2 text-xs text-vr-gray border-b border-navy-3">
                 Borrador local de tu cuenta · no reserva ni descuenta stock.
@@ -754,6 +759,12 @@ export function SalesPage() {
           onClose={() => s.setTicket(null)}
         />
       )}
+      {scanOpen&&<Suspense fallback={<div role="status" className="fixed inset-0 z-[200] bg-navy p-8 text-white">Cargando cámara…</div>}><BarcodeScanner onClose={()=>setScanOpen(false)} onScan={code=>{
+        setScanOpen(false);
+        const matches=s.snapshot?.products.filter(p=>p.kind!=='insumo'&&p.code===code)??[];
+        if(matches.length===1&&!s.locked){s.add(matches[0].id);s.setQuery('')}
+        else{s.setQuery(code);setScanNotice(matches.length>1?'Varios productos tienen ese código. Elige el producto correcto.':'Ese código no está en tu inventario.')}
+      }}/></Suspense>}
     </>
   );
 }

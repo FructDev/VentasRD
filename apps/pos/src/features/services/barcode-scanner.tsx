@@ -15,19 +15,24 @@ async function iniciarConBarcodeDetector(
     onResult: (code: string) => void,
 
 ): Promise<() => void> {
-    const BarcodeDetectorAPI = (window as unknown as {BarcodeDetector:new(options:{formats:string[]})=>{detect(video:HTMLVideoElement):Promise<{rawValue:string}[]>}}).BarcodeDetector;
-    const detector = new BarcodeDetectorAPI({ formats: BARCODE_FORMATS_NATIVE });
+    const BarcodeDetectorAPI = (window as unknown as {BarcodeDetector:{new(options:{formats:string[]}):{detect(video:HTMLVideoElement):Promise<{rawValue:string}[]>};getSupportedFormats?:()=>Promise<string[]>}}).BarcodeDetector;
+    const supported=await BarcodeDetectorAPI.getSupportedFormats?.();
+    const formats=supported?BARCODE_FORMATS_NATIVE.filter(f=>supported.includes(f)):BARCODE_FORMATS_NATIVE;
+    if(!formats.length)throw Error('BARCODE_FORMATS_UNAVAILABLE');
+    const detector = new BarcodeDetectorAPI({ formats });
 
     let animId: number;
     let stopped = false;
 
     const tick = async () => {
-        if (stopped || video.readyState < 2) {
+        if(stopped)return;
+        if (video.readyState < 2) {
             animId = requestAnimationFrame(tick);
             return;
         }
         try {
             const codes = await detector.detect(video);
+            if(stopped)return;
             if (codes.length > 0) {
                 onResult(codes[0].rawValue);
                 return; // detener después del primer resultado
@@ -35,7 +40,7 @@ async function iniciarConBarcodeDetector(
         } catch {
             // ignorar errores de frame transitorio
         }
-        animId = requestAnimationFrame(tick);
+        if(!stopped)animId = requestAnimationFrame(tick);
     };
 
     animId = requestAnimationFrame(tick);
@@ -48,7 +53,7 @@ async function iniciarConZxing(
 
 ): Promise<() => void> {
     const { BrowserMultiFormatReader } = await import('@zxing/browser');
-    const { DecodeHintType, BarcodeFormat, NotFoundException } = await import('@zxing/library');
+    const { DecodeHintType, BarcodeFormat } = await import('@zxing/library');
 
     const hints = new Map();
     hints.set(DecodeHintType.POSSIBLE_FORMATS, [
@@ -63,11 +68,9 @@ async function iniciarConZxing(
     hints.set(DecodeHintType.TRY_HARDER, true);
 
     const reader = new BrowserMultiFormatReader(hints);
-    const controls = await reader.decodeFromVideoElement(video, (result, err) => {
+    const controls = await reader.decodeFromVideoElement(video, (result) => {
         if (result) {
             onResult(result.getText());
-        } else if (err && !(err instanceof NotFoundException)) {
-            console.warn('[zxing]', err);
         }
     });
 
@@ -76,6 +79,9 @@ async function iniciarConZxing(
 
 export default function BarcodeScanner({ onScan, onClose }: BarcodeScannerProps) {
     const videoRef = useRef<HTMLVideoElement>(null);
+    const closeRef=useRef<HTMLButtonElement>(null);
+    const callbacks=useRef({onScan,onClose});
+    useEffect(()=>{callbacks.current={onScan,onClose}},[onScan,onClose]);
     const stopRef = useRef<(() => void) | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [scanned, setScanned] = useState(false);
@@ -83,7 +89,13 @@ export default function BarcodeScanner({ onScan, onClose }: BarcodeScannerProps)
 
     useEffect(() => {
         let mounted = true;
+        let delivered=false;
         let stream: MediaStream | null = null;
+        const previousFocus=document.activeElement;
+        closeRef.current?.focus();
+        const closeOnEscape=(e:KeyboardEvent)=>{if(e.key==='Escape'){e.preventDefault();e.stopPropagation();callbacks.current.onClose()}};
+        window.addEventListener('keydown',closeOnEscape,true);
+        const release=()=>{stopRef.current?.();stopRef.current=null;stream?.getTracks().forEach(t=>t.stop());if(videoRef.current)videoRef.current.srcObject=null};
 
         const iniciar = async () => {
             try {
@@ -102,24 +114,30 @@ export default function BarcodeScanner({ onScan, onClose }: BarcodeScannerProps)
                 const video = videoRef.current!;
                 video.srcObject = stream;
                 await video.play();
+                if(!mounted){release();return}
 
                 const handleResult = (code: string) => {
-                    if (!mounted) return;
+                    if (!mounted||delivered||!code) return;
+                    delivered=true;
                     setScanned(true);
                     if ('vibrate' in navigator) navigator.vibrate(80);
-                    onScan(code);
+                    release();
+                    callbacks.current.onScan(code);
                 };
 
                 // 2. Elegir motor: API nativa (Chrome Android) > ZXing (fallback)
-                const tieneNativa = 'BarcodeDetector' in window;
-                if (tieneNativa) {
-                    setEngine('native');
-                    const stop=await iniciarConBarcodeDetector(video,handleResult);if(!mounted)stop();else stopRef.current=stop;
-                } else {
-                    setEngine('zxing');
-                    const stop=await iniciarConZxing(video,handleResult);if(!mounted)stop();else stopRef.current=stop;
+                let stop:(()=>void)|null=null;
+                if ('BarcodeDetector' in window) {
+                    try{stop=await iniciarConBarcodeDetector(video,handleResult);setEngine('native')}catch{/* Unsupported native formats use the bundled decoder. */}
                 }
+                if(!mounted||delivered){stop?.();release();return}
+                if(!stop){
+                    setEngine('zxing');
+                    stop=await iniciarConZxing(video,handleResult);
+                }
+                if(!mounted||delivered)stop();else stopRef.current=stop;
             } catch (e: unknown) {
+                release();
                 if (!mounted) return;
                 if (e instanceof Error && e.name === 'NotAllowedError') {
                     setError('Permiso de cámara denegado. Revisa los permisos de cámara de Windows.');
@@ -127,7 +145,6 @@ export default function BarcodeScanner({ onScan, onClose }: BarcodeScannerProps)
                     setError('No se encontró ninguna cámara disponible.');
                 } else {
                     setError('No se pudo iniciar la cámara.');
-                    console.error('[scanner]', e);
                 }
             }
         };
@@ -136,14 +153,14 @@ export default function BarcodeScanner({ onScan, onClose }: BarcodeScannerProps)
 
         return () => {
             mounted = false;
-            stopRef.current?.();
-            stream?.getTracks().forEach(t => t.stop());
+            window.removeEventListener('keydown',closeOnEscape,true);
+            release();
+            if(previousFocus instanceof HTMLElement&&previousFocus.isConnected)previousFocus.focus();
         };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     return (
-        <div className="fixed inset-0 z-[200] bg-black flex flex-col">
+        <div role="dialog" aria-modal="true" aria-label="Escanear código de barras" onKeyDown={e=>{e.stopPropagation();if(e.key==='Tab'){const buttons=Array.from(e.currentTarget.querySelectorAll<HTMLButtonElement>('button'));const first=buttons[0],last=buttons.at(-1);if(e.shiftKey&&document.activeElement===first){e.preventDefault();last?.focus()}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first?.focus()}}}} className="fixed inset-0 z-[200] bg-black flex flex-col">
             {/* Header */}
             <div className="flex items-center justify-between px-4 py-3 bg-black/80 backdrop-blur-sm">
                 <div>
@@ -153,6 +170,9 @@ export default function BarcodeScanner({ onScan, onClose }: BarcodeScannerProps)
                     </p>
                 </div>
                 <button
+                    ref={closeRef}
+                    type="button"
+                    aria-label="Cerrar cámara"
                     onClick={onClose}
                     className="w-9 h-9 flex items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20 transition-colors"
                 >
