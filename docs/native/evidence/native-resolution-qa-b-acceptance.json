@@ -1,0 +1,43 @@
+{
+  "synthetic": true,
+  "project": "blzzinivvzadqjbnpsre",
+  "clients": {
+    "source": {
+      "products": 200,
+      "reviewedStock": "95",
+      "pendingOperations": "0",
+      "nativeSales": "0",
+      "historySales": "2",
+      "repairPaidCents": "700",
+      "layawayPaidCents": "400",
+      "debtCents": "800",
+      "paymentIds": [
+        "500daea2-737e-4e56-8d75-9ee1fed20c4a",
+        "05a1b37b-9d58-4ef9-9ac0-7022773d0793"
+      ],
+      "ticketHashes": [
+        "66b6736453addda83c630e79f39167ed2a9775983a29ca689a990f0bd2f9cce9",
+        "435c591e25d3029bf2cc18127e08f70aec73673aa7e60c07d7c3fe1f7c98b24e"
+      ]
+    },
+    "receiver": {
+      "products": 200,
+      "reviewedStock": "95",
+      "pendingOperations": "0",
+      "nativeSales": "0",
+      "historySales": "2",
+      "repairPaidCents": "700",
+      "layawayPaidCents": "400",
+      "debtCents": "800",
+      "paymentIds": [
+        "500daea2-737e-4e56-8d75-9ee1fed20c4a",
+        "05a1b37b-9d58-4ef9-9ac0-7022773d0793"
+      ],
+      "ticketHashes": [
+        "66b6736453addda83c630e79f39167ed2a9775983a29ca689a990f0bd2f9cce9",
+        "435c591e25d3029bf2cc18127e08f70aec73673aa7e60c07d7c3fe1f7c98b24e"
+      ]
+    }
+  },
+  "status": "QA_B_NATIVE_MIGRATION_ACCEPTANCE_PASS"
+}
