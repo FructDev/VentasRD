@@ -2,6 +2,10 @@
 use super::*;
 use ventard_core::storage::legacy_cutover as cut;
 use ventard_core::storage::legacy_transition as core;
+fn resolution_schema_failure(rpc: &str, code: Option<&str>) -> bool {
+    matches!(rpc, "native_web_cutover_v1" | "native_web_resolution_commit_v1")
+        && matches!(code, Some("23502" | "23503" | "23514" | "22P02" | "22003"))
+}
 impl AccessState {
     fn cutover_owned<R: Send + 'static>(
         &self,
@@ -125,7 +129,7 @@ impl AccessState {
                     Some("RESOLUTION_TOO_LARGE")=>"RESOLUTION_TOO_LARGE",
                     Some("RESOLUTION_PART_INVALID")=>"RESOLUTION_PART_INVALID",
                     Some("RESOLUTION_TRANSPORT_FULL")=>"RESOLUTION_TRANSPORT_FULL",
-                    _ if rpc=="native_web_cutover_v1"&&matches!(v["code"].as_str(),Some("23502"|"23503"|"23514"|"22P02"|"22003"))=>"RESOLUTION_SCHEMA_INCOMPATIBLE",
+                    _ if resolution_schema_failure(rpc,v["code"].as_str())=>"RESOLUTION_SCHEMA_INCOMPATIBLE",
                     Some("WEB_OBSERVATION_UNAVAILABLE") => "TABLE_UNAVAILABLE",
                     Some("WEB_OBSERVATION_TOO_LARGE") => "TRANSITION_TOO_LARGE",
                     Some("CUTOVER_SOURCE_CHANGED") => "CUTOVER_SOURCE_CHANGED",
@@ -419,6 +423,18 @@ impl AccessState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn chunked_commit_constraint_rejection_is_not_a_network_failure() {
+        for rpc in ["native_web_cutover_v1", "native_web_resolution_commit_v1"] {
+            for code in ["23502", "23503", "23514", "22P02", "22003"] {
+                assert!(resolution_schema_failure(rpc, Some(code)));
+            }
+            assert!(!resolution_schema_failure(rpc, None));
+            assert!(!resolution_schema_failure(rpc, Some("42501")));
+            assert!(!resolution_schema_failure(rpc, Some("57014")));
+        }
+        assert!(!resolution_schema_failure("native_web_capture_v1", Some("23514")));
+    }
     #[test]
     fn all_transition_actions_require_owner_pin_before_any_read_or_remote_call() {
         let state = AccessState::new(std::env::temp_dir().join("unused-transition-fixture"));

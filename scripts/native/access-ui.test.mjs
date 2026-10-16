@@ -1,6 +1,25 @@
 // Same definitive pages, synthetic IPC fixture in Chromium only.
 import {test} from 'node:test';import assert from 'node:assert/strict';import {createServer} from 'node:http';import {readFileSync} from 'node:fs';import {resolve,extname,sep} from 'node:path';import {fileURLToPath} from 'node:url';import {chromium} from 'playwright';
 const dist=fileURLToPath(new URL('../../apps/pos/dist',import.meta.url));
+test('unadopted business explains migration and clears the failed download progress',async()=>{
+ const server=createServer((req,res)=>{const p=resolve(dist,'.'+new URL(req.url,'http://localhost').pathname);if(!(p===dist||p.startsWith(dist+sep))){res.writeHead(403).end();return;}try{const f=p===dist?resolve(dist,'index.html'):p;res.writeHead(200,{'Content-Type':{'.html':'text/html','.js':'text/javascript','.css':'text/css'}[extname(f)]??'application/octet-stream'}).end(readFileSync(f));}catch{res.writeHead(404).end();}});
+ await new Promise(r=>server.listen(0,'127.0.0.1',r));const url=`http://127.0.0.1:${server.address().port}`;let browser;
+ try{
+  browser=await chromium.launch({headless:true});const context=await browser.newContext();
+  await context.addInitScript(()=>{window.isTauri=true;window.__TAURI_INTERNALS__={invoke:async(command,args)=>{
+   if(command==='native_access_status')return{status:'PREPARATION_REQUIRED',configured:true,actorId:'fixture-actor',tenantId:'fixture-tenant',role:'owner',pinEnrolled:true,tenants:[],catalogueReady:true,operationalReady:false};
+   if(command==='native_sales'&&args.command.action==='BOOTSTRAP'){await new Promise(r=>setTimeout(r,100));throw{code:'SALES_SETUP_REQUIRED'};}
+   throw{code:'TEST_UNEXPECTED_COMMAND'};
+  }};});
+  const page=await context.newPage();await page.goto(url+'/#/preparacion');
+  await page.getByRole('button',{name:'Descargar catálogo y abrir VentaRD',exact:true}).click();
+  await page.getByRole('alert').getByText(/La sesión inició correctamente/).waitFor();
+  assert.match(await page.getByRole('alert').innerText(),/Traslado desde la web/);
+  assert.doesNotMatch(await page.getByRole('alert').innerText(),/Adoptar negocio sintético/);
+  assert.equal(await page.getByText('Descargando y verificando tus datos para trabajar localmente…',{exact:true}).count(),0);
+  assert.equal(await page.getByRole('button',{name:'Descargar catálogo y abrir VentaRD',exact:true}).isEnabled(),true);
+ }finally{await browser?.close();await new Promise(r=>server.close(r));}
+});
 test('normal unprepared startup goes to login, never to the synthetic POS', {timeout:15000},async()=>{
  const server=createServer((req,res)=>{const p=resolve(dist,'.'+new URL(req.url,'http://localhost').pathname);if(!(p===dist||p.startsWith(dist+sep))){res.writeHead(403).end();return;}try{const f=p===dist?resolve(dist,'index.html'):p;res.writeHead(200,{'Content-Type':{'.html':'text/html','.js':'text/javascript','.css':'text/css'}[extname(f)]??'application/octet-stream'}).end(readFileSync(f));}catch{res.writeHead(404).end();}});
  await new Promise(r=>server.listen(0,'127.0.0.1',r));const url=`http://127.0.0.1:${server.address().port}`;let browser;

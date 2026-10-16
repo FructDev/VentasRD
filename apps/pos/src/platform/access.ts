@@ -188,7 +188,7 @@ export const fiscalPort = {
 };
 const messages: Record<string, string> = {
   SALES_PAYMENT_CONTEXT_INVALID:"El servidor rechazó el contexto de pago/turno. La venta se conserva con el mismo ID; revisa la causa antes de reintentar.",
-  SALES_SETUP_REQUIRED:"La cuenta inició sesión, pero este negocio QA aún no está adoptado para Ventas nativas. El dueño/admin debe usar «Adoptar negocio sintético» después de detener los clientes antiguos de Staging.",
+  SALES_SETUP_REQUIRED:"La sesión inició correctamente. Este negocio aún requiere preparar el traslado antes de vender. Descarga la captura de consulta en «Opciones de soporte» y abre Ajustes → Traslado desde la web para conciliar los datos y confirmar el corte.",
   SALES_SCOPE_CONFLICT:"El negocio QA ya se adoptó en otro ámbito. Usa la misma sucursal; no se cambiará ni reparará stock automáticamente.",
   SALES_SOURCE_UNVERIFIABLE:"Los datos de origen de Staging no permiten una preparación segura. Hay que revisar el dato incompatible; no se inventarán saldos, precios ni historia.",
   SALES_SCHEMA_INCOMPATIBLE:"La función de Staging no coincide con el esquema desplegado. Se conservan los datos; hace falta corregir la compatibilidad del servidor.",

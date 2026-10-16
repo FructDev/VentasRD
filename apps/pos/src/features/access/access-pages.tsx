@@ -198,6 +198,7 @@ export function PreparationPage() {
       setView(await fn());
     } catch (e) {
       setError(accessMessage(e));
+      setProgress("");
       setSetupRequired(typeof e === "object" && e !== null && "code" in e && e.code === "SALES_SETUP_REQUIRED");
     } finally {
       setPin("");
