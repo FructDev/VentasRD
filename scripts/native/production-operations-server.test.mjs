@@ -7,6 +7,7 @@ const tenant='864d08e5-2975-4b2d-a1e2-ba5a14f3d677',qa='96000000-0000-4000-8000-
 const schema=JSON.parse(await readFile(new URL('./fixtures/production-schema-20261017.json',import.meta.url),'utf8'));
 const access=await readFile(new URL('../../supabase/migrations/20261017125853_native_production_access_v1.sql',import.meta.url),'utf8');
 const operations=await readFile(new URL('../../supabase/migrations/'+productionOperationsFile,import.meta.url),'utf8');
+const enrollment=await readFile(new URL('./production-pica-enroll.sql',import.meta.url),'utf8');
 const quote=value=>'"'+value.replaceAll('"','""')+'"';
 async function setup(){
  const db=new PGlite();
@@ -23,6 +24,18 @@ async function setup(){
  return db;
  }catch(e){await db.close();const position=Number(e.position)||0;throw Error(JSON.stringify({message:e.message,code:e.code,where:e.where,near:e.query?.slice(Math.max(0,position-150),position+200)}))}
 }
+test('approved enrollment is idempotent, preserves businesses and enables only Pica without operations',async()=>{
+ const db=await setup();try{
+  await db.exec(`insert into negocios(id,nombre,"dueño_id",plan_activo,plan_tier,acceso_hasta) values('${qa}','Other synthetic business','${actor}',true,'pro',1900000000000)`);
+  const before=(await db.query('select to_jsonb(n) as business from negocios n order by id')).rows;
+  await db.exec(enrollment);const first=(await db.query('select * from native_production_cohort_v1')).rows;await db.exec(enrollment);
+  assert.deepEqual((await db.query('select * from native_production_cohort_v1')).rows,first);assert.equal(first.length,1);assert.equal(first[0].negocio_id,tenant);
+  assert.deepEqual((await db.query('select to_jsonb(n) as business from negocios n order by id')).rows,before);
+  for(const table of ['native_sales_mode_v1','native_sales_ledger_v1','native_installations_v1'])assert.equal((await db.query('select count(*) n from '+table)).rows[0].n,0);
+  await db.exec(`insert into native_production_cohort_v1 values('${qa}',true,now())`);await assert.rejects(db.exec(enrollment),/PICA_ONLY_PRODUCTION_COHORT_REQUIRED/);await db.exec('rollback');
+ }finally{await db.close()}
+});
+
 test('production operations match reviewed sources, deploy twice on real-schema shapes without activation, licence changes or fiscal objects',async()=>{
  assert.equal(operations,await productionOperations());
  const db=await setup();try{
