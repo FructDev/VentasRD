@@ -1,0 +1,101 @@
+{
+  "protocol": "ventard.production.release.local-evidence.1",
+  "date": "2026-10-17",
+  "scope": "LOCAL_PREPARATION_ONLY",
+  "target": {
+    "projectRef": "oxbekqoecunsbjheqgqg",
+    "business": "Pica Chicken",
+    "tenantId": "864d08e5-2975-4b2d-a1e2-ba5a14f3d677",
+    "website": "https://ventard.vercel.app",
+    "licenseObserved": "basico"
+  },
+  "remote": {
+    "authorizedQueries": [
+      "scripts/native/production-pilot-readonly-audit.sql",
+      "scripts/native/production-release-readonly-preflight.sql"
+    ],
+    "transaction": "READ ONLY / ROLLBACK",
+    "commercialRowsRead": false,
+    "mutationsExecuted": false,
+    "migrationsApplied": false,
+    "cohortEnabled": false,
+    "keysUploaded": false
+  },
+  "schemaFixture": {
+    "businessRows": "SYNTHETIC_ONLY",
+    "tables": 18,
+    "columns": 247,
+    "constraints": 31,
+    "pinDefault": "REMOVED_FROM_METADATA_FIXTURE"
+  },
+  "checks": {
+    "nodePostgresPackagingAndRealSignature": {
+      "pass": 12,
+      "fail": 0,
+      "command": "node --test scripts/native/production-access-server.test.mjs scripts/native/production-operations-server.test.mjs scripts/native/package-windows-production.test.mjs scripts/native/package-windows-qa.test.mjs scripts/native/desktop-release.test.mjs scripts/native/desktop-release-signature.test.mjs"
+    },
+    "coreOfflineGrantAndBootstrap": {
+      "pass": 27,
+      "ignored": 1,
+      "fail": 0,
+      "engine": "SQLite / encrypted-storage build"
+    },
+    "qaBroker": {
+      "pass": 41,
+      "fail": 0,
+      "credentialScope": "Owned ephemeral Windows fixtures only"
+    },
+    "productionTarget": {
+      "pass": 1,
+      "fail": 0,
+      "publicConfigAbsent": "FAIL_CLOSED"
+    },
+    "webContracts": {
+      "pass": 38,
+      "fail": 0,
+      "transport": "HTTP fixtures, no real Auth"
+    },
+    "nativePageUI": {
+      "pass": 5,
+      "fail": 0,
+      "transport": "Chromium + synthetic typed IPC"
+    },
+    "downloadWebUI": {
+      "pass": 1,
+      "fail": 0,
+      "transport": "Actual Next definitive page, empty browser, no remote business access"
+    },
+    "typecheckWeb": "PASS",
+    "typecheckNative": "PASS",
+    "nativeViteBuild": "PASS",
+    "rustProductionClippyWarningsDenied": "PASS",
+    "scopedEslint": "PASS",
+    "sqlSourceDriftCheck": "PASS"
+  },
+  "migrationHashes": [
+    {
+      "file": "20261017125853_native_production_access_v1.sql",
+      "sha256": "c2467c4d0d8b8fe283db164ab305e2068c5b60a8e5872e96be5e80c52c65e068",
+      "bytes": 10100
+    },
+    {
+      "file": "20261017130229_native_production_operations_v1.sql",
+      "sha256": "19fc0627d4b33a646604517d418a4ac58892ff42f420bc5d49f4d4b474e64b2f",
+      "bytes": 642666
+    }
+  ],
+  "delivery": {
+    "reviewManifest": "scratch/production-release-review/b0643258562e39d9/review.json",
+    "productionInstallerBuilt": false,
+    "productionSigningKeysGenerated": false,
+    "productionDownloadPublished": false,
+    "productionBusinessAcceptance": false,
+    "ncf": "EXCLUDED"
+  },
+  "limits": [
+    "Node issuer tests use mocked HTTP, not a deployed production function",
+    "No real production business rows, balances, services or backup reviewed",
+    "No production installer built/installed or update applied",
+    "Production deployment, keys, remote history/backup, cohort and owner cutover remain separately authorized work"
+  ]
+}

@@ -7,8 +7,11 @@ const stage='https://blzzinivvzadqjbnpsre.supabase.co';
 const tenants=new Set(['96000000-0000-4000-8000-000000000001','96000000-0000-4000-8000-000000000002','96000000-0000-4000-8000-000000000003']);
 export type SharedMode='LEGACY'|'SHARED_JOURNAL'|'SCOPE_BLOCKED';
 export function sharedStagingEnabled(url:string|undefined,flag:string|undefined,tenant:string):boolean{return url===stage&&flag==='staging'&&tenants.has(tenant)}
-export function sharedRemote(client:RpcClient,url:string,tenant:string){
- if(!sharedStagingEnabled(url,'staging',tenant))throw Error('SHARED_STAGING_ONLY');
+export function sharedChannelEnabled(url:string|undefined,flag:string|undefined,tenant:string):boolean {
+ return sharedStagingEnabled(url,flag,tenant) || (url==='https://oxbekqoecunsbjheqgqg.supabase.co'&&flag==='production-pilot'&&tenant==='864d08e5-2975-4b2d-a1e2-ba5a14f3d677');
+}
+export function sharedRemote(client:RpcClient,url:string,tenant:string,flag=process.env.NEXT_PUBLIC_VENTARD_SHARED_JOURNAL??(url===stage?'staging':undefined)){
+ if(!sharedChannelEnabled(url,flag,tenant))throw Error('SHARED_STAGING_ONLY');
  const call=async(name:string,args:Record<string,unknown>)=>{
   let response;try{response=await client.rpc(name,args)}catch{throw new SharedRemoteError('SHARED_TRANSPORT_UNCERTAIN')}
   if(response.error){const error=response.error as {code?:unknown;message?:unknown};

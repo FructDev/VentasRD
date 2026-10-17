@@ -22,6 +22,7 @@ export interface AccessTenant {
   branches: AccessBranch[];
 }
 export interface AccessView {
+  environment?: "staging" | "production-pilot";
   presentation?:{tenantId:string;actorId:string;actorName:string|null;businessName:string|null;logo:string|null;color:string|null;font:string|null;capturedAtMs:string}|null;
   status:
     | "NOT_CONFIGURED"

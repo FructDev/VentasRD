@@ -1,0 +1,6 @@
+{
+  "channel": "production",
+  "endpoint": "https://ventard.vercel.app/api/native/releases/windows-x86_64",
+  "downloadOrigin": "https://ventard.vercel.app",
+  "publicKey": "REQUIRED_TAURI_UPDATER_PUBLIC_KEY_BASE64"
+}

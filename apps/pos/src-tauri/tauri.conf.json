@@ -11,12 +11,40 @@
   },
   "app": {
     "withGlobalTauri": false,
-    "windows": [{"label":"main", "title":"VentaRD Nativo", "width":1100, "height":780, "minWidth":360, "minHeight":540, "create":false}],
+    "windows": [
+      {
+        "label": "main",
+        "title": "VentaRD Nativo",
+        "width": 1100,
+        "height": 780,
+        "minWidth": 360,
+        "minHeight": 540,
+        "create": false
+      }
+    ],
     "security": {
       "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src ipc: http://ipc.localhost; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'",
       "devCsp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' ipc: http://ipc.localhost ws://127.0.0.1:1420 ws://127.0.0.1:1421; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'",
-      "capabilities": ["pos-main"]
+      "capabilities": [
+        "pos-main"
+      ]
     }
   },
-  "bundle": {"active":false, "icon":["icons/icon.png", "icons/icon.ico", "icons/icon.icns"]}
+  "bundle": {
+    "active": false,
+    "icon": [
+      "icons/icon.png",
+      "icons/icon.ico",
+      "icons/icon.icns"
+    ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "",
+      "requireSignedVersion": true,
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  }
 }

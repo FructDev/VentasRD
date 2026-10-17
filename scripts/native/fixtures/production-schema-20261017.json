@@ -1,0 +1,2131 @@
+{
+  "source": "AUTHORIZED_READONLY_SCHEMA_METADATA_NO_BUSINESS_ROWS",
+  "projectRef": "oxbekqoecunsbjheqgqg",
+  "date": "2026-10-17",
+  "columns": [
+    {
+      "column": "id",
+      "default": null,
+      "nullable": "NO",
+      "table": "apartados",
+      "type": "uuid",
+      "udt": "uuid"
+    },
+    {
+      "column": "negocio_id",
+      "default": null,
+      "nullable": "NO",
+      "table": "apartados",
+      "type": "uuid",
+      "udt": "uuid"
+    },
+    {
+      "column": "sucursal_id",
+      "default": null,
+      "nullable": "YES",
+      "table": "apartados",
+      "type": "uuid",
+      "udt": "uuid"
+    },
+    {
+      "column": "folio",
+      "default": null,
+      "nullable": "NO",
+      "table": "apartados",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "cliente_id",
+      "default": null,
+      "nullable": "YES",
+      "table": "apartados",
+      "type": "uuid",
+      "udt": "uuid"
+    },
+    {
+      "column": "cliente_nombre",
+      "default": null,
+      "nullable": "NO",
+      "table": "apartados",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "cliente_telefono",
+      "default": null,
+      "nullable": "YES",
+      "table": "apartados",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "items",
+      "default": "'[]'::jsonb",
+      "nullable": "NO",
+      "table": "apartados",
+      "type": "jsonb",
+      "udt": "jsonb"
+    },
+    {
+      "column": "total",
+      "default": "0",
+      "nullable": "NO",
+      "table": "apartados",
+      "type": "numeric",
+      "udt": "numeric"
+    },
+    {
+      "column": "abonado",
+      "default": "0",
+      "nullable": "NO",
+      "table": "apartados",
+      "type": "numeric",
+      "udt": "numeric"
+    },
+    {
+      "column": "abonos",
+      "default": "'[]'::jsonb",
+      "nullable": "NO",
+      "table": "apartados",
+      "type": "jsonb",
+      "udt": "jsonb"
+    },
+    {
+      "column": "estado",
+      "default": "'activo'::text",
+      "nullable": "NO",
+      "table": "apartados",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "notas",
+      "default": null,
+      "nullable": "YES",
+      "table": "apartados",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "fecha_creacion",
+      "default": null,
+      "nullable": "NO",
+      "table": "apartados",
+      "type": "bigint",
+      "udt": "int8"
+    },
+    {
+      "column": "fecha_completado",
+      "default": null,
+      "nullable": "YES",
+      "table": "apartados",
+      "type": "bigint",
+      "udt": "int8"
+    },
+    {
+      "column": "fecha_cancelado",
+      "default": null,
+      "nullable": "YES",
+      "table": "apartados",
+      "type": "bigint",
+      "udt": "int8"
+    },
+    {
+      "column": "fecha_actualizacion",
+      "default": null,
+      "nullable": "NO",
+      "table": "apartados",
+      "type": "bigint",
+      "udt": "int8"
+    },
+    {
+      "column": "id",
+      "default": null,
+      "nullable": "NO",
+      "table": "cajas",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "negocio_id",
+      "default": null,
+      "nullable": "NO",
+      "table": "cajas",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "sucursal_id",
+      "default": null,
+      "nullable": "YES",
+      "table": "cajas",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "estado",
+      "default": null,
+      "nullable": "NO",
+      "table": "cajas",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "monto_apertura",
+      "default": "0",
+      "nullable": "NO",
+      "table": "cajas",
+      "type": "numeric",
+      "udt": "numeric"
+    },
+    {
+      "column": "monto_cierre",
+      "default": null,
+      "nullable": "YES",
+      "table": "cajas",
+      "type": "numeric",
+      "udt": "numeric"
+    },
+    {
+      "column": "monto_esperado",
+      "default": null,
+      "nullable": "YES",
+      "table": "cajas",
+      "type": "numeric",
+      "udt": "numeric"
+    },
+    {
+      "column": "diferencia",
+      "default": null,
+      "nullable": "YES",
+      "table": "cajas",
+      "type": "numeric",
+      "udt": "numeric"
+    },
+    {
+      "column": "denominaciones_apertura",
+      "default": null,
+      "nullable": "YES",
+      "table": "cajas",
+      "type": "jsonb",
+      "udt": "jsonb"
+    },
+    {
+      "column": "denominaciones_cierre",
+      "default": null,
+      "nullable": "YES",
+      "table": "cajas",
+      "type": "jsonb",
+      "udt": "jsonb"
+    },
+    {
+      "column": "fecha_apertura",
+      "default": null,
+      "nullable": "NO",
+      "table": "cajas",
+      "type": "bigint",
+      "udt": "int8"
+    },
+    {
+      "column": "fecha_cierre",
+      "default": null,
+      "nullable": "YES",
+      "table": "cajas",
+      "type": "bigint",
+      "udt": "int8"
+    },
+    {
+      "column": "fecha_actualizacion",
+      "default": "((EXTRACT(epoch FROM now()) * (1000)::numeric))::bigint",
+      "nullable": "NO",
+      "table": "cajas",
+      "type": "bigint",
+      "udt": "int8"
+    },
+    {
+      "column": "notas",
+      "default": null,
+      "nullable": "YES",
+      "table": "cajas",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "id",
+      "default": null,
+      "nullable": "NO",
+      "table": "clientes",
+      "type": "uuid",
+      "udt": "uuid"
+    },
+    {
+      "column": "negocio_id",
+      "default": null,
+      "nullable": "NO",
+      "table": "clientes",
+      "type": "uuid",
+      "udt": "uuid"
+    },
+    {
+      "column": "nombre",
+      "default": null,
+      "nullable": "NO",
+      "table": "clientes",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "telefono",
+      "default": null,
+      "nullable": "YES",
+      "table": "clientes",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "limite_credito",
+      "default": "0",
+      "nullable": "YES",
+      "table": "clientes",
+      "type": "numeric",
+      "udt": "numeric"
+    },
+    {
+      "column": "estado_sincronizacion",
+      "default": "1",
+      "nullable": "YES",
+      "table": "clientes",
+      "type": "smallint",
+      "udt": "int2"
+    },
+    {
+      "column": "fecha_actualizacion",
+      "default": null,
+      "nullable": "NO",
+      "table": "clientes",
+      "type": "bigint",
+      "udt": "int8"
+    },
+    {
+      "column": "sucursal_id",
+      "default": null,
+      "nullable": "YES",
+      "table": "clientes",
+      "type": "uuid",
+      "udt": "uuid"
+    },
+    {
+      "column": "tipo_precio",
+      "default": "1",
+      "nullable": "YES",
+      "table": "clientes",
+      "type": "smallint",
+      "udt": "int2"
+    },
+    {
+      "column": "al_por_mayor",
+      "default": "false",
+      "nullable": "YES",
+      "table": "clientes",
+      "type": "boolean",
+      "udt": "bool"
+    },
+    {
+      "column": "eliminado",
+      "default": "false",
+      "nullable": "YES",
+      "table": "clientes",
+      "type": "boolean",
+      "udt": "bool"
+    },
+    {
+      "column": "id",
+      "default": "gen_random_uuid()",
+      "nullable": "NO",
+      "table": "composiciones",
+      "type": "uuid",
+      "udt": "uuid"
+    },
+    {
+      "column": "producto_padre_id",
+      "default": null,
+      "nullable": "YES",
+      "table": "composiciones",
+      "type": "uuid",
+      "udt": "uuid"
+    },
+    {
+      "column": "insumo_id",
+      "default": null,
+      "nullable": "YES",
+      "table": "composiciones",
+      "type": "uuid",
+      "udt": "uuid"
+    },
+    {
+      "column": "cantidad_necesaria",
+      "default": null,
+      "nullable": "NO",
+      "table": "composiciones",
+      "type": "numeric",
+      "udt": "numeric"
+    },
+    {
+      "column": "negocio_id",
+      "default": null,
+      "nullable": "YES",
+      "table": "composiciones",
+      "type": "uuid",
+      "udt": "uuid"
+    },
+    {
+      "column": "fecha_actualizacion",
+      "default": "0",
+      "nullable": "YES",
+      "table": "composiciones",
+      "type": "bigint",
+      "udt": "int8"
+    },
+    {
+      "column": "id",
+      "default": null,
+      "nullable": "NO",
+      "table": "cortes_caja",
+      "type": "uuid",
+      "udt": "uuid"
+    },
+    {
+      "column": "negocio_id",
+      "default": null,
+      "nullable": "NO",
+      "table": "cortes_caja",
+      "type": "uuid",
+      "udt": "uuid"
+    },
+    {
+      "column": "caja_id",
+      "default": null,
+      "nullable": "NO",
+      "table": "cortes_caja",
+      "type": "uuid",
+      "udt": "uuid"
+    },
+    {
+      "column": "sucursal_id",
+      "default": null,
+      "nullable": "YES",
+      "table": "cortes_caja",
+      "type": "uuid",
+      "udt": "uuid"
+    },
+    {
+      "column": "tipo",
+      "default": null,
+      "nullable": "NO",
+      "table": "cortes_caja",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "fecha_creacion",
+      "default": null,
+      "nullable": "NO",
+      "table": "cortes_caja",
+      "type": "bigint",
+      "udt": "int8"
+    },
+    {
+      "column": "efectivo",
+      "default": "0",
+      "nullable": "NO",
+      "table": "cortes_caja",
+      "type": "numeric",
+      "udt": "numeric"
+    },
+    {
+      "column": "tarjeta",
+      "default": "0",
+      "nullable": "NO",
+      "table": "cortes_caja",
+      "type": "numeric",
+      "udt": "numeric"
+    },
+    {
+      "column": "transferencia",
+      "default": "0",
+      "nullable": "NO",
+      "table": "cortes_caja",
+      "type": "numeric",
+      "udt": "numeric"
+    },
+    {
+      "column": "fiado",
+      "default": "0",
+      "nullable": "NO",
+      "table": "cortes_caja",
+      "type": "numeric",
+      "udt": "numeric"
+    },
+    {
+      "column": "mixto",
+      "default": "0",
+      "nullable": "NO",
+      "table": "cortes_caja",
+      "type": "numeric",
+      "udt": "numeric"
+    },
+    {
+      "column": "total_ventas",
+      "default": "0",
+      "nullable": "NO",
+      "table": "cortes_caja",
+      "type": "numeric",
+      "udt": "numeric"
+    },
+    {
+      "column": "cantidad_transacciones",
+      "default": "0",
+      "nullable": "NO",
+      "table": "cortes_caja",
+      "type": "integer",
+      "udt": "int4"
+    },
+    {
+      "column": "monto_apertura",
+      "default": null,
+      "nullable": "YES",
+      "table": "cortes_caja",
+      "type": "numeric",
+      "udt": "numeric"
+    },
+    {
+      "column": "monto_esperado",
+      "default": null,
+      "nullable": "YES",
+      "table": "cortes_caja",
+      "type": "numeric",
+      "udt": "numeric"
+    },
+    {
+      "column": "monto_contado",
+      "default": null,
+      "nullable": "YES",
+      "table": "cortes_caja",
+      "type": "numeric",
+      "udt": "numeric"
+    },
+    {
+      "column": "diferencia",
+      "default": null,
+      "nullable": "YES",
+      "table": "cortes_caja",
+      "type": "numeric",
+      "udt": "numeric"
+    },
+    {
+      "column": "ingreso_reparaciones",
+      "default": null,
+      "nullable": "YES",
+      "table": "cortes_caja",
+      "type": "numeric",
+      "udt": "numeric"
+    },
+    {
+      "column": "ingreso_apartados",
+      "default": null,
+      "nullable": "YES",
+      "table": "cortes_caja",
+      "type": "numeric",
+      "udt": "numeric"
+    },
+    {
+      "column": "ingreso_abonos_fiado",
+      "default": null,
+      "nullable": "YES",
+      "table": "cortes_caja",
+      "type": "numeric",
+      "udt": "numeric"
+    },
+    {
+      "column": "id",
+      "default": null,
+      "nullable": "NO",
+      "table": "devoluciones",
+      "type": "uuid",
+      "udt": "uuid"
+    },
+    {
+      "column": "negocio_id",
+      "default": null,
+      "nullable": "NO",
+      "table": "devoluciones",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "venta_id",
+      "default": null,
+      "nullable": "NO",
+      "table": "devoluciones",
+      "type": "uuid",
+      "udt": "uuid"
+    },
+    {
+      "column": "items_devueltos",
+      "default": "'[]'::jsonb",
+      "nullable": "NO",
+      "table": "devoluciones",
+      "type": "jsonb",
+      "udt": "jsonb"
+    },
+    {
+      "column": "monto_devuelto",
+      "default": "0",
+      "nullable": "NO",
+      "table": "devoluciones",
+      "type": "numeric",
+      "udt": "numeric"
+    },
+    {
+      "column": "razon",
+      "default": null,
+      "nullable": "YES",
+      "table": "devoluciones",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "fecha_creacion",
+      "default": null,
+      "nullable": "NO",
+      "table": "devoluciones",
+      "type": "bigint",
+      "udt": "int8"
+    },
+    {
+      "column": "id",
+      "default": null,
+      "nullable": "NO",
+      "table": "gastos",
+      "type": "uuid",
+      "udt": "uuid"
+    },
+    {
+      "column": "negocio_id",
+      "default": null,
+      "nullable": "NO",
+      "table": "gastos",
+      "type": "uuid",
+      "udt": "uuid"
+    },
+    {
+      "column": "sucursal_id",
+      "default": null,
+      "nullable": "YES",
+      "table": "gastos",
+      "type": "uuid",
+      "udt": "uuid"
+    },
+    {
+      "column": "categoria",
+      "default": null,
+      "nullable": "NO",
+      "table": "gastos",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "descripcion",
+      "default": null,
+      "nullable": "NO",
+      "table": "gastos",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "monto",
+      "default": null,
+      "nullable": "NO",
+      "table": "gastos",
+      "type": "numeric",
+      "udt": "numeric"
+    },
+    {
+      "column": "metodo",
+      "default": "'efectivo'::text",
+      "nullable": "NO",
+      "table": "gastos",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "creado_por",
+      "default": null,
+      "nullable": "YES",
+      "table": "gastos",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "fecha_creacion",
+      "default": null,
+      "nullable": "NO",
+      "table": "gastos",
+      "type": "bigint",
+      "udt": "int8"
+    },
+    {
+      "column": "fecha_actualizacion",
+      "default": null,
+      "nullable": "NO",
+      "table": "gastos",
+      "type": "bigint",
+      "udt": "int8"
+    },
+    {
+      "column": "id",
+      "default": "gen_random_uuid()",
+      "nullable": "NO",
+      "table": "inventario_sucursales",
+      "type": "uuid",
+      "udt": "uuid"
+    },
+    {
+      "column": "sucursal_id",
+      "default": null,
+      "nullable": "NO",
+      "table": "inventario_sucursales",
+      "type": "uuid",
+      "udt": "uuid"
+    },
+    {
+      "column": "producto_id",
+      "default": null,
+      "nullable": "NO",
+      "table": "inventario_sucursales",
+      "type": "uuid",
+      "udt": "uuid"
+    },
+    {
+      "column": "stock_actual",
+      "default": "0",
+      "nullable": "NO",
+      "table": "inventario_sucursales",
+      "type": "integer",
+      "udt": "int4"
+    },
+    {
+      "column": "stock_minimo",
+      "default": "0",
+      "nullable": "NO",
+      "table": "inventario_sucursales",
+      "type": "integer",
+      "udt": "int4"
+    },
+    {
+      "column": "estado_sincronizacion",
+      "default": "1",
+      "nullable": "NO",
+      "table": "inventario_sucursales",
+      "type": "smallint",
+      "udt": "int2"
+    },
+    {
+      "column": "fecha_actualizacion",
+      "default": null,
+      "nullable": "NO",
+      "table": "inventario_sucursales",
+      "type": "bigint",
+      "udt": "int8"
+    },
+    {
+      "column": "id",
+      "default": "gen_random_uuid()",
+      "nullable": "NO",
+      "table": "negocios",
+      "type": "uuid",
+      "udt": "uuid"
+    },
+    {
+      "column": "nombre",
+      "default": null,
+      "nullable": "NO",
+      "table": "negocios",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "dueño_id",
+      "default": null,
+      "nullable": "YES",
+      "table": "negocios",
+      "type": "uuid",
+      "udt": "uuid"
+    },
+    {
+      "column": "created_at",
+      "default": "now()",
+      "nullable": "YES",
+      "table": "negocios",
+      "type": "timestamp with time zone",
+      "udt": "timestamptz"
+    },
+    {
+      "column": "onboarding_completado",
+      "default": "false",
+      "nullable": "YES",
+      "table": "negocios",
+      "type": "boolean",
+      "udt": "bool"
+    },
+    {
+      "column": "telefono",
+      "default": null,
+      "nullable": "YES",
+      "table": "negocios",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "tipo_negocio",
+      "default": null,
+      "nullable": "YES",
+      "table": "negocios",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "direccion",
+      "default": null,
+      "nullable": "YES",
+      "table": "negocios",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "pin_admin",
+      "default": null,
+      "nullable": "YES",
+      "table": "negocios",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "whatsapp_dueno",
+      "default": "''::text",
+      "nullable": "YES",
+      "table": "negocios",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "rnc",
+      "default": "''::text",
+      "nullable": "YES",
+      "table": "negocios",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "mensaje_ticket",
+      "default": "'¡Gracias por su compra!'::text",
+      "nullable": "YES",
+      "table": "negocios",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "plan_activo",
+      "default": "false",
+      "nullable": "NO",
+      "table": "negocios",
+      "type": "boolean",
+      "udt": "bool"
+    },
+    {
+      "column": "trial_hasta",
+      "default": null,
+      "nullable": "YES",
+      "table": "negocios",
+      "type": "bigint",
+      "udt": "int8"
+    },
+    {
+      "column": "logo_url",
+      "default": null,
+      "nullable": "YES",
+      "table": "negocios",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "acceso_hasta",
+      "default": null,
+      "nullable": "YES",
+      "table": "negocios",
+      "type": "bigint",
+      "udt": "int8"
+    },
+    {
+      "column": "nota_operador",
+      "default": null,
+      "nullable": "YES",
+      "table": "negocios",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "plan_tier",
+      "default": "'basico'::text",
+      "nullable": "NO",
+      "table": "negocios",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "color_marca",
+      "default": null,
+      "nullable": "YES",
+      "table": "negocios",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "fuente_marca",
+      "default": null,
+      "nullable": "YES",
+      "table": "negocios",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "catalogo_publico",
+      "default": "false",
+      "nullable": "NO",
+      "table": "negocios",
+      "type": "boolean",
+      "udt": "bool"
+    },
+    {
+      "column": "codigo_referido",
+      "default": null,
+      "nullable": "YES",
+      "table": "negocios",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "referido_por",
+      "default": null,
+      "nullable": "YES",
+      "table": "negocios",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "referido_acreditado",
+      "default": "false",
+      "nullable": "NO",
+      "table": "negocios",
+      "type": "boolean",
+      "udt": "bool"
+    },
+    {
+      "column": "referidos_total",
+      "default": "0",
+      "nullable": "NO",
+      "table": "negocios",
+      "type": "integer",
+      "udt": "int4"
+    },
+    {
+      "column": "banco_nombre",
+      "default": null,
+      "nullable": "YES",
+      "table": "negocios",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "banco_cuenta",
+      "default": null,
+      "nullable": "YES",
+      "table": "negocios",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "banco_titular",
+      "default": null,
+      "nullable": "YES",
+      "table": "negocios",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "id",
+      "default": null,
+      "nullable": "NO",
+      "table": "productos",
+      "type": "uuid",
+      "udt": "uuid"
+    },
+    {
+      "column": "negocio_id",
+      "default": null,
+      "nullable": "YES",
+      "table": "productos",
+      "type": "uuid",
+      "udt": "uuid"
+    },
+    {
+      "column": "nombre",
+      "default": null,
+      "nullable": "NO",
+      "table": "productos",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "codigo_barras",
+      "default": null,
+      "nullable": "YES",
+      "table": "productos",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "precio_venta",
+      "default": null,
+      "nullable": "NO",
+      "table": "productos",
+      "type": "numeric",
+      "udt": "numeric"
+    },
+    {
+      "column": "costo",
+      "default": null,
+      "nullable": "NO",
+      "table": "productos",
+      "type": "numeric",
+      "udt": "numeric"
+    },
+    {
+      "column": "stock_actual",
+      "default": "0",
+      "nullable": "YES",
+      "table": "productos",
+      "type": "integer",
+      "udt": "int4"
+    },
+    {
+      "column": "stock_minimo",
+      "default": "0",
+      "nullable": "YES",
+      "table": "productos",
+      "type": "integer",
+      "udt": "int4"
+    },
+    {
+      "column": "tasa_itbis",
+      "default": "0.18",
+      "nullable": "YES",
+      "table": "productos",
+      "type": "numeric",
+      "udt": "numeric"
+    },
+    {
+      "column": "actualizado_en",
+      "default": "now()",
+      "nullable": "YES",
+      "table": "productos",
+      "type": "timestamp with time zone",
+      "udt": "timestamptz"
+    },
+    {
+      "column": "tipo",
+      "default": "'simple'::text",
+      "nullable": "YES",
+      "table": "productos",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "fecha_actualizacion",
+      "default": "0",
+      "nullable": "YES",
+      "table": "productos",
+      "type": "bigint",
+      "udt": "int8"
+    },
+    {
+      "column": "precio_2",
+      "default": null,
+      "nullable": "YES",
+      "table": "productos",
+      "type": "numeric",
+      "udt": "numeric"
+    },
+    {
+      "column": "precio_3",
+      "default": null,
+      "nullable": "YES",
+      "table": "productos",
+      "type": "numeric",
+      "udt": "numeric"
+    },
+    {
+      "column": "ubicacion",
+      "default": null,
+      "nullable": "YES",
+      "table": "productos",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "serializable",
+      "default": "false",
+      "nullable": "YES",
+      "table": "productos",
+      "type": "boolean",
+      "udt": "bool"
+    },
+    {
+      "column": "imagen_url",
+      "default": null,
+      "nullable": "YES",
+      "table": "productos",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "eliminado",
+      "default": "false",
+      "nullable": "NO",
+      "table": "productos",
+      "type": "boolean",
+      "udt": "bool"
+    },
+    {
+      "column": "id",
+      "default": null,
+      "nullable": "NO",
+      "table": "reparaciones",
+      "type": "uuid",
+      "udt": "uuid"
+    },
+    {
+      "column": "negocio_id",
+      "default": null,
+      "nullable": "NO",
+      "table": "reparaciones",
+      "type": "uuid",
+      "udt": "uuid"
+    },
+    {
+      "column": "sucursal_id",
+      "default": null,
+      "nullable": "YES",
+      "table": "reparaciones",
+      "type": "uuid",
+      "udt": "uuid"
+    },
+    {
+      "column": "folio",
+      "default": null,
+      "nullable": "NO",
+      "table": "reparaciones",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "cliente_id",
+      "default": null,
+      "nullable": "YES",
+      "table": "reparaciones",
+      "type": "uuid",
+      "udt": "uuid"
+    },
+    {
+      "column": "cliente_nombre",
+      "default": null,
+      "nullable": "NO",
+      "table": "reparaciones",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "cliente_telefono",
+      "default": null,
+      "nullable": "YES",
+      "table": "reparaciones",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "equipo_marca",
+      "default": null,
+      "nullable": "YES",
+      "table": "reparaciones",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "equipo_modelo",
+      "default": null,
+      "nullable": "NO",
+      "table": "reparaciones",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "equipo_imei",
+      "default": null,
+      "nullable": "YES",
+      "table": "reparaciones",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "equipo_color",
+      "default": null,
+      "nullable": "YES",
+      "table": "reparaciones",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "patron_clave",
+      "default": null,
+      "nullable": "YES",
+      "table": "reparaciones",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "condicion_entrada",
+      "default": null,
+      "nullable": "YES",
+      "table": "reparaciones",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "accesorios",
+      "default": null,
+      "nullable": "YES",
+      "table": "reparaciones",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "problema_reportado",
+      "default": null,
+      "nullable": "NO",
+      "table": "reparaciones",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "diagnostico",
+      "default": null,
+      "nullable": "YES",
+      "table": "reparaciones",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "estado",
+      "default": "'recibido'::text",
+      "nullable": "NO",
+      "table": "reparaciones",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "repuestos",
+      "default": "'[]'::jsonb",
+      "nullable": "NO",
+      "table": "reparaciones",
+      "type": "jsonb",
+      "udt": "jsonb"
+    },
+    {
+      "column": "mano_obra",
+      "default": "0",
+      "nullable": "NO",
+      "table": "reparaciones",
+      "type": "numeric",
+      "udt": "numeric"
+    },
+    {
+      "column": "total",
+      "default": "0",
+      "nullable": "NO",
+      "table": "reparaciones",
+      "type": "numeric",
+      "udt": "numeric"
+    },
+    {
+      "column": "abono",
+      "default": "0",
+      "nullable": "NO",
+      "table": "reparaciones",
+      "type": "numeric",
+      "udt": "numeric"
+    },
+    {
+      "column": "metodo_abono",
+      "default": null,
+      "nullable": "YES",
+      "table": "reparaciones",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "metodo_pago_final",
+      "default": null,
+      "nullable": "YES",
+      "table": "reparaciones",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "garantia_dias",
+      "default": null,
+      "nullable": "YES",
+      "table": "reparaciones",
+      "type": "integer",
+      "udt": "int4"
+    },
+    {
+      "column": "garantia_hasta",
+      "default": null,
+      "nullable": "YES",
+      "table": "reparaciones",
+      "type": "bigint",
+      "udt": "int8"
+    },
+    {
+      "column": "tecnico_nombre",
+      "default": null,
+      "nullable": "YES",
+      "table": "reparaciones",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "notas",
+      "default": null,
+      "nullable": "YES",
+      "table": "reparaciones",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "fecha_creacion",
+      "default": null,
+      "nullable": "NO",
+      "table": "reparaciones",
+      "type": "bigint",
+      "udt": "int8"
+    },
+    {
+      "column": "fecha_entrega",
+      "default": null,
+      "nullable": "YES",
+      "table": "reparaciones",
+      "type": "bigint",
+      "udt": "int8"
+    },
+    {
+      "column": "fecha_actualizacion",
+      "default": null,
+      "nullable": "NO",
+      "table": "reparaciones",
+      "type": "bigint",
+      "udt": "int8"
+    },
+    {
+      "column": "condicion_checklist",
+      "default": "'[]'::jsonb",
+      "nullable": "NO",
+      "table": "reparaciones",
+      "type": "jsonb",
+      "udt": "jsonb"
+    },
+    {
+      "column": "pagos",
+      "default": "'[]'::jsonb",
+      "nullable": "NO",
+      "table": "reparaciones",
+      "type": "jsonb",
+      "udt": "jsonb"
+    },
+    {
+      "column": "es_garantia",
+      "default": "false",
+      "nullable": "YES",
+      "table": "reparaciones",
+      "type": "boolean",
+      "udt": "bool"
+    },
+    {
+      "column": "reparacion_origen_id",
+      "default": null,
+      "nullable": "YES",
+      "table": "reparaciones",
+      "type": "uuid",
+      "udt": "uuid"
+    },
+    {
+      "column": "bitacora",
+      "default": "'[]'::jsonb",
+      "nullable": "NO",
+      "table": "reparaciones",
+      "type": "jsonb",
+      "udt": "jsonb"
+    },
+    {
+      "column": "id",
+      "default": null,
+      "nullable": "NO",
+      "table": "seriales",
+      "type": "uuid",
+      "udt": "uuid"
+    },
+    {
+      "column": "negocio_id",
+      "default": null,
+      "nullable": "NO",
+      "table": "seriales",
+      "type": "uuid",
+      "udt": "uuid"
+    },
+    {
+      "column": "producto_id",
+      "default": null,
+      "nullable": "NO",
+      "table": "seriales",
+      "type": "uuid",
+      "udt": "uuid"
+    },
+    {
+      "column": "numero_serial",
+      "default": null,
+      "nullable": "NO",
+      "table": "seriales",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "estado",
+      "default": "'disponible'::text",
+      "nullable": "NO",
+      "table": "seriales",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "venta_id",
+      "default": null,
+      "nullable": "YES",
+      "table": "seriales",
+      "type": "uuid",
+      "udt": "uuid"
+    },
+    {
+      "column": "fecha_venta",
+      "default": null,
+      "nullable": "YES",
+      "table": "seriales",
+      "type": "bigint",
+      "udt": "int8"
+    },
+    {
+      "column": "fecha_actualizacion",
+      "default": null,
+      "nullable": "NO",
+      "table": "seriales",
+      "type": "bigint",
+      "udt": "int8"
+    },
+    {
+      "column": "garantia_dias",
+      "default": null,
+      "nullable": "YES",
+      "table": "seriales",
+      "type": "integer",
+      "udt": "int4"
+    },
+    {
+      "column": "garantia_hasta",
+      "default": null,
+      "nullable": "YES",
+      "table": "seriales",
+      "type": "bigint",
+      "udt": "int8"
+    },
+    {
+      "column": "cliente_nombre",
+      "default": null,
+      "nullable": "YES",
+      "table": "seriales",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "precio_venta",
+      "default": null,
+      "nullable": "YES",
+      "table": "seriales",
+      "type": "numeric",
+      "udt": "numeric"
+    },
+    {
+      "column": "id",
+      "default": "gen_random_uuid()",
+      "nullable": "NO",
+      "table": "sucursales",
+      "type": "uuid",
+      "udt": "uuid"
+    },
+    {
+      "column": "negocio_id",
+      "default": null,
+      "nullable": "NO",
+      "table": "sucursales",
+      "type": "uuid",
+      "udt": "uuid"
+    },
+    {
+      "column": "nombre",
+      "default": null,
+      "nullable": "NO",
+      "table": "sucursales",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "direccion",
+      "default": null,
+      "nullable": "YES",
+      "table": "sucursales",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "fecha_creacion",
+      "default": null,
+      "nullable": "NO",
+      "table": "sucursales",
+      "type": "bigint",
+      "udt": "int8"
+    },
+    {
+      "column": "id",
+      "default": null,
+      "nullable": "NO",
+      "table": "transacciones_fiado",
+      "type": "uuid",
+      "udt": "uuid"
+    },
+    {
+      "column": "negocio_id",
+      "default": null,
+      "nullable": "NO",
+      "table": "transacciones_fiado",
+      "type": "uuid",
+      "udt": "uuid"
+    },
+    {
+      "column": "cliente_id",
+      "default": null,
+      "nullable": "NO",
+      "table": "transacciones_fiado",
+      "type": "uuid",
+      "udt": "uuid"
+    },
+    {
+      "column": "venta_id",
+      "default": null,
+      "nullable": "YES",
+      "table": "transacciones_fiado",
+      "type": "uuid",
+      "udt": "uuid"
+    },
+    {
+      "column": "tipo",
+      "default": null,
+      "nullable": "NO",
+      "table": "transacciones_fiado",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "monto",
+      "default": null,
+      "nullable": "NO",
+      "table": "transacciones_fiado",
+      "type": "numeric",
+      "udt": "numeric"
+    },
+    {
+      "column": "concepto",
+      "default": null,
+      "nullable": "NO",
+      "table": "transacciones_fiado",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "fecha_creacion",
+      "default": "now()",
+      "nullable": "NO",
+      "table": "transacciones_fiado",
+      "type": "timestamp with time zone",
+      "udt": "timestamptz"
+    },
+    {
+      "column": "estado_sincronizacion",
+      "default": "1",
+      "nullable": "YES",
+      "table": "transacciones_fiado",
+      "type": "smallint",
+      "udt": "int2"
+    },
+    {
+      "column": "fecha_actualizacion",
+      "default": null,
+      "nullable": "NO",
+      "table": "transacciones_fiado",
+      "type": "bigint",
+      "udt": "int8"
+    },
+    {
+      "column": "sucursal_id",
+      "default": null,
+      "nullable": "YES",
+      "table": "transacciones_fiado",
+      "type": "uuid",
+      "udt": "uuid"
+    },
+    {
+      "column": "caja_id",
+      "default": null,
+      "nullable": "YES",
+      "table": "transacciones_fiado",
+      "type": "uuid",
+      "udt": "uuid"
+    },
+    {
+      "column": "metodo_pago",
+      "default": null,
+      "nullable": "YES",
+      "table": "transacciones_fiado",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "id",
+      "default": "gen_random_uuid()",
+      "nullable": "NO",
+      "table": "usuarios_negocio",
+      "type": "uuid",
+      "udt": "uuid"
+    },
+    {
+      "column": "negocio_id",
+      "default": null,
+      "nullable": "NO",
+      "table": "usuarios_negocio",
+      "type": "uuid",
+      "udt": "uuid"
+    },
+    {
+      "column": "user_id",
+      "default": null,
+      "nullable": "YES",
+      "table": "usuarios_negocio",
+      "type": "uuid",
+      "udt": "uuid"
+    },
+    {
+      "column": "nombre",
+      "default": null,
+      "nullable": "NO",
+      "table": "usuarios_negocio",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "email",
+      "default": null,
+      "nullable": "NO",
+      "table": "usuarios_negocio",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "rol",
+      "default": "'cajero'::text",
+      "nullable": "NO",
+      "table": "usuarios_negocio",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "activo",
+      "default": "true",
+      "nullable": "NO",
+      "table": "usuarios_negocio",
+      "type": "boolean",
+      "udt": "bool"
+    },
+    {
+      "column": "created_at",
+      "default": "now()",
+      "nullable": "YES",
+      "table": "usuarios_negocio",
+      "type": "timestamp with time zone",
+      "udt": "timestamptz"
+    },
+    {
+      "column": "invite_token",
+      "default": "gen_random_uuid()",
+      "nullable": "YES",
+      "table": "usuarios_negocio",
+      "type": "uuid",
+      "udt": "uuid"
+    },
+    {
+      "column": "id",
+      "default": "gen_random_uuid()",
+      "nullable": "NO",
+      "table": "venta_detalles",
+      "type": "uuid",
+      "udt": "uuid"
+    },
+    {
+      "column": "venta_id",
+      "default": null,
+      "nullable": "NO",
+      "table": "venta_detalles",
+      "type": "uuid",
+      "udt": "uuid"
+    },
+    {
+      "column": "producto_id",
+      "default": null,
+      "nullable": "YES",
+      "table": "venta_detalles",
+      "type": "uuid",
+      "udt": "uuid"
+    },
+    {
+      "column": "negocio_id",
+      "default": null,
+      "nullable": "NO",
+      "table": "venta_detalles",
+      "type": "uuid",
+      "udt": "uuid"
+    },
+    {
+      "column": "sucursal_id",
+      "default": null,
+      "nullable": "YES",
+      "table": "venta_detalles",
+      "type": "uuid",
+      "udt": "uuid"
+    },
+    {
+      "column": "cantidad",
+      "default": null,
+      "nullable": "NO",
+      "table": "venta_detalles",
+      "type": "numeric",
+      "udt": "numeric"
+    },
+    {
+      "column": "precio_unitario",
+      "default": null,
+      "nullable": "NO",
+      "table": "venta_detalles",
+      "type": "numeric",
+      "udt": "numeric"
+    },
+    {
+      "column": "subtotal",
+      "default": null,
+      "nullable": "NO",
+      "table": "venta_detalles",
+      "type": "numeric",
+      "udt": "numeric"
+    },
+    {
+      "column": "fecha_creacion",
+      "default": null,
+      "nullable": "NO",
+      "table": "venta_detalles",
+      "type": "bigint",
+      "udt": "int8"
+    },
+    {
+      "column": "nombre",
+      "default": null,
+      "nullable": "YES",
+      "table": "venta_detalles",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "id",
+      "default": null,
+      "nullable": "NO",
+      "table": "ventas",
+      "type": "uuid",
+      "udt": "uuid"
+    },
+    {
+      "column": "negocio_id",
+      "default": null,
+      "nullable": "NO",
+      "table": "ventas",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "total",
+      "default": null,
+      "nullable": "NO",
+      "table": "ventas",
+      "type": "numeric",
+      "udt": "numeric"
+    },
+    {
+      "column": "metodo_pago",
+      "default": null,
+      "nullable": "NO",
+      "table": "ventas",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "fecha_creacion",
+      "default": null,
+      "nullable": "NO",
+      "table": "ventas",
+      "type": "bigint",
+      "udt": "int8"
+    },
+    {
+      "column": "created_at",
+      "default": "timezone('utc'::text, now())",
+      "nullable": "YES",
+      "table": "ventas",
+      "type": "timestamp with time zone",
+      "udt": "timestamptz"
+    },
+    {
+      "column": "sucursal_id",
+      "default": null,
+      "nullable": "YES",
+      "table": "ventas",
+      "type": "uuid",
+      "udt": "uuid"
+    },
+    {
+      "column": "numero_ticket",
+      "default": null,
+      "nullable": "YES",
+      "table": "ventas",
+      "type": "integer",
+      "udt": "int4"
+    },
+    {
+      "column": "monto_efectivo",
+      "default": null,
+      "nullable": "YES",
+      "table": "ventas",
+      "type": "numeric",
+      "udt": "numeric"
+    },
+    {
+      "column": "monto_transferencia",
+      "default": null,
+      "nullable": "YES",
+      "table": "ventas",
+      "type": "numeric",
+      "udt": "numeric"
+    },
+    {
+      "column": "cliente_id",
+      "default": null,
+      "nullable": "YES",
+      "table": "ventas",
+      "type": "uuid",
+      "udt": "uuid"
+    },
+    {
+      "column": "ncf",
+      "default": null,
+      "nullable": "YES",
+      "table": "ventas",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "vendedor_id",
+      "default": null,
+      "nullable": "YES",
+      "table": "ventas",
+      "type": "uuid",
+      "udt": "uuid"
+    },
+    {
+      "column": "vendedor_nombre",
+      "default": null,
+      "nullable": "YES",
+      "table": "ventas",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "caja_codigo",
+      "default": null,
+      "nullable": "YES",
+      "table": "ventas",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "cliente_nombre",
+      "default": null,
+      "nullable": "YES",
+      "table": "ventas",
+      "type": "text",
+      "udt": "text"
+    },
+    {
+      "column": "id",
+      "default": null,
+      "nullable": "NO",
+      "table": "movimientos_stock",
+      "udt": "uuid"
+    },
+    {
+      "column": "negocio_id",
+      "default": null,
+      "nullable": "NO",
+      "table": "movimientos_stock",
+      "udt": "uuid"
+    },
+    {
+      "column": "sucursal_id",
+      "default": null,
+      "nullable": "YES",
+      "table": "movimientos_stock",
+      "udt": "uuid"
+    },
+    {
+      "column": "producto_id",
+      "default": null,
+      "nullable": "NO",
+      "table": "movimientos_stock",
+      "udt": "uuid"
+    },
+    {
+      "column": "delta",
+      "default": "0",
+      "nullable": "NO",
+      "table": "movimientos_stock",
+      "udt": "numeric"
+    },
+    {
+      "column": "valor_absoluto",
+      "default": null,
+      "nullable": "YES",
+      "table": "movimientos_stock",
+      "udt": "numeric"
+    },
+    {
+      "column": "tipo",
+      "default": null,
+      "nullable": "NO",
+      "table": "movimientos_stock",
+      "udt": "text"
+    },
+    {
+      "column": "referencia_id",
+      "default": null,
+      "nullable": "YES",
+      "table": "movimientos_stock",
+      "udt": "uuid"
+    },
+    {
+      "column": "fecha_creacion",
+      "default": null,
+      "nullable": "NO",
+      "table": "movimientos_stock",
+      "udt": "int8"
+    }
+  ],
+  "constraints": [
+    {
+      "definition": "PRIMARY KEY (id)",
+      "name": "apartados_pkey",
+      "table": "apartados"
+    },
+    {
+      "definition": "CHECK ((estado = ANY (ARRAY['abierta'::text, 'cerrada'::text])))",
+      "name": "cajas_estado_check",
+      "table": "cajas"
+    },
+    {
+      "definition": "PRIMARY KEY (id)",
+      "name": "cajas_pkey",
+      "table": "cajas"
+    },
+    {
+      "definition": "PRIMARY KEY (id)",
+      "name": "clientes_pkey",
+      "table": "clientes"
+    },
+    {
+      "definition": "FOREIGN KEY (negocio_id) REFERENCES negocios(id) ON DELETE CASCADE",
+      "name": "cortes_caja_negocio_id_fkey",
+      "table": "cortes_caja"
+    },
+    {
+      "definition": "PRIMARY KEY (id)",
+      "name": "cortes_caja_pkey",
+      "table": "cortes_caja"
+    },
+    {
+      "definition": "CHECK ((tipo = ANY (ARRAY['X'::text, 'Z'::text])))",
+      "name": "cortes_caja_tipo_check",
+      "table": "cortes_caja"
+    },
+    {
+      "definition": "PRIMARY KEY (id)",
+      "name": "inventario_sucursales_pkey",
+      "table": "inventario_sucursales"
+    },
+    {
+      "definition": "UNIQUE (sucursal_id, producto_id)",
+      "name": "inventario_sucursales_sucursal_id_producto_id_key",
+      "table": "inventario_sucursales"
+    },
+    {
+      "definition": "UNIQUE (codigo_referido)",
+      "name": "negocios_codigo_referido_key",
+      "table": "negocios"
+    },
+    {
+      "definition": "FOREIGN KEY (\"dueño_id\") REFERENCES auth.users(id) ON DELETE CASCADE",
+      "name": "negocios_dueño_id_fkey",
+      "table": "negocios"
+    },
+    {
+      "definition": "PRIMARY KEY (id)",
+      "name": "negocios_pkey",
+      "table": "negocios"
+    },
+    {
+      "definition": "FOREIGN KEY (negocio_id) REFERENCES negocios(id)",
+      "name": "productos_negocio_id_fkey",
+      "table": "productos"
+    },
+    {
+      "definition": "PRIMARY KEY (id)",
+      "name": "productos_pkey",
+      "table": "productos"
+    },
+    {
+      "definition": "PRIMARY KEY (id)",
+      "name": "reparaciones_pkey",
+      "table": "reparaciones"
+    },
+    {
+      "definition": "CHECK ((estado = ANY (ARRAY['disponible'::text, 'vendido'::text])))",
+      "name": "seriales_estado_check",
+      "table": "seriales"
+    },
+    {
+      "definition": "UNIQUE (negocio_id, numero_serial)",
+      "name": "seriales_negocio_id_numero_serial_key",
+      "table": "seriales"
+    },
+    {
+      "definition": "PRIMARY KEY (id)",
+      "name": "seriales_pkey",
+      "table": "seriales"
+    },
+    {
+      "definition": "CHECK (((metodo_pago IS NULL) OR ((tipo = 'abono'::text) AND (metodo_pago = ANY (ARRAY['efectivo'::text, 'tarjeta'::text, 'transferencia'::text])))))",
+      "name": "transacciones_fiado_metodo_abono_check",
+      "table": "transacciones_fiado"
+    },
+    {
+      "definition": "CHECK ((monto > (0)::numeric))",
+      "name": "transacciones_fiado_monto_check",
+      "table": "transacciones_fiado"
+    },
+    {
+      "definition": "PRIMARY KEY (id)",
+      "name": "transacciones_fiado_pkey",
+      "table": "transacciones_fiado"
+    },
+    {
+      "definition": "CHECK ((tipo = ANY (ARRAY['cargo'::text, 'abono'::text])))",
+      "name": "transacciones_fiado_tipo_check",
+      "table": "transacciones_fiado"
+    },
+    {
+      "definition": "FOREIGN KEY (negocio_id) REFERENCES negocios(id) ON DELETE CASCADE",
+      "name": "usuarios_negocio_negocio_id_fkey",
+      "table": "usuarios_negocio"
+    },
+    {
+      "definition": "PRIMARY KEY (id)",
+      "name": "usuarios_negocio_pkey",
+      "table": "usuarios_negocio"
+    },
+    {
+      "definition": "CHECK ((rol = ANY (ARRAY['admin'::text, 'vendedor'::text, 'cajero'::text])))",
+      "name": "usuarios_negocio_rol_check",
+      "table": "usuarios_negocio"
+    },
+    {
+      "definition": "FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE SET NULL",
+      "name": "usuarios_negocio_user_id_fkey",
+      "table": "usuarios_negocio"
+    },
+    {
+      "definition": "PRIMARY KEY (id)",
+      "name": "venta_detalles_pkey",
+      "table": "venta_detalles"
+    },
+    {
+      "definition": "FOREIGN KEY (cliente_id) REFERENCES clientes(id) ON DELETE SET NULL",
+      "name": "ventas_cliente_id_fkey",
+      "table": "ventas"
+    },
+    {
+      "definition": "PRIMARY KEY (id)",
+      "name": "ventas_pkey",
+      "table": "ventas"
+    },
+    {
+      "definition": "FOREIGN KEY (vendedor_id) REFERENCES auth.users(id)",
+      "name": "ventas_vendedor_id_fkey",
+      "table": "ventas"
+    },
+    {
+      "definition": "PRIMARY KEY (id)",
+      "name": "movimientos_stock_pkey",
+      "table": "movimientos_stock"
+    }
+  ]
+}

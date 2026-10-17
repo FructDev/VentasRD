@@ -838,6 +838,12 @@ impl AccessState {
         self.sales_local(|c, ctx, _, _, _| sync::read(c, &ctx))
     }
     fn sales_action(&self, action: SalesAction) -> Result<Value, AccessError> {
+        if cfg!(feature="production-pilot") && (matches!(&action,
+            SalesAction::FiscalSettingsRead{} | SalesAction::FiscalSettingsSave{..} |
+            SalesAction::FiscalSettingsRecover{..} | SalesAction::FiscalSettingsAbandon{..})
+            || matches!(&action,SalesAction::Confirm{sale} if sale.fiscal_type.is_some())) {
+            return Err(error("FISCAL_DISABLED"));
+        }
         // The cashier is the original POS-only role. Enforce at IPC as well as
         // navigation; a renderer cannot request reports or administration.
         let allowed=cashier_allowed(&action);
@@ -924,6 +930,7 @@ impl AccessState {
                 confirmation,
                 free_tax,
             } => {
+                if cfg!(feature="production-pilot") {return Err(error("CUTOVER_REQUIRED"));}
                 if confirmation != "QA_SYNTHETIC_QUIESCED" {
                     return Err(error("SALES_SETUP_REQUIRED"));
                 }
@@ -1438,6 +1445,13 @@ pub async fn native_sales(
     })
     .await
     .map_err(|_| error("ACCESS_UNAVAILABLE"))?
+    .map(|mut value| {
+        if value.get("mode").is_some() {
+            value["fiscalEnabled"]=json!(!cfg!(feature="production-pilot"));
+            value["environment"]=json!(environment::NAME);
+        }
+        value
+    })
 }
 
 #[cfg(test)]

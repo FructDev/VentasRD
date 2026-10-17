@@ -19,7 +19,8 @@ impl RefreshStore {
     fn open(root: &Path, selected: &Selection) -> Result<Self, AccessError> {
         selected.identity.context(&selected.actor_id)?;
         let slot = format!(
-            "com.ventard.pos.qa.staging-auth.{}.{}",
+            "{}.{}.{}",
+            if cfg!(feature="production-pilot") {"com.ventard.pos.production-auth"} else {"com.ventard.pos.qa.staging-auth"},
             selected.identity.binding()?.slot(),
             selected.actor_id
         );
@@ -47,8 +48,8 @@ impl RefreshStore {
         let store = Store::new().map_err(|_| error("ACCESS_SESSION_STORAGE"))?;
         let entry = store
             .build(
-                "VentaRD Native QA",
-                "staging-auth",
+                if cfg!(feature="production-pilot") {"VentaRD Native"} else {"VentaRD Native QA"},
+                if cfg!(feature="production-pilot") {"production-auth"} else {"staging-auth"},
                 Some(&HashMap::from([
                     ("target", slot.as_str()),
                     ("persistence", "Local"),

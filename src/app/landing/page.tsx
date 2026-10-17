@@ -2,7 +2,7 @@
 'use client';
 
 import Link from 'next/link';
-import { ShoppingCart, WifiOff, MessageCircle, BarChart2, Package, ChevronRight, Check, UserPlus, Shield, Clock } from 'lucide-react';
+import { ShoppingCart, WifiOff, MessageCircle, BarChart2, Package, ChevronRight, Check, UserPlus, Shield } from 'lucide-react';
 
 const PRODUCTOS_MOCKUP = [
     { name: 'Arroz 5lb',  price: '250' },
@@ -111,6 +111,7 @@ export default function LandingPage() {
                         <span className="font-display font-extrabold text-lg tracking-tight">VentaRD</span>
                     </div>
                     <div className="flex items-center gap-4 sm:gap-6">
+                        <Link href="/descargar" className="text-sm text-vr-gray hover:text-white transition-colors font-medium">Descargar</Link>
                         <Link href="/login" className="hidden sm:inline text-sm text-vr-gray hover:text-white transition-colors font-medium">
                             Iniciar sesión
                         </Link>

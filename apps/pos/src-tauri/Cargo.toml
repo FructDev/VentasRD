@@ -1,5 +1,6 @@
 [package]
 name = "ventard-pos"
+default-run = "ventard-pos"
 version = "0.1.0"
 edition.workspace = true
 rust-version = "1.90"
@@ -20,6 +21,13 @@ ventard-core = { path = "../../../crates/ventard-core", default-features = false
 [features]
 custom-protocol = ["tauri/custom-protocol"]
 qa-spike = ["ventard-core/qa-spike"]
+production-pilot = []
+signed-updates = ["dep:tauri-plugin-updater", "dep:minisign-verify"]
+
+[[bin]]
+name = "ventard-release-verify"
+path = "src/release_verify.rs"
+required-features = ["signed-updates"]
 
 [dependencies.serde]
 version = "1"
@@ -38,6 +46,8 @@ reqwest = {version="=0.13.5",default-features=false,features= ["blocking", "json
 base64 = "=0.23.1"
 rfd = {version="=0.17.2",default-features=false}
 printers = { version = "=2.3.0", default-features = false }
+tauri-plugin-updater = { version = "=2.12.0", default-features = false, features = ["native-tls", "zip"], optional = true }
+minisign-verify = {version="=0.2.5", optional=true}
 
 [dev-dependencies]
 uuid = {version = "1", features = ["v4"] }

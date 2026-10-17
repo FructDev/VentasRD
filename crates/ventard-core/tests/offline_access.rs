@@ -42,6 +42,22 @@ fn signed(p: Value) -> Vec<u8> {
     serde_json::to_vec(&json!({"payload":p,"signature":hex})).unwrap()
 }
 #[test]
+fn production_grant_requires_matching_environment_context_and_trusted_key() {
+    let mut p = payload();
+    p["issuer"] = json!("ventard.production");
+    p["audience"] = json!("ventard.native.production.v1");
+    let mut ctx = context();
+    ctx.audience = "ventard.native.production.v1".into();
+    assert!(verify_grant(&signed(p.clone()), &[trusted()], &ctx).is_ok());
+    assert!(verify_grant(&signed(p.clone()), &[trusted()], &context()).is_err());
+    assert!(verify_grant(&signed(payload()), &[trusted()], &ctx).is_err());
+    assert!(verify_grant(&signed(p.clone()), &[], &ctx).is_err());
+    for issuer in ["ventard.staging", "ventard.unknown"] {
+        p["issuer"] = json!(issuer);
+        assert!(verify_grant(&signed(p.clone()), &[trusted()], &ctx).is_err());
+    }
+}
+#[test]
 fn cashier_is_signed_pos_access_without_inventory_or_management(){
  let mut p=payload();p["role"]=json!("cashier");p["capabilities"]=json!(["READ","SELL"]);
  let grant=verify_grant(&signed(p.clone()),&[trusted()],&context()).unwrap();let decision=grant.evaluate(2000,2000,1).unwrap();assert!(decision.allows("SELL"));assert!(!decision.allows("MANAGE"));assert!(!decision.allows("INVENTORY_WRITE"));

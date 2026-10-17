@@ -14,6 +14,7 @@ fn main() {
             "qa_cart_save",
             "qa_cart_action",
             "native_access_status",
+            "native_update",
             "native_access_login",
             "native_access_provision",
             "native_access_pin",

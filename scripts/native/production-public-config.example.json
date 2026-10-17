@@ -1,0 +1,7 @@
+{
+  "publishableKey": "REQUIRED_PRODUCTION_ANON_OR_PUBLISHABLE_KEY",
+  "keyId": "production-release-1",
+  "publicHex": "REQUIRED_PUBLIC_ED25519_KEY_64_LOWERCASE_HEX",
+  "issuerUrl": "https://oxbekqoecunsbjheqgqg.supabase.co/functions/v1/native-provision",
+  "webOrigin": "https://ventard.vercel.app"
+}

@@ -4,6 +4,7 @@ import {TeamPage} from '../features/settings/team-page';
 import {PublicCatalogueSettings} from '../features/settings/public-catalogue-settings';
 import {BusinessSettings} from '../features/settings/business-settings';
 import {BackupSettings} from '../features/settings/backup-settings';
+import {UpdateSettings} from '../features/settings/update-settings';
 import {WebMigrationSettings} from '../features/settings/web-migration-settings';
 import {FiscalSettings} from '../features/settings/fiscal-settings';
 import {nativeArchivePort} from '../platform/archive';
@@ -73,26 +74,27 @@ function PendingModule({ name }: { name: string }) {
     </section>
   );
 }
-function SettingsPage() {
+function SettingsPage({production=false}:{production?:boolean}) {
   const s = useSales();
   return (
     <section className="h-full p-4 sm:p-8 overflow-y-auto">
       <div className="max-w-3xl mx-auto mb-6"><h1 className="text-2xl sm:text-3xl font-display font-black text-white">Configuración del Negocio</h1><p className="text-vr-gray mt-2">Personaliza la información que aparece en los tickets y reportes.</p></div>
       <div className="grid gap-4 max-w-3xl mx-auto"><BusinessSettings/><PublicCatalogueSettings/><Link to="/configuracion/equipo" className="bg-navy-2 border border-navy-3 rounded-2xl p-5 text-gold font-bold">👥 Mi Equipo · Gestiona cajeros y vendedores →</Link>
         <PrintingSettings/>
-        <FiscalSettings/>
+        {!production&&<FiscalSettings/>}
         <BackupSettings/>
+        <UpdateSettings/>
         {s.snapshot&&s.snapshot.mode!=='recovery-readonly'&&<WebMigrationSettings/>}
         <div className="bg-navy-2 rounded-xl p-5 border border-navy-3">
           <h3 className="text-lg font-bold text-vr-gray mb-1 border-b border-navy-3 pb-2">🩺 Estado del Sistema</h3>
           <p className="text-xs text-vr-gray mb-4">Datos de este dispositivo para soporte. No envía ventas ni datos de clientes.</p>
           <div className="bg-navy rounded-xl border border-navy-3 p-4">{[
-            ['Entorno',s.snapshot?.mode==='recovery-readonly'?'Archivo recuperado · sólo consulta':s.snapshot?.mode==='staging-operational'?'Staging QA · operativo':s.snapshot?.mode==='staging-readonly'?'Staging QA · sólo lectura':s.snapshot?'Fixture sintético':'No disponible'],
+            ['Entorno',s.snapshot?.mode==='recovery-readonly'?'Archivo recuperado · sólo consulta':s.snapshot?.mode==='staging-operational'?(production?'Piloto de producción · operativo':'Staging QA · operativo'):s.snapshot?.mode==='staging-readonly'?'Staging QA · sólo lectura':s.snapshot?'Fixture sintético':'No disponible'],
             ['Pendientes totales',s.snapshot?.pendingOperations??'No disponible'],
             ['Ventas locales confirmadas',s.snapshot?.confirmedSales??'No disponible'],
           ].map(([label,value])=><div key={label} className="flex items-center justify-between gap-3 text-sm py-1.5 border-b border-navy-3/40"><span className="text-vr-gray">{label}</span><span className="font-mono font-bold text-white text-xs text-right">{value}</span></div>)}</div>
           <button type="button" onClick={()=>void s.refresh()} className="mt-3 py-2.5 px-4 bg-navy-3 border border-navy-3 hover:border-gold/40 text-vr-gray hover:text-gold font-bold rounded-xl text-sm transition-all">↻ Actualizar</button>
-          <p className="mt-4 text-xs text-vr-gray">La dirección web de Staging, la distribución y la comprobación física del hardware continúan pendientes. La continuidad de respaldos se gestiona arriba; fiscal está aplazado.</p>
+          <p className="mt-4 text-xs text-vr-gray">{production?'Respalda tus datos antes de actualizar. La emisión de NCF está deshabilitada en este piloto.':'La dirección web de Staging, la distribución y la comprobación física del hardware continúan pendientes. La continuidad de respaldos se gestiona arriba; fiscal está aplazado.'}</p>
         </div>
       </div>
     </section>
@@ -152,14 +154,14 @@ function Layout({
         <AccountHeader account={account} businessName={brand.name} actorName={brand.actorName} archive={archive}/>
       </header>
       <div className="bg-gold/10 border-b border-gold/20 px-3 sm:px-4 py-1.5 text-[11px] sm:text-xs text-gold shrink-0">
-        Desarrollo nativo ·{" "}
+        {account?.environment==='production-pilot'?'Piloto de producción · NCF deshabilitado':'Desarrollo nativo'} ·{" "}
         {s.snapshot?.mode==='recovery-readonly'?`Archivo recuperado · sólo consulta · copia del ${new Date(Number(s.snapshot.backupCapturedAtMs)).toLocaleString('es-DO')}`:readOnly
-          ? "Catálogo Staging · borradores locales · cobro deshabilitado"
-          : s.snapshot?.mode==="staging-operational"?"Cuenta Staging operativa · ventas locales durables · sincronización con recibos"
+          ? (account?.environment==='production-pilot'?'Catálogo del negocio · sólo consulta':'Catálogo Staging · borradores locales · cobro deshabilitado')
+          : s.snapshot?.mode==="staging-operational"?(account?.environment==='production-pilot'?'Cuenta operativa · ventas locales durables · sincronización con recibos':'Cuenta Staging operativa · ventas locales durables · sincronización con recibos')
           : s.snapshot
             ? "Datos sintéticos · no cobrar ventas reales"
             : "Datos no disponibles"}{" "}
-        · {s.snapshot?.mode==='staging-operational'?'Cola durable y recibos remotos · sólo QA':'Sin sincronización remota'}
+        · {s.snapshot?.mode==='staging-operational'?(account?.environment==='production-pilot'?'Cola durable y recibos remotos':'Cola durable y recibos remotos · sólo QA'):'Sin sincronización remota'}
       </div>
       <main className="flex flex-col flex-1 min-h-0 overflow-hidden">
         {cashier&&location.pathname!=='/'?<Navigate to="/" replace/>:<Routes>
@@ -175,7 +177,7 @@ function Layout({
           <Route path="/dashboard" element={<ReportsPage summary />} />
           <Route path="/reportes" element={<ReportsPage />} />
           <Route path="/configuracion/equipo" element={<TeamPage />} />
-          <Route path="/configuracion" element={<SettingsPage />} />
+          <Route path="/configuracion" element={<SettingsPage production={account?.environment==='production-pilot'}/>} />
           {modules
             .filter((m) => !m.ready)
             .map((m) => (

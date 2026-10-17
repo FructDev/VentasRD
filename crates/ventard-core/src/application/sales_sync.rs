@@ -297,7 +297,7 @@ fn manifest_valid(ctx: &CatalogueContext, m: &Value, now: u64) -> Result<(), App
     EntityId::parse(text(&m["snapshotId"])?).map_err(|_| invalid())?;
     if m["version"] != "ventard.native.operational.1"
         || m["namespace"] != "NATIVE1"
-        || m["coverage"] != "QA_SYNTHETIC_ADOPTED"
+        || !matches!(m["coverage"].as_str(),Some("QA_SYNTHETIC_ADOPTED" | "CLOUD_ADOPTED_V1"))
         || m["context"] != serde_json::to_value(ctx).map_err(|_| invalid())?
     {
         return Err(invalid());

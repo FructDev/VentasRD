@@ -13,6 +13,14 @@ verify_jwt = false
 entrypoint = "./functions/native-provision-staging/index.ts"
 import_map = "./functions/native-provision-staging/deno.json"
 
+# Prepared production issuer; deployment and secrets require separate approval.
+# Auth is verified by the handler using the same user's JWT for registration.
+[functions.native-provision]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/native-provision/index.ts"
+import_map = "./functions/native-provision/deno.json"
+
 [api]
 enabled = true
 # Port to use for the API URL.

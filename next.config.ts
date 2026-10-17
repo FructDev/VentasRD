@@ -54,6 +54,9 @@ const withPWA = withPWAInit({
 });
 
 const nextConfig: NextConfig = {
+  // The same routes use a separate compiler cache during the local UI fixture;
+  // an already open development/pilot server keeps its build and sessions.
+  distDir: process.env.VENTARD_DESKTOP_WEB_FIXTURE === '1' ? '.next-desktop-check' : '.next',
   // Identidad inmutable del bundle. El cliente la compara con /api/version
   // para detectar cajas que siguen abiertas con un deploy anterior.
   env: {

@@ -13,6 +13,12 @@ npx supabase link --project-ref XXX  # XXX = ref del proyecto (Dashboard → Set
 
 ## Aplicar migraciones pendientes al proyecto
 
+**Piloto nativo de producción:** no ejecutar el siguiente comando desde la raíz.
+Aquí también existen migraciones exclusivas de QA/Staging. Usar el paquete
+acotado y el procedimiento de [preparación de producción](../docs/native/production-release.md),
+con autorización específica y revisión del historial remoto. Nunca aplicar todas
+las migraciones QA al proyecto de producción.
+
 ```bash
 npx supabase db push
 ```

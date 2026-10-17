@@ -482,7 +482,7 @@ export function SalesPage() {
               />
               <select aria-label="Tipo de descuento" disabled={s.busy||!!s.pending} value={s.discountKind} onChange={e=>s.setDiscountKind(e.target.value as 'amount'|'percent')} className="w-full mt-2 bg-navy rounded-xl p-2 text-white"><option value="amount">Importe RD$</option><option value="percent">Porcentaje %</option></select>
             </label>
-            <label className="text-sm text-vr-gray">
+            {s.snapshot.fiscalEnabled!==false&&<label className="text-sm text-vr-gray">
               Comprobante de prueba
               <select
                 disabled={s.busy || !!s.pending}
@@ -498,7 +498,7 @@ export function SalesPage() {
                 <option value="B02">B02 · sintético</option>
                 <option value="B01">B01 · sintético</option>
               </select>
-            </label>
+            </label>}
           </div>
           {s.lines.map((l) => {
             const product = s.snapshot?.products.find(
@@ -717,7 +717,7 @@ export function SalesPage() {
               </strong>
             </div>
             <p className="text-sm text-vr-gray">
-              Venta de Staging. Impresora no configurada.
+              Venta guardada. Impresora no configurada.
             </p>
             <p className="text-sm mt-2" data-sale-sync-status>{s.snapshot.lastResult?.operationId===s.result.operationId&&s.snapshot.lastResult.remoteStatus==='APPLIED'?'Sincronizada con recibo remoto verificado.':`Estado remoto: ${s.snapshot.lastResult?.operationId===s.result.operationId?s.snapshot.lastResult.remoteStatus:s.result.remoteStatus}. No se afirma sincronización sin recibo.`}</p>
             {s.retryRemote&&s.snapshot.syncIssues?.some(x=>x.operationId===s.result?.operationId&&['CONFLICT','INTERVENTION'].includes(x.state))&&<button disabled={s.busy||s.syncing} className="text-gold border border-gold/40 rounded-xl px-4 py-2 mt-3" onClick={()=>{if(window.confirm('Reintentar el mismo intento tras revisar la causa. No cambia ID, ticket, importe ni stock local.'))void s.retryRemote?.(s.result!.operationId);}}>Revisar y reintentar el mismo intento</button>}

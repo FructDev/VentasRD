@@ -2,13 +2,13 @@ import {db} from '@/lib/db/dexie';
 import {supabase} from '@/lib/supabase/client';
 import {useConfigStore} from '@/store/useConfigStore';
 import {setSharedCaptureContext,setSharedWriteGuard} from './shared-capture';
-import {sharedRemote,sharedStagingEnabled} from './shared-remote';
+import {sharedRemote,sharedChannelEnabled} from './shared-remote';
 import {restoreSharedBrowser,syncSharedBrowser,type SharedBrowserScope} from './shared-runtime';
 import {sharedContextKey,type SharedContext} from './shared-journal';
 import {hydrateSharedBrand} from './shared-brand';
 
 let ready:Promise<SharedContext|null>=Promise.resolve(null),key='',generation=0;
-export const sharedWebEnabled=(tenant:string)=>sharedStagingEnabled(process.env.NEXT_PUBLIC_SUPABASE_URL,process.env.NEXT_PUBLIC_VENTARD_SHARED_JOURNAL,tenant);
+export const sharedWebEnabled=(tenant:string)=>sharedChannelEnabled(process.env.NEXT_PUBLIC_SUPABASE_URL,process.env.NEXT_PUBLIC_VENTARD_SHARED_JOURNAL,tenant);
 function current():SharedBrowserScope|null{const state=useConfigStore.getState(),actor=state.user?.id??state.usuarioCacheId;return state.negocioId&&actor?{tenantId:state.negocioId,actorId:actor,branchId:state.sucursalId??null}:null}
 export function refreshSharedWorker(){
  const s=current(),next=s&&sharedWebEnabled(s.tenantId)?JSON.stringify(s):'';if(next===key)return;key=next;const own=++generation;

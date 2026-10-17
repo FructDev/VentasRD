@@ -1,7 +1,13 @@
 import {describe,it,expect} from 'vitest';
-import {sharedRemote,sharedStagingEnabled} from './shared-remote';
+import {sharedRemote,sharedStagingEnabled,sharedChannelEnabled} from './shared-remote';
 const tenant='96000000-0000-4000-8000-000000000001',stage='https://blzzinivvzadqjbnpsre.supabase.co';
 describe('shared channel boundary',()=>{
+ it('production requires explicit pilot flag and exact existing business; QA cannot cross environments',()=>{
+  const production='https://oxbekqoecunsbjheqgqg.supabase.co',business='864d08e5-2975-4b2d-a1e2-ba5a14f3d677';
+  expect(sharedChannelEnabled(production,'production-pilot',business)).toBe(true);
+  for(const [url,flag,id] of [[production,undefined,business],[production,'staging',business],[stage,'production-pilot',business],[production,'production-pilot',tenant]] as const)expect(sharedChannelEnabled(url,flag,id)).toBe(false);
+  expect(()=>sharedRemote({rpc:async()=>({data:null,error:null})},production,business,undefined)).toThrow();
+ });
  it('never enables production, foreign tenants or implicit rollout',()=>{
   expect(sharedStagingEnabled(stage,'staging',tenant)).toBe(true);
   expect(sharedStagingEnabled(stage,'staging','96000000-0000-4000-8000-000000000003')).toBe(true);

@@ -2,7 +2,7 @@
 ; Check before copying files in every mode. Data directories are never touched.
 !macro VENTARD_REFUSE_DOWNGRADE
   IfSilent +2 0
-    MessageBox MB_OK|MB_ICONSTOP "Ya tienes una versión más reciente de VentaRD QA. Conserva esa versión para proteger tus datos."
+    MessageBox MB_OK|MB_ICONSTOP "Ya tienes una versión más reciente de VentaRD. Conserva esa versión para proteger tus datos."
   SetErrorLevel 2
   Abort
 !macroend

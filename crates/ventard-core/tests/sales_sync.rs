@@ -179,10 +179,16 @@ fn eid(op: &str, part: &str) -> String {
     b[8] = (b[8] & 63) | 0x80;
     uuid::Uuid::from_bytes(b).to_string()
 }
-fn bootstrap(c: &mut Connection, context: &CatalogueContext) {
+fn bootstrap(c: &mut Connection, context: &CatalogueContext) { bootstrap_coverage(c,context,"QA_SYNTHETIC_ADOPTED"); }
+#[test]
+fn production_cloud_coverage_bootstraps_without_replaying_stock(){
+ let mut c=db();bootstrap_coverage(&mut c,&ctx(),"CLOUD_ADOPTED_V1");
+ assert_eq!(read(&c,&ctx()).unwrap()["confirmedSales"],"0");
+}
+fn bootstrap_coverage(c: &mut Connection, context: &CatalogueContext,coverage:&str) {
     let row = json!({"kind":"PRODUCT","id":id(20),"name":"Sintético","code":"QA","revision":"1","deleted":false,"priceTiers":{"retailCents":"10000"},"metadata":{"taxRate":{"numerator":"9","denominator":"50"},"costCents":null,"serialRequired":false,"recipe":[]},"stock":{"quantity":"100","version":"0","authority":"VERIFIED"}});
     let (payload, h) = canon(&json!([row]));
-    let m = json!({"version":"ventard.native.operational.1","namespace":"NATIVE1","coverage":"QA_SYNTHETIC_ADOPTED","snapshotId":id(300),"context":context,"capturedAtMs":"1000","expiresAtMs":"5000","watermark":"0","totalCount":1,"ticketPrefix":format!("N{}",context.installation_id.replace('-',"")),"lastTicket":"0","freeTax":{"numerator":"9","denominator":"50"},"turn":null,"pages":[{"index":0,"count":1,"byteLength":payload.len(),"sha256":h}]});
+    let m = json!({"version":"ventard.native.operational.1","namespace":"NATIVE1","coverage":coverage,"snapshotId":id(300),"context":context,"capturedAtMs":"1000","expiresAtMs":"5000","watermark":"0","totalCount":1,"ticketPrefix":format!("N{}",context.installation_id.replace('-',"")),"lastTicket":"0","freeTax":{"numerator":"9","denominator":"50"},"turn":null,"pages":[{"index":0,"count":1,"byteLength":payload.len(),"sha256":h}]});
     begin_bootstrap(c, context, &m, 1000).unwrap();
     assert!(activate_bootstrap(c, context, 1000, &id(1000)).is_err());
     stage_bootstrap_page(c, context, 0, &payload, 1000).unwrap();

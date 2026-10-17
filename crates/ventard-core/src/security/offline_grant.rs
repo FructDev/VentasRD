@@ -191,8 +191,9 @@ pub fn verify_grant(
             .as_deref()
             .is_some_and(|tier| !matches!(tier, "basico" | "pro"))
         || p.policy_version != "1"
-        || p.issuer != "ventard.staging"
-        || p.audience != "ventard.native.staging.v1"
+        || !matches!((p.issuer.as_str(), p.audience.as_str()),
+            ("ventard.staging", "ventard.native.staging.v1") |
+            ("ventard.production", "ventard.native.production.v1"))
         || p.license.grace_days != "5"
         || p.license.warn_after_openings != "200"
         || p.license.block_after_openings != "300"

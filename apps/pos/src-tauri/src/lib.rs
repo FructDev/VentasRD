@@ -1,5 +1,7 @@
 #![forbid(unsafe_code)]
-#[cfg(all(windows, feature = "qa-spike"))]
+#[cfg(all(feature="qa-spike",feature="production-pilot"))]
+compile_error!("QA_AND_PRODUCTION_FEATURES_ARE_MUTUALLY_EXCLUSIVE");
+#[cfg(all(windows,any(feature="qa-spike",feature="production-pilot")))]
 mod access;
 pub mod platform;
 #[cfg(all(windows, feature = "qa-spike"))]
@@ -25,6 +27,9 @@ pub fn run() {
         #[cfg(all(windows, feature = "qa-spike"))]
         {
             use tauri::Manager;
+            app.manage(access::updates::UpdateState::default());
+            #[cfg(feature = "signed-updates")]
+            app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
             let root = if cfg!(debug_assertions) {
                 std::env::var("VENTARD_QA_FIXTURE_ROOT")
                     .ok()
@@ -56,6 +61,17 @@ pub fn run() {
                 ),
             ));
         }
+        #[cfg(all(windows,feature="production-pilot"))]
+        {
+            use tauri::Manager;
+            if app.config().identifier != "com.ventard.pos" {return Err("PRODUCTION_APP_ID_REQUIRED".into());}
+            app.manage(access::updates::UpdateState::default());
+            #[cfg(feature="signed-updates")]
+            app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
+            app.manage(std::sync::Arc::new(access::AccessState::new(
+                app.path().app_data_dir()?.join("production-access-v1")
+            )));
+        }
         let config = app
             .config()
             .app
@@ -64,7 +80,7 @@ pub fn run() {
             .ok_or("NATIVE_WINDOW_CONFIG_MISSING")?;
         let development = cfg!(debug_assertions) && !cfg!(feature = "custom-protocol");
         // Harness debug sin abrir ventanas al usuario; no altera permisos.
-        let smoke = cfg!(debug_assertions) && std::env::var_os("VENTARD_QA_SHELL_SMOKE").is_some();
+        let smoke = cfg!(all(debug_assertions,feature="qa-spike")) && std::env::var_os("VENTARD_QA_SHELL_SMOKE").is_some();
         let window = tauri::WebviewWindowBuilder::from_config(app, config)?
             .visible(!smoke)
             .on_navigation(move |url| allowed_navigation(url, development))
@@ -119,6 +135,29 @@ pub fn run() {
         qa::qa_cart_save,
         qa::qa_cart_action,
         access::native_access_status,
+        access::updates::native_update,
+        access::native_access_login,
+        access::native_access_provision,
+        access::native_access_pin,
+        access::native_access_lock,
+        access::native_catalogue_download,
+        access::native_catalogue_read,
+        access::native_cart_read,
+        access::native_cart_save,
+        access::native_cart_action,
+        access::native_catalogue_quote,
+        access::native_cash_read,
+        access::native_history_read,
+        access::native_history_ticket,
+        access::native_fiscal_read,
+        access::native_fiscal_prepare,
+        access::sales::native_sales,
+        access::backup::native_backup
+    ]);
+    #[cfg(all(windows,feature="production-pilot"))]
+    let builder = builder.invoke_handler(tauri::generate_handler![
+        access::native_access_status,
+        access::updates::native_update,
         access::native_access_login,
         access::native_access_provision,
         access::native_access_pin,

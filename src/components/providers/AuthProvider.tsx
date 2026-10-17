@@ -25,7 +25,7 @@ function conTimeout<T>(p: PromiseLike<T>, ms: number, fallback: T): Promise<T> {
     ]);
 }
 
-const RUTAS_PUBLICAS = ['/login', '/registro', '/landing', '/offline', '/pin', '/recuperar-contrasena', '/actualizar-contrasena', '/superadmin', '/auth/confirm', '/onboarding', '/select-branch', '/unirse', '/catalogo', '/terminos', '/privacidad', '/ayuda', '/pagar'];
+const RUTAS_PUBLICAS = ['/descargar', '/login', '/registro', '/landing', '/offline', '/pin', '/recuperar-contrasena', '/actualizar-contrasena', '/superadmin', '/auth/confirm', '/onboarding', '/select-branch', '/unirse', '/catalogo', '/terminos', '/privacidad', '/ayuda', '/pagar'];
 
 function rolSeguro(rol: string): RolUsuario {
     return rol === 'admin' || rol === 'vendedor' || rol === 'cajero' ? rol : 'cajero';
@@ -34,6 +34,7 @@ function rolSeguro(rol: string): RolUsuario {
 export function AuthProvider({ children }: { children: React.ReactNode }) {
     const router = useRouter();
     const pathname = usePathname();
+    const downloadOnly = pathname === '/descargar';
     const pathnameRef = useRef(pathname);
     const [isReady, setIsReady] = useState(false);
     const [needsPin, setNeedsPin] = useState(false);
@@ -44,6 +45,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }, [pathname]);
 
     useEffect(() => {
+        if (downloadOnly) return;
         let montado = true;
         const authCallbacks = new Set<ReturnType<typeof setTimeout>>();
         // Candado de concurrencia: los eventos de auth (INITIAL_SESSION, SIGNED_IN,
@@ -426,7 +428,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             for (const handle of authCallbacks) clearTimeout(handle);
             subscription.unsubscribe();
         };
-    }, [router]);
+    }, [router, downloadOnly]);
 
     // La autorización de navegación usa únicamente el estado local ya validado.
     // Cambiar de módulo nunca debe volver a consultar sesión, negocio ni plan.
@@ -440,7 +442,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
         const state = useConfigStore.getState();
         const enRecuperacion = pathname.startsWith('/actualizar-contrasena') || pathname.startsWith('/recuperar-contrasena');
-        if (enRecuperacion || pathname.startsWith('/catalogo')) return;
+        if (enRecuperacion || pathname === '/descargar' || pathname.startsWith('/catalogo')) return;
 
         if (!state.negocioId) {
             if (!esPublica) router.push('/login');
@@ -462,6 +464,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             router.push('/');
         }
     }, [isReady, needsPin, cachedIdentityDenied, pathname, router]);
+
+    if (pathname === "/descargar") return <>{children}</>;
 
     // Pantalla de carga mientras piensa a dónde enviarte
     if (!isReady || cachedIdentityDenied && !RUTAS_PUBLICAS.some(r => pathname === r || pathname.startsWith(r + '/'))) {

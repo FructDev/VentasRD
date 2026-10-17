@@ -16,7 +16,7 @@ import {
 import logo from "../../../../../public/icon-192x192.png";
 import { FiscalPreparation } from "./fiscal-preparation";
 import {BackupSettings} from '../settings/backup-settings';
-function Frame({ children }: { children: ReactNode }) {
+function Frame({ children,production=false }: { children: ReactNode;production?:boolean }) {
   return (
     <div className="min-h-dvh bg-navy flex text-white">
       <aside className="hidden lg:flex w-[45%] bg-navy-2 border-r border-white/5 flex-col justify-between p-12">
@@ -36,7 +36,7 @@ function Frame({ children }: { children: ReactNode }) {
             tu PIN.
           </p>
           <div className="mt-8 rounded-xl border border-gold/20 bg-gold/10 p-4 text-sm text-gold">
-            Desarrollo · Sólo Staging · No usar para ventas reales
+            {production?'Piloto de producción · NCF deshabilitado':'Desarrollo · Sólo Staging · No usar para ventas reales'}
           </div>
         </div>
         <p className="text-xs text-vr-gray">Hecho en República Dominicana</p>
@@ -64,13 +64,13 @@ export function LoginPage() {
     [password, setPassword] = useState(""),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
-    [configured, setConfigured] = useState<boolean | null>(null);
+    [configured, setConfigured] = useState<boolean | null>(null),[production,setProduction]=useState(false);
   useEffect(() => {
     let active = true;
     void accessPort
       .status()
       .then((v) => {
-        if (active) setConfigured(v.configured);
+        if (active) {setConfigured(v.configured);setProduction(v.environment==='production-pilot');}
       })
       .catch((e) => {
         if (active) {
@@ -100,14 +100,14 @@ export function LoginPage() {
     }
   }
   return (
-    <Frame>
+    <Frame production={production}>
       <h1 className="text-2xl font-display font-black">Inicia sesión</h1>
       <p className="text-vr-gray text-sm mt-2 mb-8">
-        Prepara esta instalación con tu cuenta de staging.
+        Prepara esta instalación con tu cuenta de VentaRD.
       </p>
       {configured === false && !error && (
         <p role="status" className="text-gold mb-4 text-sm">
-          Conexión de desarrollo sin configurar. Producción no se utilizará.
+          Esta entrega todavía no tiene su conexión configurada.
         </p>
       )}
       <form onSubmit={submit} className="space-y-4">
@@ -230,7 +230,7 @@ export function PreparationPage() {
     chosen = tenants.find((t) => t.id === tenant),
     needsRegistration = view?.status === "AUTHENTICATED";
   return (
-    <Frame>
+    <Frame production={view?.environment==='production-pilot'}>
       <h1 className="text-2xl font-display font-black">Preparar instalación</h1>
       <p className="text-vr-gray text-sm mt-2 mb-6">
         Cuenta, dispositivo y permisos antes de descargar datos.
@@ -391,11 +391,11 @@ export function PreparationPage() {
               Consultar captura de sólo lectura
             </Link>
           )}
-           {!view.operationalReady && setupRequired && ['owner','admin'].includes(view.role??'')&&<button disabled={busy} className="text-gold text-sm underline mt-4" onClick={()=>{
+           {view.environment!=='production-pilot'&&!view.operationalReady && setupRequired && ['owner','admin'].includes(view.role??'')&&<button disabled={busy} className="text-gold text-sm underline mt-4" onClick={()=>{
             if(!window.confirm('Sólo QA Staging: confirma que los escritores anteriores de este negocio sintético están detenidos. Adoptar datos y bloquear escrituras legacy NO es una migración de producción.'))return;
             void run(async()=>{await salesAccountPort.activate('QA_SYNTHETIC_QUIESCED','0.18');const state=await accessPort.status();if(!state.operationalReady)throw{code:'SALES_EVIDENCE_INVALID'};navigate('/',{replace:true});return state;});
            }}>Adoptar negocio sintético para Ventas nativas</button>}
-          <FiscalPreparation />
+          {view.environment!=='production-pilot'&&<FiscalPreparation />}
           </details>
           <button
             className="text-gold mt-5"
@@ -415,7 +415,7 @@ export function PreparationPage() {
       <Link to="/login" className="inline-block mt-6 text-sm text-vr-gray">
         Usar otra cuenta
       </Link>
-      {view?.configured === false && <Link to="/?source=synthetic" className="block text-gold mt-5 underline">
+      {view?.environment!=='production-pilot'&&view?.configured === false && <Link to="/?source=synthetic" className="block text-gold mt-5 underline">
         Probar Ventas nativas · datos sintéticos separados
       </Link>}
     </Frame>
@@ -426,7 +426,8 @@ export function UnlockPage() {
     ref = useRef(false);
   const [pin, setPin] = useState(""),
     [busy, setBusy] = useState(false),
-    [error, setError] = useState("");
+    [error, setError] = useState(""),[production,setProduction]=useState(false);
+  useEffect(()=>{let active=true;void accessPort.status().then(v=>{if(active)setProduction(v.environment==='production-pilot')}).catch(()=>undefined);return()=>{active=false}},[]);
   async function submit(e: FormEvent) {
     e.preventDefault();
     if (ref.current) return;
@@ -445,7 +446,7 @@ export function UnlockPage() {
     }
   }
   return (
-    <Frame>
+    <Frame production={production}>
       <h1 className="font-display text-2xl font-black">Desbloquear VentaRD</h1>
       <p className="text-vr-gray text-sm my-4">
         Usa el PIN de la cuenta preparada en este dispositivo. No requiere login

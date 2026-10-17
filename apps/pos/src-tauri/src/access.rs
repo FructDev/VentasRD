@@ -2,6 +2,7 @@
 //! consistent snapshot/recovery/fiscal are ready. Credentials never leave Rust.
 mod account_profile;
 mod online_session;
+pub mod updates;
 mod public_catalogue;
 use public_catalogue::valid_web_origin;
 pub mod backup;
@@ -49,15 +50,8 @@ use ventard_core::{
     },
 };
 use zeroize::Zeroizing;
-const HOST: &str = "https://blzzinivvzadqjbnpsre.supabase.co";
-const ISSUER: &str = "http://127.0.0.1:3107/api/native/provision";
-const HOSTED_ISSUER: &str =
-    "https://blzzinivvzadqjbnpsre.supabase.co/functions/v1/native-provision-staging";
-const TENANTS: [&str; 3] = [
-    "96000000-0000-4000-8000-000000000001",
-    "96000000-0000-4000-8000-000000000002",
-    "96000000-0000-4000-8000-000000000003",
-];
+mod environment;
+use environment::{HOST,ISSUER,HOSTED_ISSUER,TENANTS,PROJECT_REF,AUDIENCE,CONFIG_FILE,LICENSE_VIEW};
 #[derive(Serialize, Debug)]
 pub struct AccessError {
     code: &'static str,
@@ -87,7 +81,7 @@ fn public_key(k: &str) -> bool {
         .nth(1)
         .and_then(|p| URL_SAFE_NO_PAD.decode(p).ok())
         .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
-        .is_some_and(|c| c["role"] == "anon" && c["ref"] == "blzzinivvzadqjbnpsre")
+        .is_some_and(|c| c["role"] == "anon" && c["ref"] == PROJECT_REF)
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -113,6 +107,7 @@ impl Config {
         {
             return Err(error("ACCESS_CONFIG_INVALID"));
         }
+        environment::validate_production_config(self)?;
         self.trust().map(|_| ())
     }
     fn trust(&self) -> Result<Vec<TrustedGrantKey>, AccessError> {
@@ -185,7 +180,7 @@ impl Identity {
             scope_type: self.scope_type.clone(),
             branch_id: self.branch_id.clone(),
             min_grant_sequence: "1".into(),
-            audience: "ventard.native.staging.v1".into(),
+            audience: AUDIENCE.into(),
         })
     }
 }
@@ -276,6 +271,7 @@ pub struct AccessState {
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AccessView {
+    environment: &'static str,
     status: &'static str,
     configured: bool,
     actor_id: Option<String>,
@@ -362,6 +358,7 @@ impl AccessState {
             launch: Arc::new(OperationalLaunch::new()),
         }
     }
+    #[cfg(not(feature="production-pilot"))]
     pub fn with_bundled_config(mut self, path: PathBuf) -> Self {
         self.bundled_config = Some(path);
         self
@@ -394,12 +391,14 @@ impl AccessState {
             return Ok(c.clone());
         }
         std::fs::create_dir_all(&self.root).map_err(|_| error("ACCESS_STORAGE_UNAVAILABLE"))?;
-        let p = self.root.join("public-staging-config.json");
+        let p = self.root.join(CONFIG_FILE);
         let c = if p.exists() {
             read_json::<Config>(&p)?
         } else {
             let c = if let Some(path) = self.bundled_config.as_ref().filter(|p| p.exists()) {
                 read_json::<Config>(path)?
+            } else if cfg!(feature="production-pilot") {
+                environment::production_config()?
             } else {
                 Config {
                     web_origin: std::env::var("VENTARD_NATIVE_WEB_ORIGIN").ok(),
@@ -451,6 +450,7 @@ impl AccessState {
             Ok(c) => c,
             Err(e) if e.code == "ACCESS_NOT_CONFIGURED" => {
                 return Ok(AccessView {
+                    environment: environment::NAME,
                     status: "NOT_CONFIGURED",
                     configured: false,
                     actor_id: None,
@@ -474,6 +474,7 @@ impl AccessState {
             }
         }
         let mut view = AccessView {
+            environment: environment::NAME,
             status: if inner.session.is_some() {
                 "AUTHENTICATED"
             } else {
@@ -823,7 +824,7 @@ impl AccessState {
         let token = Zeroizing::new(session.token.to_string());
         let r = client
             .get(format!(
-                "{HOST}/rest/v1/native_staging_licenses_v1?select=negocio_id&limit=4"
+                "{HOST}/rest/v1/{LICENSE_VIEW}?select=negocio_id&limit=4"
             ))
             .header("apikey", &config.publishable_key)
             .bearer_auth(&*token)
@@ -907,6 +908,7 @@ impl AccessState {
         inner.session = Some(session);
         // Return session choices without restoring the previous selected file here.
         Ok(AccessView {
+            environment: environment::NAME,
             status: "AUTHENTICATED",
             configured: true,
             actor_id: inner.session.as_ref().map(|s| s.actor.clone()),
@@ -1112,7 +1114,7 @@ impl AccessState {
     }
 }
 fn admission(window: &WebviewWindow, version: &str, request: &str) -> Result<(), AccessError> {
-    if !cfg!(debug_assertions)
+    if !(cfg!(debug_assertions) || cfg!(feature="production-pilot"))
         || window.label() != "main"
         || version != "ventard.native.access.1"
         || !crate::allowed_navigation(
@@ -1359,6 +1361,7 @@ pub async fn native_fiscal_read(
     request_id: String,
 ) -> Result<FiscalView, AccessError> {
     admission(&window, &ipc_version, &request_id)?;
+    if cfg!(feature="production-pilot") {return Err(error("FISCAL_DISABLED"));}
     let s = Arc::clone(state.inner());
     tauri::async_runtime::spawn_blocking(move || s.fiscal_read())
         .await
@@ -1373,6 +1376,7 @@ pub async fn native_fiscal_prepare(
     kind: String,
 ) -> Result<FiscalView, AccessError> {
     admission(&window, &ipc_version, &request_id)?;
+    if cfg!(feature="production-pilot") { return Err(error("FISCAL_DISABLED")); }
     let kind = match kind.as_str() {
         "B01" => NcfKind::B01,
         "B02" => NcfKind::B02,
@@ -1384,7 +1388,7 @@ pub async fn native_fiscal_prepare(
         .map_err(|_| error("ACCESS_UNAVAILABLE"))?
 }
 
-#[cfg(test)]
+#[cfg(all(test,not(feature="production-pilot")))]
 mod tests {
     use super::*;
     #[test]

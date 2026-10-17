@@ -159,7 +159,7 @@ export interface PosQuote {
   quoteHash?: string | null;
   discountCents?: string;
 }
-export interface PosSnapshot {business?:import("./management").BusinessHeader|null;
+export interface PosSnapshot {environment?:"staging"|"production-pilot";fiscalEnabled?:boolean;business?:import("./management").BusinessHeader|null;
   defaultWarrantyDays?:string;
   status: "ready" | "needs-dataset";
   mode: "synthetic" | "commercial" | "staging-readonly" | "staging-operational" | "recovery-readonly";

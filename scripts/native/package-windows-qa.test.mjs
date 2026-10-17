@@ -14,5 +14,9 @@ test('QA delivery: stable data identity and installed filename across upgrades, 
  assert.equal(a.identifier,'com.ventard.pos.qa');assert.equal(a.identifier,b.identifier);assert.equal(a.mainBinaryName,b.mainBinaryName);assert.equal(a.productName,b.productName);
  assert.equal(a.bundle.windows.allowDowngrades,false);assert.equal(a.bundle.windows.nsis.installMode,'currentUser');assert.deepEqual(a.bundle.windows.nsis.languages,['Spanish']);
  assert.equal(a.bundle.createUpdaterArtifacts,false);assert.deepEqual(Object.values(a.bundle.resources),['public-staging-config.json']);
+ const updates={channel:'staging',endpoint:'https://stage.example.test/api/native/releases/windows-x86_64',downloadOrigin:'https://stage.example.test',publicKey:Buffer.from('untrusted comment: fixture\nfixture').toString('base64')};
+ const signed=installerConfiguration('0.1.9','scratch/public.json',updates);
+ assert.equal(signed.bundle.createUpdaterArtifacts,true);assert.equal(signed.plugins.updater.requireSignedVersion,true);
+ assert.throws(()=>installerConfiguration('0.1.9','scratch/public.json',{...updates,channel:'production'}));
  for(const bad of ['../0.1.1','0.1.1;execute','0.1.1-qa','1.2','01.2.3'])assert.throws(()=>installerConfiguration(bad,'scratch/public.json'));
 });

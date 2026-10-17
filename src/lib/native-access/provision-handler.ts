@@ -18,6 +18,7 @@ const receiptSchema = z.object({
   license: z.object({planActive: z.boolean(), planTier: z.enum(['basico', 'pro']).optional(), accessUntilMs: decimal.nullable(), trialUntilMs: decimal.nullable()}).strict(),
 }).strict();
 export interface ProvisionDependencies {
+  environment?: 'staging' | 'production';
   enabled: boolean;
   keyId: string;
   privateKey: KeyObject | null;
@@ -71,7 +72,7 @@ async function body(req: Request): Promise<unknown> {
 export function createProvisionHandler(dep: ProvisionDependencies) {
   return async (req: Request): Promise<Response> => {
     if (req.method !== 'POST') return reply(405, {code: 'METHOD_NOT_ALLOWED'});
-    if (!dep.enabled || !dep.privateKey || dep.privateKey.type !== 'private' || dep.privateKey.asymmetricKeyType !== 'ed25519'
+    if ((dep.environment !== undefined && !['staging','production'].includes(dep.environment)) || !dep.enabled || !dep.privateKey || dep.privateKey.type !== 'private' || dep.privateKey.asymmetricKeyType !== 'ed25519'
       || !/^[A-Za-z0-9-]{1,64}$/.test(dep.keyId)) return reply(503, {code: 'NATIVE_PROVISION_UNAVAILABLE'});
     let input: RegistrationInput;
     try { input = requestSchema.parse(await body(req)); }
@@ -91,8 +92,8 @@ export function createProvisionHandler(dep: ProvisionDependencies) {
       }
       const role = receipt.role === 'vendedor' ? 'seller' : receipt.role === 'cajero' ? 'cashier' : receipt.role;
       const payload = {
-        protocol: 'ventard.offline-grant.v1', keyId: dep.keyId, issuer: 'ventard.staging',
-        audience: 'ventard.native.staging.v1', grantId: receipt.registrationId,
+        protocol: 'ventard.offline-grant.v1', keyId: dep.keyId, issuer: dep.environment === 'production' ? 'ventard.production' : 'ventard.staging',
+        audience: dep.environment === 'production' ? 'ventard.native.production.v1' : 'ventard.native.staging.v1', grantId: receipt.registrationId,
         grantSequence: receipt.grantSequence, policyVersion: '1', tenantId: receipt.tenantId,
         actorId: receipt.actorId, deviceId: receipt.deviceId, installationId: receipt.installationId,
         writerEpoch: receipt.writerEpoch, scope: {type: receipt.scopeType, branchId: receipt.branchId},

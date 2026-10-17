@@ -679,6 +679,7 @@ v["mode"] = json!("recovery-readonly");
                     .archive_selection
                     .lock()
                     .map_err(|_| error("ACCESS_BUSY"))? = Some(AccessView {
+                    environment: environment::NAME,
                     status: "RECOVERY_ARCHIVE",
                     configured: true,
                     actor_id: Some(a.manifest.source.actor_id.clone()),
@@ -925,6 +926,7 @@ mod tests {
     fn archive_blocks_native_live_access_before_pin_or_grant_loading() {
         let state = AccessState::new(std::env::temp_dir().join("unused-backup-admission-fixture"));
         *state.archive_selection.lock().unwrap() = Some(AccessView {
+            environment: environment::NAME,
             status: "RECOVERY_ARCHIVE",
             configured: true,
             actor_id: None,
