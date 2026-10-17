@@ -70,7 +70,36 @@
     "nativeViteBuild": "PASS",
     "rustProductionClippyWarningsDenied": "PASS",
     "scopedEslint": "PASS",
-    "sqlSourceDriftCheck": "PASS"
+    "sqlSourceDriftCheck": "PASS",
+    "candidatePackagingContracts": {
+      "pass": 7,
+      "fail": 0,
+      "command": "node --test scripts/native/package-windows-production.test.mjs scripts/native/package-windows-qa.test.mjs scripts/native/desktop-release.test.mjs"
+    },
+    "localCustodyConfigurationAndRealSignature": {
+      "pass": 4,
+      "fail": 0,
+      "command": "node --test scripts/native/signing-custody.test.mjs scripts/native/build-production-local.test.mjs scripts/native/desktop-release-signature.test.mjs"
+    },
+    "localDownloadAndCatalogueContracts": {
+      "pass": 6,
+      "fail": 0,
+      "command": "node node_modules/vitest/vitest.mjs run src/lib/native-release/local-preview.test.ts src/lib/native-release/catalogue.test.ts"
+    },
+    "actualCandidateDownload": {
+      "pass": 1,
+      "fail": 0,
+      "command": "node --test scripts/native/download-local-preview.test.mjs",
+      "transport": "Actual Next page and Chromium; empty browser, real candidate bytes, no authentication or remote requests",
+      "viewports": [
+        1280,
+        390
+      ],
+      "screenshots": [
+        "desktop-download-local.png",
+        "desktop-download-local-mobile.png"
+      ]
+    }
   },
   "migrationHashes": [
     {
@@ -86,16 +115,42 @@
   ],
   "delivery": {
     "reviewManifest": "scratch/production-release-review/b0643258562e39d9/review.json",
-    "productionInstallerBuilt": false,
-    "productionSigningKeysGenerated": false,
+    "productionInstallerBuilt": true,
+    "productionSigningKeysGenerated": true,
     "productionDownloadPublished": false,
     "productionBusinessAcceptance": false,
-    "ncf": "EXCLUDED"
+    "ncf": "EXCLUDED",
+    "artifact": {
+      "file": "VentaRD_0.1.9_x64-setup.exe",
+      "bytes": 8889314,
+      "sha256": "2da2029abb2d643242de408a89ef64d419414a4d0201c1105d8981443223e1e1"
+    },
+    "binarySha256": "c62d8d3c8910627c455dc21c53a28192813c66183fd4b15b35c7afe8997703af",
+    "productionInstallerInstalled": false,
+    "actualProductionUpdateInstalled": false,
+    "actualMinisignAndSignedVersionVerified": true,
+    "samePackageResumeVerified": true,
+    "rawOwnedPrivateKeyBytesAbsentFromBinaryAndInstaller": true,
+    "signingCustody": {
+      "mode": "WINDOWS_DPAPI_CURRENT_USER",
+      "directory": "scratch/production-signing",
+      "gitIgnored": true,
+      "keysUploaded": false,
+      "independentRecoveryBackupVerified": false
+    },
+    "localPreview": {
+      "url": "http://127.0.0.1:3023/descargar",
+      "loopbackOnly": true,
+      "authenticationRequired": false,
+      "telemetryDisabled": true,
+      "actualDownloadVerified": true
+    }
   },
   "limits": [
     "Node issuer tests use mocked HTTP, not a deployed production function",
     "No real production business rows, balances, services or backup reviewed",
-    "No production installer built/installed or update applied",
-    "Production deployment, keys, remote history/backup, cohort and owner cutover remain separately authorized work"
+    "Production candidate built and downloaded locally; no production installation or update applied",
+    "Production deployment, keys, remote history/backup, cohort and owner cutover remain separately authorized work",
+    "DPAPI custody is bound to this Windows profile; independent recovery backup remains required before publication"
   ]
 }

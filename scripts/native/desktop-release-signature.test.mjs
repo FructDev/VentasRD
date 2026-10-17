@@ -20,6 +20,7 @@ test('official Tauri signature: original bytes/version accepted; modified bytes,
   for(const filename of ['release-one.json','release-two.json']){
    const metadata=await prepareRelease({manifestPath,installerPath:artifact,signaturePath:signature,updateConfigPath,url:'https://fixture.test/fixture.exe',outputPath:join(dir,filename)});
    assert.equal(metadata.version,'0.1.9');
+   const again=await prepareRelease({manifestPath,installerPath:artifact,signaturePath:signature,updateConfigPath,url:'https://fixture.test/fixture.exe',outputPath:join(dir,filename)});assert.deepEqual(again,metadata);
   }
   const original=await readFile(artifact);await writeFile(artifact,Buffer.concat([original,Buffer.from('altered')]));assert.notEqual(verify('0.1.9'),0);await writeFile(artifact,original);
   const other=join(dir,'other.key');execFileSync(process.execPath,[cli,'signer','generate','--ci','-p','fixture-only-password','-w',other],{stdio:'ignore',windowsHide:true});

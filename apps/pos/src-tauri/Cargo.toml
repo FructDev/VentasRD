@@ -23,11 +23,12 @@ custom-protocol = ["tauri/custom-protocol"]
 qa-spike = ["ventard-core/qa-spike"]
 production-pilot = []
 signed-updates = ["dep:tauri-plugin-updater", "dep:minisign-verify"]
+release-tools = ["signed-updates"]
 
 [[bin]]
 name = "ventard-release-verify"
 path = "src/release_verify.rs"
-required-features = ["signed-updates"]
+required-features = ["release-tools"]
 
 [dependencies.serde]
 version = "1"

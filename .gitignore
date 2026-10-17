@@ -60,6 +60,7 @@ next-env.d.ts
 
 # Rust / Tauri / Cargo
 /target/
+/scratch/production-signing/
 /crates/*/target/
 /apps/pos/src-tauri/target/
 **/*.rs.bk

@@ -28,8 +28,10 @@ export function releaseMetadata({manifest,config,url,signature,bytes,sha256,note
 }
 export async function prepareRelease({manifestPath,installerPath,signaturePath,updateConfigPath,url,notesPath,outputPath}){
  const manifest=JSON.parse(await readFile(manifestPath,'utf8')),config=validateUpdateConfig(JSON.parse(await readFile(updateConfigPath,'utf8')));
+ let existing;try{existing=JSON.parse(await readFile(outputPath,'utf8'))}catch(e){if(e.code!=='ENOENT')throw Error('DESKTOP_RELEASE_OUTPUT_INVALID')}
  const signature=(await readFile(signaturePath,'utf8')).trim(),bytes=await readFile(installerPath),sha256=createHash('sha256').update(bytes).digest('hex');
- const metadata=releaseMetadata({manifest,config,url,signature,bytes:bytes.length,sha256,notes:notesPath?await readFile(notesPath,'utf8'):'',publishedAt:new Date().toISOString()});
+ const metadata=releaseMetadata({manifest,config,url,signature,bytes:bytes.length,sha256,notes:notesPath?await readFile(notesPath,'utf8'):'',publishedAt:existing?.publishedAt??new Date().toISOString()});
+ if(existing&&JSON.stringify(existing)!==JSON.stringify(metadata))throw Error('DESKTOP_RELEASE_OUTPUT_DIFFERS');
  const verifier=await (async()=>{for(const mode of ['release','debug']){const path=resolve(root,'target',mode,'ventard-release-verify.exe');try{if((await stat(path)).isFile())return path}catch{/* try next built tool */}}throw Error('DESKTOP_RELEASE_VERIFIER_REQUIRED')})();
  // The native verifier uses the same Minisign implementation as Tauri.
  const temporary=await mkdtemp(join(dirname(resolve(outputPath)),'.release-verify-'));
@@ -41,7 +43,7 @@ export async function prepareRelease({manifestPath,installerPath,signaturePath,u
  // Remove only this invocation's newly created public-key fixture.
  await rm(publicPath,{force:true});await fsRmdir(temporary);
  }
- await writeFile(outputPath,JSON.stringify(metadata,null,2)+'\n',{flag:'wx'});
+ if(!existing)await writeFile(outputPath,JSON.stringify(metadata,null,2)+'\n',{flag:'wx'});
  console.log('DESKTOP_RELEASE_PREPARED_LOCALLY; NOT_UPLOADED_OR_DEPLOYED');
  return metadata;
 }
