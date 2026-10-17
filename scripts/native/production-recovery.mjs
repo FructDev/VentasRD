@@ -36,7 +36,7 @@ export function recoveryScope(table,columns){
  if(table==='inventario_sucursales'&&columns.includes('sucursal_id'))return `exists(select 1 from public.sucursales p where p.id=t.sucursal_id and p.negocio_id=${target})`;
  throw Error('RECOVERY_UNSCOPED_TABLE_REJECTED');
 }
-async function cliQuery(sql){
+export async function cliQuery(sql){
  await mkdir(privateDirectory,{recursive:true});const file=join(privateDirectory,'readonly-'+randomBytes(12).toString('hex')+'.sql');await writeFile(file,sql,{flag:'wx'});
  try{return await new Promise((ok,fail)=>{
   const npx=resolve(dirname(process.execPath),'node_modules/npm/bin/npx-cli.js');
