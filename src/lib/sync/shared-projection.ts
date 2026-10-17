@@ -8,6 +8,7 @@ import {sharedContextKey,type SharedContext,type SharedEvent} from './shared-jou
 import {projectSharedEntities,storeSharedPageMetadata,storeSharedEntity,type SharedEntity} from './shared-bootstrap';
 import {sharedEffectId} from './shared-sale';
 import {sharedBalanceCents} from './shared-balance';
+import {sharedHistoryValue} from './shared-history';
 import {emptySharedDrawer,applySharedDrawer} from './shared-drawer';
 export {sharedBalanceCents} from './shared-balance';
 
@@ -77,7 +78,7 @@ export async function reconcileSharedWeb(db:VentaRDDatabase,c:SharedContext){
  const pending=(await db.shared_mutations.where('scopeKey').equals(key).toArray()).filter(raw=>raw.state!=='APPLIED').sort((a,b)=>a.order-b.order),entities=await db.shared_entities.where('scopeKey').equals(key).toArray();
  const locked=(name:string,id:string)=>pending.some(raw=>raw.changes.some(change=>change.table===name&&change.key===id));
  const acknowledged=(op:string)=>db.shared_outbox.get(key+'/'+op);
- for(const e of entities.filter(e=>e.kind==='LEGACY_HISTORY')){const marker=key+'/WEB_HISTORY/'+e.entityId;if(await db.shared_entities.get(marker))continue;const history=object(e.value.history);for(const t of list(history.tables)){const name=String(t.name);if(!['ventas','venta_detalles','transacciones_fiado','cajas','cortes_caja','devoluciones','gastos','reparaciones','apartados','seriales'].includes(name))continue;for(const r of list(t.rows)){if(r.negocio_id!==c.tenantId||typeof r.id!=='string'||r.sucursal_id!==undefined&&(r.sucursal_id??null)!==c.branchId)continue;if(!await table(db,name).get(r.id))await table(db,name).put({...r,estado_sincronizacion:1})}}await storeSharedEntity(db,c,'WEB_HISTORY',e.entityId,{preserved:true},e.sequence)}
+ for(const e of entities.filter(e=>e.kind==='LEGACY_HISTORY')){const marker=key+'/WEB_HISTORY/'+e.entityId;if(await db.shared_entities.get(marker))continue;const history=object(e.value.history);for(const t of list(history.tables)){const name=String(t.name);if(!['ventas','venta_detalles','transacciones_fiado','cajas','cortes_caja','devoluciones','gastos','reparaciones','apartados','seriales'].includes(name))continue;for(const r of list(t.rows)){if(r.negocio_id!==c.tenantId||typeof r.id!=='string'||r.sucursal_id!==undefined&&(r.sucursal_id??null)!==c.branchId)continue;if(!await table(db,name).get(r.id))await table(db,name).put({...object(sharedHistoryValue(r)),estado_sincronizacion:1})}}await storeSharedEntity(db,c,'WEB_HISTORY',e.entityId,{preserved:true},e.sequence)}
  for(const e of entities.filter(e=>e.kind==='EVENT').sort((a,b)=>Number(BigInt(a.sequence)-BigInt(b.sequence)))){const marker=key+'/WEB_EVENT/'+e.entityId;if(await db.shared_entities.get(marker))continue;const event=object(e.value.event) as unknown as SharedEvent;await eventRows(db,c,event,!!await acknowledged(e.entityId));await storeSharedEntity(db,c,'WEB_EVENT',e.entityId,{projected:true},e.sequence)}
  for(const e of entities){const r=e.value,id=e.entityId;
   if(e.kind==='PRODUCT'){

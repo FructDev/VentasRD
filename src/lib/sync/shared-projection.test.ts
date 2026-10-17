@@ -21,6 +21,18 @@ it('native balance uses an explicit opening offset without fabricated debt or ca
  await db.transacciones_fiado.add({id:id(31),negocio_id:c.tenantId,sucursal_id:c.branchId,caja_id:id(40),cliente_id:id(30),venta_id:null,tipo:'abono',monto:2.25,concepto:'QA',metodo_pago:'tarjeta',fecha_creacion:2000,fecha_actualizacion:2000,estado_sincronizacion:0});
  await project(db);expect(sharedBalanceCents((await db.clientes.get(id(30)))!,await db.transacciones_fiado.toArray())).toBe(800);
 });
+it('downloaded normalized legacy amounts become web numbers while the signed history stays intact',async()=>{
+ const db=await fixture(),history={protocol:'ventard.web.resolution.history.1',tables:[{name:'transacciones_fiado',rows:[
+  {id:id(91),negocio_id:c.tenantId,sucursal_id:c.branchId,cliente_id:id(30),tipo:'cargo',monto:{$number:'10.25'},fecha_creacion:{$number:'1792082416191'}},
+  {id:id(92),negocio_id:c.tenantId,sucursal_id:c.branchId,cliente_id:id(30),tipo:'abono',monto:{$number:'2.25'},fecha_creacion:{$milliseconds:'1792082416191'}}
+ ]},{name:'ventas',rows:[{id:id(93),negocio_id:c.tenantId,sucursal_id:c.branchId,total:{$number:'10.25'},fecha_creacion:{$number:'1792082416191'},items:[{cantidad:{$number:'1'},precio:{$number:'10.25'}}]}]}]},original=commandHash(history);
+ await storeSharedEntity(db,c,'LEGACY_HISTORY',id(90),{history},'2');
+ await storeSharedEntity(db,c,'CUSTOMER',id(30),{id:id(30),name:'QA',balanceCents:'800',limitCents:'10000',priceTier:'1',revision:'1'},'2');
+ await project(db);await project(db);
+ const rows=await db.transacciones_fiado.toArray();expect(rows.map(r=>r.monto)).toEqual([10.25,2.25]);expect(rows.map(r=>r.fecha_creacion)).toEqual([1792082416191,1792082416191]);
+ expect(sharedBalanceCents((await db.clientes.get(id(30)))!,rows)).toBe(800);expect((await db.clientes.get(id(30)))?.shared_balance_offset_cents).toBe('0');
+ expect((await db.ventas.get(id(93)))?.total).toBe(10.25);expect(commandHash((await db.shared_entities.get(sharedContextKey(c)+'/LEGACY_HISTORY/'+id(90)))!.value.history)).toBe(original);expect(await db.shared_mutations.count()).toBe(0);
+});
 it('a metadata receipt in a multi-command group never swallows its still-pending stock movement',async()=>{
  const db=await fixture();await project(db);await db.transaction('rw',db.productos,db.movimientos_stock,async()=>{await db.productos.update(id(10),{nombre:'EDIT QA',estado_sincronizacion:0});await db.movimientos_stock.add({id:id(51),negocio_id:c.tenantId,sucursal_id:c.branchId!,producto_id:id(10),delta:5,tipo:'entrada',fecha_creacion:2000,estado_sincronizacion:0})});
  const raw=(await db.shared_mutations.toArray())[0],key=sharedContextKey(c);await db.shared_mutations.update(raw.id,{state:'PREPARED',operationIds:[id(50),id(51)]});await db.shared_outbox.put({id:key+'/'+id(50),scopeKey:key,operationId:id(50),context:c,order:1,state:'APPLIED',wire:{intent:JSON.stringify({kind:'PRODUCT_PATCH'}),intentHash:'',snapshot:null,snapshotHash:null},receipt:{remoteSequence:'2',stock:[]}});
