@@ -73,12 +73,36 @@ export async function projectSharedWebEvent(db:VentaRDDatabase,c:SharedContext,e
 
 /** Rebuild absolute views plus still-local pending effects under the SAME lock
  * as inbox/cursor. Native balances and stock already contain confirmed effects. */
-export async function reconcileSharedWeb(db:VentaRDDatabase,c:SharedContext){
+export async function reconcileSharedWeb(db:VentaRDDatabase,c:SharedContext,options:{adoptReviewedHistory?:boolean}={}){
  markSharedProjection();const key=sharedContextKey(c);await acknowledgeSources(db,c);
  const pending=(await db.shared_mutations.where('scopeKey').equals(key).toArray()).filter(raw=>raw.state!=='APPLIED').sort((a,b)=>a.order-b.order),entities=await db.shared_entities.where('scopeKey').equals(key).toArray();
+ let prior:Record<string,unknown[]>|undefined;
+ if(options.adoptReviewedHistory){
+  if(pending.length)throw Error('SHARED_OPERATION_REVIEW_REQUIRED');
+  prior=(await db.shared_captures.where('scopeKey').equals(key).toArray()).find(row=>row.state==='STAGING'&&row.prior)?.prior;
+  if(!prior)throw Error('SHARED_CAPTURE_REQUIRED');
+ }
  const locked=(name:string,id:string)=>pending.some(raw=>raw.changes.some(change=>change.table===name&&change.key===id));
  const acknowledged=(op:string)=>db.shared_outbox.get(key+'/'+op);
- for(const e of entities.filter(e=>e.kind==='LEGACY_HISTORY')){const marker=key+'/WEB_HISTORY/'+e.entityId;if(await db.shared_entities.get(marker))continue;const history=object(e.value.history);for(const t of list(history.tables)){const name=String(t.name);if(!['ventas','venta_detalles','transacciones_fiado','cajas','cortes_caja','devoluciones','gastos','reparaciones','apartados','seriales'].includes(name))continue;for(const r of list(t.rows)){if(r.negocio_id!==c.tenantId||typeof r.id!=='string'||r.sucursal_id!==undefined&&(r.sucursal_id??null)!==c.branchId)continue;if(!await table(db,name).get(r.id))await table(db,name).put({...object(sharedHistoryValue(r)),estado_sincronizacion:1})}}await storeSharedEntity(db,c,'WEB_HISTORY',e.entityId,{preserved:true},e.sequence)}
+ for(const e of entities.filter(e=>e.kind==='LEGACY_HISTORY')){
+  const marker=key+'/WEB_HISTORY/'+e.entityId;if(await db.shared_entities.get(marker))continue;
+  const history=object(e.value.history);
+  for(const t of list(history.tables)){
+   const name=String(t.name);if(!['ventas','venta_detalles','transacciones_fiado','cajas','cortes_caja','devoluciones','gastos','reparaciones','apartados','seriales'].includes(name))continue;
+   for(const r of list(t.rows)){
+    if(r.negocio_id!==c.tenantId||typeof r.id!=='string'||r.sucursal_id!==undefined&&(r.sucursal_id??null)!==c.branchId)continue;
+    const old=await table(db,name).get(r.id);
+    if(old&&prior){
+     const saved=list(prior[name]??[]).find(row=>row.id===r.id);
+     if(old.negocio_id!==c.tenantId||!saved||commandHash(old)!==commandHash(saved))throw Error('SHARED_LOCAL_SOURCE_CHANGED');
+    }
+    // Only the initial reviewed preparation may replace a stale browser row.
+    // Its exact original remains in capture.prior; later feeds never replay it.
+    if(!old||prior)await table(db,name).put({...object(sharedHistoryValue(r)),estado_sincronizacion:1});
+   }
+  }
+  await storeSharedEntity(db,c,'WEB_HISTORY',e.entityId,{preserved:true},e.sequence);
+ }
  for(const e of entities.filter(e=>e.kind==='EVENT').sort((a,b)=>Number(BigInt(a.sequence)-BigInt(b.sequence)))){const marker=key+'/WEB_EVENT/'+e.entityId;if(await db.shared_entities.get(marker))continue;const event=object(e.value.event) as unknown as SharedEvent;await eventRows(db,c,event,!!await acknowledged(e.entityId));await storeSharedEntity(db,c,'WEB_EVENT',e.entityId,{projected:true},e.sequence)}
  for(const e of entities){const r=e.value,id=e.entityId;
   if(e.kind==='PRODUCT'){

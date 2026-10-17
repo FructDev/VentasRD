@@ -33,6 +33,24 @@ it('downloaded normalized legacy amounts become web numbers while the signed his
  expect(sharedBalanceCents((await db.clientes.get(id(30)))!,rows)).toBe(800);expect((await db.clientes.get(id(30)))?.shared_balance_offset_cents).toBe('0');
  expect((await db.ventas.get(id(93)))?.total).toBe(10.25);expect(commandHash((await db.shared_entities.get(sharedContextKey(c)+'/LEGACY_HISTORY/'+id(90)))!.value.history)).toBe(original);expect(await db.shared_mutations.count()).toBe(0);
 });
+it('initial preparation adopts reviewed history over stale branch metadata only after preserving the exact browser originals',async()=>{
+ const db=await fixture(),sale={id:id(94),negocio_id:c.tenantId,sucursal_id:id(99),total:442.96000000000004,metodo_pago:'efectivo',fecha_creacion:1000,estado_sincronizacion:1};
+ await db.ventas.put(sale);const prior={ventas:[structuredClone(sale)]};
+ await db.shared_captures.put({id:'reviewed',scopeKey:sharedContextKey(c),state:'STAGING',manifest:{},pages:{},prior});
+ await storeSharedEntity(db,c,'LEGACY_HISTORY',id(95),{history:{tables:[{name:'ventas',rows:[{...sale,sucursal_id:c.branchId,total:{$number:'442.96'}}]}]}},'2');
+ await db.transaction('rw',db.tables,()=>reconcileSharedWeb(db,c,{adoptReviewedHistory:true}));
+ expect((await db.ventas.get(id(94)))?.sucursal_id).toBe(c.branchId);expect((await db.ventas.get(id(94)))?.total).toBe(442.96);
+ expect((await db.shared_captures.get('reviewed'))?.prior).toEqual(prior);expect(await db.ventas.count()).toBe(1);expect(await db.shared_mutations.count()).toBe(0);
+ await project(db);expect(await db.ventas.count()).toBe(1);
+});
+it('cannot replace browser history without its preserved source or after a local source change',async()=>{
+ const db=await fixture(),sale={id:id(94),negocio_id:c.tenantId,sucursal_id:id(99),total:10,metodo_pago:'efectivo',fecha_creacion:1000,estado_sincronizacion:1};await db.ventas.put(sale);
+ await storeSharedEntity(db,c,'LEGACY_HISTORY',id(95),{history:{tables:[{name:'ventas',rows:[{...sale,sucursal_id:c.branchId}]}]}},'2');
+ await expect(db.transaction('rw',db.tables,()=>reconcileSharedWeb(db,c,{adoptReviewedHistory:true}))).rejects.toThrow('SHARED_CAPTURE_REQUIRED');
+ await db.shared_captures.put({id:'reviewed',scopeKey:sharedContextKey(c),state:'STAGING',manifest:{},pages:{},prior:{ventas:[{...sale,total:9}]}});
+ await expect(db.transaction('rw',db.tables,()=>reconcileSharedWeb(db,c,{adoptReviewedHistory:true}))).rejects.toThrow('SHARED_LOCAL_SOURCE_CHANGED');
+ expect(await db.ventas.get(id(94))).toEqual(sale);
+});
 it('a metadata receipt in a multi-command group never swallows its still-pending stock movement',async()=>{
  const db=await fixture();await project(db);await db.transaction('rw',db.productos,db.movimientos_stock,async()=>{await db.productos.update(id(10),{nombre:'EDIT QA',estado_sincronizacion:0});await db.movimientos_stock.add({id:id(51),negocio_id:c.tenantId,sucursal_id:c.branchId!,producto_id:id(10),delta:5,tipo:'entrada',fecha_creacion:2000,estado_sincronizacion:0})});
  const raw=(await db.shared_mutations.toArray())[0],key=sharedContextKey(c);await db.shared_mutations.update(raw.id,{state:'PREPARED',operationIds:[id(50),id(51)]});await db.shared_outbox.put({id:key+'/'+id(50),scopeKey:key,operationId:id(50),context:c,order:1,state:'APPLIED',wire:{intent:JSON.stringify({kind:'PRODUCT_PATCH'}),intentHash:'',snapshot:null,snapshotHash:null},receipt:{remoteSequence:'2',stock:[]}});

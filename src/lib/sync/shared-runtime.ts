@@ -47,7 +47,7 @@ export async function prepareSharedBrowser(db:VentaRDDatabase,s:SharedBrowserSco
   check();if(await legacyPending(db,s)||commandHash(await retainedCopy(db,s))!==priorHash)throw Error('SHARED_LOCAL_SOURCE_CHANGED');
   // Keep a complete original browser copy before changing any visible row.
   const captures=await db.shared_captures.where('scopeKey').equals(sharedContextKey(c)).toArray(),capture=captures.find(row=>row.state==='STAGING');if(!capture)throw Error('SHARED_CAPTURE_REQUIRED');await db.shared_captures.update(capture.id,{prior});
-  await reconcileSharedWeb(db,c);
+  await reconcileSharedWeb(db,c,{adoptReviewedHistory:true});
  });
  await onActivate(c);check();setSharedCaptureContext(db,c);setSharedWriteGuard(db,null);return c;
 }
