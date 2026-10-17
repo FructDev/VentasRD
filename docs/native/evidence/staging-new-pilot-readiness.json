@@ -1,0 +1,121 @@
+{
+  "protocol": "ventard.staging.new-pilot.readiness.1",
+  "date": "2026-10-17",
+  "projectRef": "blzzinivvzadqjbnpsre",
+  "business": {
+    "id": "96000000-0000-4000-8000-000000000003",
+    "name": "Comercial La Esquina — PILOTO STAGING",
+    "branch": "Local Principal",
+    "ownerAccount": "pro00-admin-a@example.test",
+    "source": "NEW_SYNTHETIC_BUSINESS_NO_PRODUCTION_COPY",
+    "temporaryPlan": "PRO_STAGING_30_DAYS"
+  },
+  "migration": {
+    "file": "supabase/migrations/20261017015558_native_pilot_cohort_staging_v1.sql",
+    "sha256": "a8aca8053f5ac34b58dafc3d603de460a818b179b80ef65843f389764316aa78",
+    "applied": true,
+    "dryRunFiles": 1,
+    "seedsApplied": 0,
+    "rolesApplied": 0,
+    "vaultSkipped": true
+  },
+  "remote": {
+    "customers": 2,
+    "fiscal_ranges": 0,
+    "installations": 1,
+    "native_operations": 0,
+    "products": 12,
+    "status": "STAGING_PILOT_READONLY_PASS",
+    "units": 312
+  },
+  "native": {
+    "status": "STAGING_PILOT_NATIVE_READY",
+    "tenantId": "96000000-0000-4000-8000-000000000003",
+    "role": "owner",
+    "operationalReady": true,
+    "products": 12,
+    "units": "312",
+    "customers": 2,
+    "debtCents": "0",
+    "turn": null,
+    "pending": "0",
+    "sales": "0",
+    "confirmedSales": "0",
+    "cashCents": "0"
+  },
+  "authentication": "HUMAN_LOGIN_AND_PIN_REAL_HOSTED_ISSUER",
+  "initialActivation": "DEFINITIVE_APP_SUPPORT_BUTTON_WITH_REAL_OWNER_CONTEXT",
+  "package": {
+    "protocol": "ventard.windows.qa.package.1",
+    "version": "0.1.7",
+    "channel": "STAGING_BOUNDED_PILOT",
+    "tenants": [
+      "96000000-0000-4000-8000-000000000001",
+      "96000000-0000-4000-8000-000000000002",
+      "96000000-0000-4000-8000-000000000003"
+    ],
+    "identifier": "com.ventard.pos.qa",
+    "installedBinary": "VentaRD-QA.exe",
+    "architecture": "x86_64",
+    "build": "debug-qa",
+    "updateMode": "REINSTALL_SAME_IDENTITY",
+    "signing": "UNSIGNED_QA",
+    "issuer": "HOSTED_STAGING",
+    "installer": {
+      "file": "VentaRD QA_0.1.7_x64-setup.exe",
+      "bytes": 10452849,
+      "sha256": "89816fad321762284f483780998803a3386ecd7f0db7b0ee816e354ef5b274a3"
+    },
+    "binarySha256": "c920a2b1660c35622c74ead709ae71b37103e23ca605b7a4cc668dea41dfecde",
+    "publicConfigSha256": "91e3c864d07034f269c09658ef062f6929c05dd040088b4683dfcaaaeb0cd2d5"
+  },
+  "localWeb": {
+    "url": "http://127.0.0.1:3018/login",
+    "optimizedBuild": true,
+    "htmlGetStatus": 200,
+    "htmlBytes": 19120,
+    "authenticatedPilotTest": false
+  },
+  "preservation": {
+    "qaAandBUnchanged": true,
+    "comparison": "MD5_FOR_EQUALITY_ONLY",
+    "fingerprints": [
+      {
+        "id": "96000000-0000-4000-8000-000000000001",
+        "journal_hash": "93f4056304acf5a8ad1e470d55cf8469",
+        "license_hash": "86e36098190311454471c73398567d13",
+        "membership_hash": "7943bad2766725099c54f6a13cc6380f",
+        "products_hash": "ad9e61f830ad083e4266d815bcce149c",
+        "sales_hash": "a09c725cc61ce1af7ff2a64f5747a145"
+      },
+      {
+        "id": "96000000-0000-4000-8000-000000000002",
+        "journal_hash": "4cba3e1f18e59e94a4deb71a82bf9023",
+        "license_hash": "77a753a274061c78f64a18348919b360",
+        "membership_hash": "d41d8cd98f00b204e9800998ecf8427e",
+        "products_hash": "2f217d3fb08ac93de640e2dafe6d3b68",
+        "sales_hash": "901d1323854cd926d5b918df1684914b"
+      }
+    ]
+  },
+  "checks": {
+    "isolatedPostgres": 3,
+    "webBoundary": 3,
+    "rustBrokerBoundary": 1,
+    "packageContracts": 2,
+    "scopeLint": true,
+    "nativeTypecheckAndBuild": true,
+    "nextBuild": true,
+    "launcherReusesExistingWindow": true
+  },
+  "limits": {
+    "physicalPCs": 1,
+    "financialOperationsDuringThisPreparation": 0,
+    "hardwareTested": false,
+    "productionAccessed": false,
+    "ncfConfiguredOrIssued": false,
+    "commercialDistribution": false
+  },
+  "screenshot": "docs/native/evidence/staging-new-pilot-ready.png",
+  "reopenLauncher": "scripts/native/open-staging-pilot.mjs"
+}
