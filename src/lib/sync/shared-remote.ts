@@ -2,7 +2,9 @@ import type {SharedContext,SharedRemote,SharedWire} from './shared-journal';
 import {sharedContextKey,SharedRemoteError} from './shared-journal';
 interface RpcClient {rpc:(name:string,args:Record<string,unknown>)=>PromiseLike<{data:unknown;error:unknown}>}
 const stage='https://blzzinivvzadqjbnpsre.supabase.co';
-const tenants=new Set(['96000000-0000-4000-8000-000000000001','96000000-0000-4000-8000-000000000002']);
+// Bounded Staging cohort: the two existing QA businesses and one new pilot.
+// Membership, licence, installation and scope are still verified by every RPC.
+const tenants=new Set(['96000000-0000-4000-8000-000000000001','96000000-0000-4000-8000-000000000002','96000000-0000-4000-8000-000000000003']);
 export type SharedMode='LEGACY'|'SHARED_JOURNAL'|'SCOPE_BLOCKED';
 export function sharedStagingEnabled(url:string|undefined,flag:string|undefined,tenant:string):boolean{return url===stage&&flag==='staging'&&tenants.has(tenant)}
 export function sharedRemote(client:RpcClient,url:string,tenant:string){

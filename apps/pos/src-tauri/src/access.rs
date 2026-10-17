@@ -52,9 +52,10 @@ const HOST: &str = "https://blzzinivvzadqjbnpsre.supabase.co";
 const ISSUER: &str = "http://127.0.0.1:3107/api/native/provision";
 const HOSTED_ISSUER: &str =
     "https://blzzinivvzadqjbnpsre.supabase.co/functions/v1/native-provision-staging";
-const TENANTS: [&str; 2] = [
+const TENANTS: [&str; 3] = [
     "96000000-0000-4000-8000-000000000001",
     "96000000-0000-4000-8000-000000000002",
+    "96000000-0000-4000-8000-000000000003",
 ];
 #[derive(Serialize, Debug)]
 pub struct AccessError {
@@ -846,7 +847,7 @@ impl AccessState {
         }
         let r = client
             .get(format!(
-                "{HOST}/rest/v1/native_staging_licenses_v1?select=negocio_id&limit=3"
+                "{HOST}/rest/v1/native_staging_licenses_v1?select=negocio_id&limit=4"
             ))
             .header("apikey", &config.publishable_key)
             .bearer_auth(&*token)
@@ -857,7 +858,7 @@ impl AccessState {
         }
         let data = response(r)?;
         let rows = data.as_array().ok_or(error("ACCESS_RESPONSE_INVALID"))?;
-        if rows.len() > 2 {
+        if rows.len() > TENANTS.len() {
             return Err(error("ACCESS_RESPONSE_INVALID"));
         }
         let mut tenants = Vec::new();
@@ -1546,6 +1547,8 @@ mod tests {
         i.scope_type = "BRANCH".into();
         assert!(i.validate().is_err());
         i.branch_id = Some("96000000-0000-4000-8000-000000000014".into());
+        assert!(i.validate().is_ok());
+        i.tenant_id = TENANTS[2].into();
         assert!(i.validate().is_ok());
         i.tenant_id = "96000000-0000-4000-8000-000000000099".into();
         assert!(i.validate().is_err());

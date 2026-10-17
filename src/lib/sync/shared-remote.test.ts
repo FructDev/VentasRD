@@ -4,6 +4,8 @@ const tenant='96000000-0000-4000-8000-000000000001',stage='https://blzzinivvzadq
 describe('shared channel boundary',()=>{
  it('never enables production, foreign tenants or implicit rollout',()=>{
   expect(sharedStagingEnabled(stage,'staging',tenant)).toBe(true);
+  expect(sharedStagingEnabled(stage,'staging','96000000-0000-4000-8000-000000000003')).toBe(true);
+  expect(sharedStagingEnabled(stage,'staging','96000000-0000-4000-8000-000000000004')).toBe(false);
   for(const args of [[stage,undefined,tenant],['https://oxbekqoecunsbjheqgqg.supabase.co','staging',tenant],[stage,'staging','other']])expect(sharedStagingEnabled(...args as [string,string,string])).toBe(false);
   expect(()=>sharedRemote({rpc:async()=>({data:null,error:null})},'https://production.test',tenant)).toThrow('SHARED_STAGING_ONLY');
  });
