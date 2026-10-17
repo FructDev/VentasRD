@@ -1,0 +1,12 @@
+/.git/
+/.claude/
+/.agents/
+/.codex/
+/target/
+/scratch/
+/.env*
+/supabase/
+/docs/
+/specs/
+/scripts/
+/crates/
