@@ -1,0 +1,52 @@
+{
+  "status": "PILOT_REOPEN_SESSION_AND_DATA_PASS",
+  "projectRef": "blzzinivvzadqjbnpsre",
+  "businessId": "96000000-0000-4000-8000-000000000003",
+  "version": "0.1.8",
+  "beforePid": 38212,
+  "afterPid": 36176,
+  "beforeHash": "4214e50a7c85b446aec2530692ebe64d31668e8077cad72400603d1e2d53b30b",
+  "afterHash": "4214e50a7c85b446aec2530692ebe64d31668e8077cad72400603d1e2d53b30b",
+  "afterSyncHash": "4214e50a7c85b446aec2530692ebe64d31668e8077cad72400603d1e2d53b30b",
+  "products": 12,
+  "sales": "3",
+  "stock": "14",
+  "pending": 0,
+  "tickets": [
+    {
+      "operationId": "4a717177-943c-4073-8289-188546f2af35",
+      "ticket": "N8c4c7efe600645acb138845c5413ad39-000001",
+      "snapshotHash": "e0fb5d1e153bf605a4b9e6414c758bd039f9ba10bcf14a9fb98d019164e95372",
+      "totalCents": "2500"
+    },
+    {
+      "operationId": "96000073-0000-4000-8000-000000000101",
+      "ticket": "Nf6f72780f7834069ab96a02e7c6a8922-000001",
+      "snapshotHash": "3c75eb0eb403e371cb0d289888338c450507a78120292e92ceeb7a6c8d2e9210",
+      "totalCents": "2500"
+    },
+    {
+      "operationId": "9b6e379c-7528-4579-8e9a-892c6755a4c6",
+      "ticket": "N8c4c7efe600645acb138845c5413ad39-000002",
+      "snapshotHash": "b3d8316094b32e3b186509fe2926f16fc81a8029b0b4a3238a7631f1407e7b1a",
+      "totalCents": "10000"
+    }
+  ],
+  "humanPathConfirmation": {
+    "source": "EXPLICIT_USER_REPLY",
+    "answer": "Sí, sólo introduje el PIN",
+    "noLoginAfterRestart": true,
+    "noCatalogueDownloadAfterRestart": true
+  },
+  "noNewSalesOrPayments": true,
+  "realHumanPinAfterRestart": true,
+  "protectedRefreshSucceeded": true,
+  "closedNormally": "WINDOW_ALT_F4",
+  "samePilotProfile": true,
+  "scope": {
+    "stagingOnly": true,
+    "productionTouched": false,
+    "fiscalOperationsPerformed": false,
+    "physicalWindowsPCs": 1
+  }
+}

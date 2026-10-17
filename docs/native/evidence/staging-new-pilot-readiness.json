@@ -196,5 +196,20 @@
       "ncfConfiguredOrIssued": false
     },
     "implementationChangesRequired": false
+  },
+  "sessionReopenAcceptance": {
+    "status": "PILOT_REOPEN_SESSION_AND_DATA_PASS",
+    "version": "0.1.8",
+    "evidence": "docs/native/evidence/staging-pilot-session-reopen.json",
+    "products": 12,
+    "sales": "3",
+    "saltStock": "14",
+    "pending": 0,
+    "onlyHumanPinAfterRestart": true,
+    "automaticProtectedRefresh": true,
+    "cataloguePreserved": true,
+    "ticketHashesPreserved": true,
+    "productionTouched": false,
+    "fiscalOperationsPerformed": false
   }
 }
