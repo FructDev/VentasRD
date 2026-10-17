@@ -137,14 +137,9 @@ impl AccessState {
                 return Err("REMOTE_DENIED");
             }
             let config = self.config(&mut inner).map_err(|_| "REMOTE_DENIED")?;
-            let session = inner
-                .session
-                .as_ref()
-                .filter(|s| {
-                    s.actor == expected.actor_id && s.expires_at > time().unwrap_or(u64::MAX)
-                })
-                .ok_or("LOGIN_REQUIRED")?;
-            (config, Zeroizing::new(session.token.to_string()))
+            let selected = inner.selected.clone().ok_or("LOGIN_REQUIRED")?;
+            let token = self.online_token(&mut inner, &selected).map_err(|e| match e.code { "ACCESS_LOGIN_REQUIRED" => "LOGIN_REQUIRED", "ACCESS_NETWORK_UNAVAILABLE" => "NETWORK_UNAVAILABLE", _ => "REMOTE_DENIED" })?;
+            (config, token)
         };
         config.validate().map_err(|_| "REMOTE_DENIED")?;
         let body = json!({"p_negocio_id":expected.tenant_id,"p_installation_id":expected.installation_id,"p_device_id":expected.device_id,"p_writer_epoch":expected.writer_epoch,"p_scope_kind":expected.scope_type,"p_sucursal_id":expected.branch_id,"p_observation_id":batch.observation_id,"p_table":batch.table,"p_ids":batch.ids});

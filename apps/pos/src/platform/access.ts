@@ -100,7 +100,7 @@ export const accessPort = {
     call("native_access_provision", { tenantId, branchId }),
   pin: (pin: string, enroll: boolean) =>
     call("native_access_pin", { pin, enroll }),
-  lock: () => call("native_access_lock"),
+  lock: (logout = false) => call("native_access_lock", { logout }),
 };
 export const cataloguePort = {
   step: () => call<CatalogueDownload>("native_catalogue_download"),
@@ -209,7 +209,8 @@ const messages: Record<string, string> = {
     "No se pudo conectar. Si esta instalación ya está preparada, desbloquéala con tu PIN.",
   ACCESS_ISSUER_UNAVAILABLE:
     "El servicio de preparación no está disponible. No se ha habilitado el cobro.",
-  ACCESS_LOGIN_REQUIRED: "Inicia sesión online para preparar esta instalación.",
+  ACCESS_LOGIN_REQUIRED: "Renueva la sesión online para sincronizar. Los datos locales se conservan y puedes abrirlos con tu PIN.",
+  ACCESS_SESSION_STORAGE: "Windows no pudo guardar o recuperar la sesión de forma segura. Los datos locales se conservan; vuelve a intentarlo.",
   LOGIN_REQUIRED: "Inicia sesión online para continuar el traslado. El PIN desbloquea los datos locales; las copias y los intentos se conservan.",
   REMOTE_DENIED: "La cuenta no tiene permiso para leer o continuar este traslado. Revisa el negocio y los permisos; las copias se conservan.",
   NETWORK_UNAVAILABLE: "No se pudo confirmar la respuesta de la nube. Conserva el mismo intento y vuelve a continuar cuando haya conexión.",

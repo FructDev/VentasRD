@@ -1,6 +1,7 @@
 //! DEBUG staging access on definitive pages. No commercial activation until
 //! consistent snapshot/recovery/fiscal are ready. Credentials never leave Rust.
 mod account_profile;
+mod online_session;
 mod public_catalogue;
 use public_catalogue::valid_web_origin;
 pub mod backup;
@@ -250,6 +251,7 @@ pub struct Tenant {
 struct Session {
     actor: String,
     token: Zeroizing<String>,
+    refresh: Zeroizing<String>,
     tenants: Vec<Tenant>,
     expires_at: u64,
 }
@@ -582,12 +584,7 @@ impl AccessState {
         let mut inner = self.inner.lock().map_err(|_| error("ACCESS_BUSY"))?;
         let selected = self.catalogue_authorize(&mut inner)?;
         let config = self.config(&mut inner)?;
-        let session = inner
-            .session
-            .as_ref()
-            .filter(|s| s.actor == selected.actor_id && s.expires_at > time().unwrap_or(u64::MAX))
-            .ok_or(error("ACCESS_LOGIN_REQUIRED"))?;
-        let token = Zeroizing::new(session.token.to_string());
+        let token = self.online_token(&mut inner, &selected)?;
         let ctx = selected.catalogue_context();
         let pending_ctx = ctx.clone();
         let now = time()?;
@@ -801,8 +798,6 @@ impl AccessState {
         }
         let mut inner = self.inner.lock().map_err(|_| error("ACCESS_BUSY"))?;
         self.deny_archive()?;
-        inner.session = None;
-        inner.unlocked = false;
         let config = self.config(&mut inner)?;
         let client = Self::client()?;
         let r = client
@@ -813,7 +808,7 @@ impl AccessState {
             .map_err(|_| error("ACCESS_NETWORK_UNAVAILABLE"))?;
         drop(password);
         let status = r.status();
-        let data = response(r)?;
+        let mut data = response(r)?;
         if !status.is_success() {
             return Err(error(match data["code"].as_str() {
                 Some("invalid_credentials") => "ACCESS_CREDENTIALS_INVALID",
@@ -822,29 +817,10 @@ impl AccessState {
                 _ => "ACCESS_LOGIN_UNAVAILABLE",
             }));
         }
-        let actor = data["user"]["id"]
-            .as_str()
-            .ok_or(error("ACCESS_RESPONSE_INVALID"))?
-            .to_string();
-        id(&actor)?;
         let actor_name = account_profile::auth_name(&data["user"]);
-        if data["user"]["is_anonymous"] == true {
-            return Err(error("ACCESS_ACTOR_DENIED"));
-        }
-        let token = Zeroizing::new(
-            data["access_token"]
-                .as_str()
-                .filter(|s| !s.is_empty() && s.len() <= 8192)
-                .ok_or(error("ACCESS_RESPONSE_INVALID"))?
-                .to_string(),
-        );
-        let expires_at = data["expires_at"]
-            .as_u64()
-            .and_then(|s| s.checked_mul(1000))
-            .ok_or(error("ACCESS_RESPONSE_INVALID"))?;
-        if expires_at <= time()? {
-            return Err(error("ACCESS_LOGIN_REQUIRED"));
-        }
+        let mut session = online_session::tokens(&mut data, None, time()?)?;
+        let actor = session.actor.clone();
+        let token = Zeroizing::new(session.token.to_string());
         let r = client
             .get(format!(
                 "{HOST}/rest/v1/native_staging_licenses_v1?select=negocio_id&limit=4"
@@ -912,15 +888,23 @@ impl AccessState {
         if tenants.is_empty() {
             return Err(error("ACCESS_TENANT_DENIED"));
         }
-        // Do not retain a previous actor/vault as the new online session context.
+        let existing = inner.selected.clone().filter(|s| {
+            s.actor_id == actor && tenants.iter().any(|t| {
+                t.id == s.identity.tenant_id && s.identity.branch_id.as_ref().is_none_or(|b| t.branches.iter().any(|branch| branch.id == *b))
+            })
+        });
+        session.tenants = tenants;
+        if let Some(selected) = existing {
+            // Reauthentication preserves this same installation, PIN and bootstrap.
+            self.remember_session(&selected, &session)?;
+            inner.session = Some(session);
+            return self.view(&mut inner);
+        }
+        if let Some(previous) = &inner.selected { self.forget_session(previous)?; }
         inner.writer = None;
         inner.selected = None;
-        inner.session = Some(Session {
-            actor,
-            token,
-            tenants,
-            expires_at,
-        });
+        inner.unlocked = false;
+        inner.session = Some(session);
         // Return session choices without restoring the previous selected file here.
         Ok(AccessView {
             status: "AUTHENTICATED",
@@ -1078,6 +1062,7 @@ impl AccessState {
         create_json(&pending, &selection)?;
         // Keep previous pointer intact until the new one is completely written.
         std::fs::rename(&pending, &p).map_err(|_| error("ACCESS_IDENTITY_UNAVAILABLE"))?;
+        self.remember_session(&selection, inner.session.as_ref().ok_or(error("ACCESS_LOGIN_REQUIRED"))?)?;
         inner.selected = Some(selection);
         inner.unlocked = false;
         self.view(&mut inner)
@@ -1208,12 +1193,16 @@ pub async fn native_access_lock(
     state: State<'_, Arc<AccessState>>,
     ipc_version: String,
     request_id: String,
+    logout: Option<bool>,
 ) -> Result<AccessView, AccessError> {
     admission(&window, &ipc_version, &request_id)?;
     let s = Arc::clone(state.inner());
     tauri::async_runtime::spawn_blocking(move || {
         s.clear_archive()?;
         let mut i = s.inner.lock().map_err(|_| error("ACCESS_BUSY"))?;
+        if logout.unwrap_or(false) {
+            if let Some(selected) = &i.selected { s.forget_session(selected)?; }
+        }
         i.session = None;
         i.unlocked = false;
         s.view(&mut i)
@@ -1681,6 +1670,7 @@ mod tests {
         inner.session = Some(Session {
             actor: "96000000-0000-4000-8000-000000000051".into(),
             token: Zeroizing::new("never-render-this-fixture-token".into()),
+            refresh: Zeroizing::new("never-render-this-fixture-refresh".into()),
             tenants: vec![],
             expires_at: u64::MAX,
         });

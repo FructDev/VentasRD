@@ -89,8 +89,8 @@ export function LoginPage() {
     setBusy(true);
     setError("");
     try {
-      await accessPort.login(email, password);
-      navigate("/preparacion", { replace: true });
+      const state = await accessPort.login(email, password);
+      navigate(state.operationalReady ? "/" : state.status === "LOCKED" ? "/desbloquear" : "/preparacion", { replace: true });
     } catch (e) {
       setError(accessMessage(e));
     } finally {

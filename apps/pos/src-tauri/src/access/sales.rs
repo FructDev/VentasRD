@@ -411,16 +411,12 @@ impl AccessState {
         let mut i = self.inner.lock().map_err(|_| error("ACCESS_BUSY"))?;
         let selected = self.catalogue_authorize(&mut i)?;
         let config = self.config(&mut i)?;
-        let session = i
-            .session
-            .as_ref()
-            .filter(|s| s.actor == selected.actor_id && s.expires_at > time().unwrap_or(u64::MAX))
-            .ok_or(error("ACCESS_LOGIN_REQUIRED"))?;
+        let token = self.online_token(&mut i, &selected)?;
         Ok(NetworkContext {
             writer: Arc::clone(i.writer.as_ref().unwrap()),
             selected,
             config,
-            token: Zeroizing::new(session.token.to_string()),
+            token,
         })
     }
     fn sales_current(&self, n: &NetworkContext) -> Result<(), AccessError> {

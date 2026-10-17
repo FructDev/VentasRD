@@ -84,12 +84,9 @@ impl AccessState {
                 return Err(error("TRANSITION_CONTEXT"));
             }
             let config = self.config(&mut inner)?;
-            let session = inner
-                .session
-                .as_ref()
-                .filter(|s| s.actor == ctx.actor_id && s.expires_at > time().unwrap_or(u64::MAX))
-                .ok_or_else(|| error("LOGIN_REQUIRED"))?;
-            (config, Zeroizing::new(session.token.to_string()))
+            let selected = inner.selected.clone().ok_or(error("LOGIN_REQUIRED"))?;
+            let token = self.online_token(&mut inner, &selected)?;
+            (config, token)
         };
         config.validate()?;
         let response = Self::client()?
