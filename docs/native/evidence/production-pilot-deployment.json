@@ -1,0 +1,157 @@
+{
+  "protocol": "ventard.production.pilot.deployment.1",
+  "date": "2026-10-17",
+  "authorization": "User explicitly authorized production deployment, Pica-only enrollment and scoped encrypted local recovery",
+  "projectRef": "oxbekqoecunsbjheqgqg",
+  "tenantId": "864d08e5-2975-4b2d-a1e2-ba5a14f3d677",
+  "sourceCommit": "02dd9be0d8606c91d3e5800d491c64220c4941b4",
+  "migrations": [
+    "20261017125853_native_production_access_v1.sql",
+    "20261017130229_native_production_operations_v1.sql"
+  ],
+  "migrationsApplied": true,
+  "otherMigrationsApplied": false,
+  "seedsApplied": false,
+  "rolesApplied": false,
+  "vaultModified": false,
+  "preservation": {
+    "protocol": "ventard.production.preservation.1",
+    "tenantId": "864d08e5-2975-4b2d-a1e2-ba5a14f3d677",
+    "originalColumns": true,
+    "scopedTables": 22,
+    "allPicaRowsUnchanged": true,
+    "otherBusinessRowsRead": false,
+    "ncfSequencesRead": false,
+    "verifiedAgainAfterPublicPromotion": true
+  },
+  "issuer": {
+    "protocol": "ventard.production.issuer.deployment.1",
+    "projectRef": "oxbekqoecunsbjheqgqg",
+    "functionName": "native-provision",
+    "keyId": "production-native-v1",
+    "publicHex": "6aa1c5ee959ac003711c31b56840c9906d8fde659550ad5e8dc9c146cfd0dbbd",
+    "health": "MATCHING_INSTALLER_TRUST",
+    "unauthenticatedPost": "REJECTED_WITHOUT_REGISTRATION",
+    "updaterPrivateKeyUploaded": false
+  },
+  "recovery": {
+    "tables": 22,
+    "rows": 11407,
+    "engine": "ISOLATED_POSTGRESQL_RAM",
+    "exactNumericComparison": true,
+    "archiveSha256": "bc1f20e4cc44e3825634c065d76ab9f7bcef5e55478e9ccc3cb2b545c1d0587d",
+    "encrypted": true,
+    "onlyPicaRows": true,
+    "otherBusinessRowsIncluded": false,
+    "ncfSequencesIncluded": false,
+    "authAndStorageObjectsIncluded": false,
+    "portableRecoveryVerified": true
+  },
+  "cohort": {
+    "enabledBusinesses": 1,
+    "otherBusinessesEnabled": 0,
+    "installations": 0,
+    "nativeOperations": 0,
+    "operationalCutovers": 0
+  },
+  "acl": {
+    "cohortPrivate": true,
+    "directActivationDenied": true,
+    "fiscalDenied": true,
+    "anonymousRegistrationDenied": true,
+    "membershipRequiresCohort": true
+  },
+  "web": {
+    "publishedToOfficialDomain": true,
+    "status": "PUBLIC_RELEASE_VERIFIED",
+    "projectId": "prj_wHgZceG4LYbw95BOBHySljGDN4bQ",
+    "productionDomain": "https://ventard.vercel.app",
+    "candidateBuiltWithoutAlias": true,
+    "uncommittedUserChangesIncluded": false,
+    "deploymentId": "dpl_34sDSe7ndj7js9vkLCXUXDtgBVLZ",
+    "candidate": {
+      "protocol": "ventard.production.web.candidate.1",
+      "candidate": "https://ventasrd-3qtt435wf-guacharo00s-projects.vercel.app",
+      "ready": true,
+      "downloadPage": 200,
+      "version": "0.1.9",
+      "installerBytes": 8889314,
+      "installerSha256": "2da2029abb2d643242de408a89ef64d419414a4d0201c1105d8981443223e1e1",
+      "signatureVerified": true,
+      "loginPage": 200,
+      "unauthenticatedAdmin": 401,
+      "downloadRedirect": 307,
+      "localPreviewAbsent": true,
+      "businessAuthenticationUsed": false,
+      "officialDomainPromoted": false
+    },
+    "publicVerification": {
+      "protocol": "ventard.production.web.public.1",
+      "url": "https://ventard.vercel.app/descargar",
+      "deploymentId": "dpl_34sDSe7ndj7js9vkLCXUXDtgBVLZ",
+      "version": "0.1.9",
+      "pageStatus": 200,
+      "versionStatus": 200,
+      "downloadRedirect": 307,
+      "installerBytes": 8889314,
+      "installerSha256": "2da2029abb2d643242de408a89ef64d419414a4d0201c1105d8981443223e1e1",
+      "publicWithoutVercelOrBusinessSession": true,
+      "loginPage": 200,
+      "unauthenticatedAdmin": 401
+    },
+    "productionVariablesPersisted": [
+      "NEXT_PUBLIC_VENTARD_SHARED_JOURNAL",
+      "VENTARD_DESKTOP_RELEASE_CHANNEL",
+      "VENTARD_DESKTOP_DOWNLOAD_ORIGIN",
+      "VENTARD_DESKTOP_RELEASE_JSON"
+    ],
+    "existingSecretsChanged": false,
+    "productionNextBuild": "PASS",
+    "productionTypecheck": "PASS",
+    "publicBrowser": {
+      "pass": 1,
+      "fail": 0,
+      "emptyProfile": true,
+      "businessSessionUsed": false,
+      "externalRequests": 0,
+      "viewports": [
+        1280,
+        390
+      ],
+      "screenshots": [
+        "desktop-download-production.png",
+        "desktop-download-production-mobile.png"
+      ]
+    }
+  },
+  "fiscal": "EXCLUDED",
+  "limits": [
+    "Real business sign-in, initial review/cutover and web/native sales have not been exercised in production",
+    "Only Pica commercial rows were read for preservation/recovery; other-business isolation verified through metadata/ACL and synthetic multi-tenant tests",
+    "No financial operations, installations or automatic cutovers created"
+  ],
+  "checks": {
+    "productionAccess": {
+      "pass": 2,
+      "fail": 0
+    },
+    "productionOperationsWithCohortGuard": {
+      "pass": 4,
+      "fail": 0
+    },
+    "scopedPortableRecovery": {
+      "pass": 4,
+      "fail": 0
+    },
+    "webPackageBoundary": {
+      "pass": 1,
+      "fail": 0
+    },
+    "publicProductionBrowser": {
+      "pass": 1,
+      "fail": 0
+    }
+  },
+  "nativeProductionAppAcceptance": false,
+  "financialOperationsExecutedByTask": 0
+}

@@ -1,4 +1,6 @@
-// Read-only production capture. Private rows/keys are never logged or written
+// Initial pre-native, read-only capture; refuses an existing native schema.
+// Later operational backups use the application's reviewed native backup flow.
+// Private rows/keys are never logged or written
 // unencrypted to the repository. Restore verification uses isolated RAM only.
 import {spawn} from 'node:child_process';
 import {randomBytes,createCipheriv,createDecipheriv,createHash} from 'node:crypto';
