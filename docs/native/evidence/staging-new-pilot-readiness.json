@@ -117,5 +117,84 @@
     "commercialDistribution": false
   },
   "screenshot": "docs/native/evidence/staging-new-pilot-ready.png",
-  "reopenLauncher": "scripts/native/open-staging-pilot.mjs"
+  "reopenLauncher": "scripts/native/open-staging-pilot.mjs",
+  "salesAndSynchronizationAcceptance": {
+    "date": "2026-10-17",
+    "status": "PASS",
+    "scope": "NEW_PILOT_ONLY_REAL_STAGING_SESSIONS_ONE_PC",
+    "web": "DEFINITIVE_LOCAL_WEB_IN_ISOLATED_CHROME",
+    "nativeVersion": "0.1.7",
+    "authentication": "HUMAN_LOGIN_NO_CREDENTIALS_COPIED",
+    "initial": {
+      "sales": 0,
+      "saltStock": "20",
+      "totalUnits": "312",
+      "pending": 0,
+      "debtsCents": "0",
+      "openCashTurns": 0
+    },
+    "final": {
+      "sales": 2,
+      "totalCents": "5000",
+      "cardCents": "5000",
+      "saltStock": "18",
+      "totalUnits": "310",
+      "products": 12,
+      "customers": 2,
+      "pendingWeb": 0,
+      "pendingNative": 0,
+      "debtCents": "0",
+      "openCashTurns": 0,
+      "fiscalRanges": 0
+    },
+    "cases": {
+      "webCardSaleCommittedOffline": true,
+      "nativeCardSaleSameOriginalStockBase": true,
+      "lostAlreadyAppliedHttpReplies": 1,
+      "recovery": "AUTHORITATIVE_JOURNAL_FEED_ORIGINAL_RECEIPT",
+      "nativeIdenticalConfirmationBeforeAndAfterRemote": true,
+      "repeatedSynchronization": true,
+      "webReloadRetainsDataAndInstallation": true,
+      "immutableTicketHashesMatchWebNativeAndRemote": true,
+      "exactlyTwoStockAndPaymentEffects": true,
+      "allOtherProductsCustomersAndCashUnchanged": true,
+      "qaAandBUnchanged": true
+    },
+    "tickets": [
+      {
+        "operationId": "96000073-0000-4000-8000-000000000101",
+        "intentHash": "0838e9a9c71ce88a64e7bf8c05574769f021ab3de09bfdaabfa6fd90853da6d3",
+        "snapshotHash": "3c75eb0eb403e371cb0d289888338c450507a78120292e92ceeb7a6c8d2e9210",
+        "ticket": "Nf6f72780f7834069ab96a02e7c6a8922-000001",
+        "sequence": 1
+      },
+      {
+        "operationId": "4a717177-943c-4073-8289-188546f2af35",
+        "intentHash": "53f449884f3868a80c8e04eebaeba5e8d0be1baf396b3a7ecde2e98d30b19252",
+        "snapshotHash": "e0fb5d1e153bf605a4b9e6414c758bd039f9ba10bcf14a9fb98d019164e95372",
+        "ticket": "N8c4c7efe600645acb138845c5413ad39-000001",
+        "sequence": 2
+      }
+    ],
+    "remoteCounter": 2,
+    "webChannels": {
+      "before": 2,
+      "after": 2
+    },
+    "evidenceScreenshots": [
+      "docs/native/evidence/staging-pilot-sales-web.png",
+      "docs/native/evidence/staging-pilot-sales-native-history.png"
+    ],
+    "limits": {
+      "integratedBrowserAutomationUnavailable": true,
+      "integratedBrowserUserSessionUntouched": true,
+      "physicalPrintingNotTested": true,
+      "webPhysicalPrintAndPopupSuppressed": true,
+      "nativePrintingNotRequested": true,
+      "physicalPCs": 1,
+      "productionAccessed": false,
+      "ncfConfiguredOrIssued": false
+    },
+    "implementationChangesRequired": false
+  }
 }
