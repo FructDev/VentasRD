@@ -5,8 +5,17 @@
   "migration": "20261016165440_native_web_shared_journal_staging_v1.sql",
   "migrationSha256": "e17a3af39ec45560f571a53d01f5b0a5521e310bddf85203dfa9f6af1b2591cf",
   "deployment": "APPLIED",
-  "dryRunAndPush": {"migrations": 1, "seeds": 0, "roles": 0, "vault": "SKIPPED"},
-  "readOnlyVerification": {"status": "SHARED_JOURNAL_READONLY_PASS", "existingContexts": 7, "transaction": "READ_ONLY_ROLLBACK"},
+  "dryRunAndPush": {
+    "migrations": 1,
+    "seeds": 0,
+    "roles": 0,
+    "vault": "SKIPPED"
+  },
+  "readOnlyVerification": {
+    "status": "SHARED_JOURNAL_READONLY_PASS",
+    "existingContexts": 7,
+    "transaction": "READ_ONLY_ROLLBACK"
+  },
   "qaBBaseline": {
     "products": 200,
     "sales": 2,
@@ -15,7 +24,79 @@
     "originalProductsMd5": "f25b199372c3410bab300c89f90527c8",
     "originalSalesMd5": "d5be9a37d33734c2ee61c3a2e4670df1"
   },
-  "integratedAcceptance": "PENDING_HUMAN_AUTH",
+  "integratedAcceptance": "QA_B_SHARED_REAL_SESSION_PASS",
   "production": "UNTOUCHED",
-  "fiscal": "EXCLUDED"
+  "fiscal": "EXCLUDED",
+  "acceptance": {
+    "syntheticBusinessOnly": true,
+    "actor": "EXISTING_QA_B_OWNER_HUMAN_AUTH",
+    "browser": "ORIGINAL_NEXT_PAGES_CHROME_ISOLATED_PROFILE",
+    "native": "TWO_EXISTING_QA_B_INSTALLATIONS_0.1.6_SAME_WINDOWS",
+    "codeCorrection": "1f12cc6",
+    "correction": "Decode preserved numeric tags only in the web view; immutable signed archive unchanged",
+    "correctionChecks": {
+      "regressionRedThenGreen": true,
+      "tests": 16,
+      "typecheck": "PASS",
+      "scopedLint": "PASS",
+      "optimizedBuild": "PASS"
+    },
+    "initialStock": "4",
+    "finalStock": "2",
+    "sales": {
+      "count": 2,
+      "eachCents": "100",
+      "methods": [
+        "CREDIT",
+        "CARD"
+      ],
+      "lostAppliedReplies": 1
+    },
+    "creditPayment": {
+      "count": 1,
+      "cents": "100",
+      "method": "CASH",
+      "remainingDebtCents": "0"
+    },
+    "cash": {
+      "openingCents": "0",
+      "expectedCents": "100",
+      "countedCents": "100",
+      "differenceCents": "0",
+      "closed": true
+    },
+    "pending": {
+      "web": 0,
+      "source": 0,
+      "receiver": 0
+    },
+    "reopenedBrowser": "SAME_STATE_AND_TICKETS",
+    "originalProductsUnchanged": true,
+    "originalLegacySalesUnchanged": true,
+    "legacySales": 2,
+    "previousDebtCents": "800",
+    "repairPaidCents": "700",
+    "layawayPaidCents": "400",
+    "originalCart": "RESTORED_ACTIVE",
+    "tickets": [
+      {
+        "operationId": "7cb89acd-c472-4445-ba5f-66376868d6e1",
+        "ticket": "N9dcb416b18ab448c9713b2e28bc45c3a-350002",
+        "snapshotHash": "e1e59e744fee0f5ff7cf4c149f16c11275170b3217929f5ca261563933ad87fb",
+        "totalCents": "100"
+      },
+      {
+        "operationId": "96000062-0000-4000-8000-000000000203",
+        "ticket": "N29764e71e74145ffa2d2dc173eeeb8c7-000001",
+        "snapshotHash": "7ef55b00c59b95b44d4c510c735ff09cc3992a384e898df49c68639143384259",
+        "totalCents": "100"
+      }
+    ],
+    "remoteJournalOperations": 10,
+    "remoteBrowserChannels": 1,
+    "remoteFiscalOperations": 0,
+    "physicalPrinting": "SUPPRESSED_QA_OUTPUT_BOUNDARY",
+    "externalMessages": "SUPPRESSED_NO_MESSAGE_SENT",
+    "image": "shared-staging-web-qa-b.png"
+  }
 }
