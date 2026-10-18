@@ -56,6 +56,64 @@ fn context() -> CatalogueContext {
         branch_id: None,
     }
 }
+#[test]
+fn reviewed_thousand_sale_history_preserves_all_tickets_without_reloading_each_source() {
+    let (_, mut w) = create();
+    let ctx = context();
+    let mut sales = vec![];
+    let mut lines = vec![];
+    for n in 0..1000 {
+        let sale = format!("synthetic-volume-{n:04}");
+        sales.push(json!({"id":sale,"negocio_id":ctx.tenant_id,"sucursal_id":null,"total":{"$number":"3"},"metodo_pago":"tarjeta","fecha":{"$number":"1000"}}));
+        for line in 0..3 {
+            lines.push(json!({"id":format!("{sale}-{line}"),"negocio_id":ctx.tenant_id,"sucursal_id":null,"venta_id":sale,"producto_id":null,"nombre":format!("SYNTHETIC line {line}"),"cantidad":{"$number":"1"},"precio_unitario":{"$number":"1"},"subtotal":{"$number":"1"}}));
+        }
+    }
+    sources(&mut w, json!({"ventas":sales,"venta_detalles":lines}));
+    let run = input().run_id;
+    let basis = resolution_basis(&mut w, &ctx, &run);
+    cut::store_resolution_basis(w.connection(), &ctx, &run, 0, &basis).unwrap();
+    let review = cut::SelectedReview {
+        run_id: run.clone(),
+        revision: 1,
+        decisions: vec![],
+        stock_counts: vec![],
+        debt_balances: vec![],
+        reason: "SYNTHETIC volume: retain every original ticket without replay".into(),
+        confirmation: "RECONCILE_SELECTED_DOCUMENTS_AND_PRESENT_BALANCES".into(),
+    };
+    let started = std::time::Instant::now();
+    let report = cut::review_selected(w.connection(), &ctx, &review).unwrap();
+    let elapsed = started.elapsed();
+    let tickets = report["selectedBaselineReview"]["history"]["tickets"]
+        .as_array()
+        .unwrap();
+    assert_eq!(tickets.len(), 1000);
+    for (index, ticket) in tickets.iter().enumerate() {
+        if index % 499 == 0 {
+            assert_eq!(
+                ticket,
+                &transition::ticket(w.connection(), &ctx, ticket["id"].as_str().unwrap()).unwrap()
+            );
+        }
+        assert_eq!(ticket["totalCents"], "300");
+        assert_eq!(ticket["lines"].as_array().unwrap().len(), 3);
+    }
+    assert_eq!(
+        cut::review_selected(w.connection(), &ctx, &review).unwrap(),
+        report
+    );
+    assert_eq!(
+        w.connection()
+            .query_row::<i64, _, _>("SELECT count(*) FROM operation_journal", [], |r| r.get(0))
+            .unwrap(),
+        0
+    );
+    assert!(
+        elapsed < std::time::Duration::from_secs(10),
+        "review reloaded the full history per sale: {elapsed:?}"
+    );
+}
 fn create() -> (std::path::PathBuf, VaultWriter) {
     let dir =
         std::env::temp_dir().join(format!("ventard-cutover-fixture-{}", uuid::Uuid::new_v4()));

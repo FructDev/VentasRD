@@ -802,8 +802,15 @@ fn history_for_plan(c: &Connection, ctx: &CatalogueContext, run: &str) -> Result
     let report = transition::report(c, ctx, run)?;
     for (table, rows) in current {
         let old = data.entry(table).or_default();
+        let mut known = old
+            .iter()
+            .filter_map(|r| r["id"].as_str().map(str::to_owned))
+            .collect::<BTreeSet<_>>();
         for row in rows {
-            if !old.iter().any(|r| r["id"] == row["id"]) {
+            if row["id"]
+                .as_str()
+                .is_some_and(|id| known.insert(id.to_owned()))
+            {
                 old.push(row)
             }
         }
@@ -812,17 +819,16 @@ fn history_for_plan(c: &Connection, ctx: &CatalogueContext, run: &str) -> Result
     for rows in data.values_mut() {
         rows.retain(|r| r["negocio_id"] == ctx.tenant_id);
     }
-    let mut tickets = vec![];
-    for sale in data.get("ventas").into_iter().flatten() {
-        if let Some(id) = sale["id"].as_str() {
-            if let Ok(mut ticket) =
-                transition::ticket(c, ctx, id).or_else(|_| transition::run_ticket(c, ctx, run, id))
-            {
-                if ticket["coverage"] == "HASH_MATCHED_LOCAL_CHECKOUT" {
-                    ticket["coverage"] = json!("PRESERVED_ORIGIN_CHECKOUT");
-                }
-                tickets.push(ticket);
-            }
+    let ids = data
+        .get("ventas")
+        .into_iter()
+        .flatten()
+        .filter_map(|sale| sale["id"].as_str().map(str::to_owned))
+        .collect::<Vec<_>>();
+    let mut tickets = transition::history_tickets(c, ctx, run, &ids)?;
+    for ticket in &mut tickets {
+        if ticket["coverage"] == "HASH_MATCHED_LOCAL_CHECKOUT" {
+            ticket["coverage"] = json!("PRESERVED_ORIGIN_CHECKOUT");
         }
     }
     // Carry only an independently verified scope attribution; unknown scope

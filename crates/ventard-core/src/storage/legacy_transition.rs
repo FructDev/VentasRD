@@ -1687,16 +1687,66 @@ pub fn ticket(c: &Connection, ctx: &CatalogueContext, id: &str) -> Result<Value,
         .unwrap_or_default();
     project_ticket(c, ctx, &data, &checkouts, id)
 }
-pub(crate) fn run_ticket(
+/// Project a frozen set of historical tickets with the same published-first,
+/// run-fallback rules as individual ticket reads. Read each
+/// source and verify its checkout proofs once for the whole writer transaction.
+pub(crate) fn history_tickets(
     c: &Connection,
     ctx: &CatalogueContext,
     run: &str,
-    id: &str,
-) -> Result<Value, Error> {
+    ids: &[String],
+) -> Result<Vec<Value>, Error> {
     authorize(c, ctx, run)?;
-    let data = selected(c, run)?;
-    let proofs = checkouts(c, ctx, run, &data)?;
-    project_ticket(c, ctx, &data, &proofs, id)
+    let published = (|| {
+        let data = history_data(c, ctx)?.ok_or_else(invalid)?;
+        let proofs = active_run(c, ctx)?
+            .map(|active| checkouts(c, ctx, &active, &data))
+            .transpose()?
+            .unwrap_or_default();
+        Ok::<_, Error>((ticket_data_by_sale(&data), proofs))
+    })()
+    .ok();
+    let fallback = (|| {
+        let data = selected(c, run)?;
+        let proofs = checkouts(c, ctx, run, &data)?;
+        Ok::<_, Error>((ticket_data_by_sale(&data), proofs))
+    })()
+    .ok();
+    Ok(ids
+        .iter()
+        .filter_map(|id| {
+            published
+                .as_ref()
+                .and_then(|(data, proofs)| {
+                    data.get(id)
+                        .and_then(|rows| project_ticket(c, ctx, rows, proofs, id).ok())
+                })
+                .or_else(|| {
+                    fallback.as_ref().and_then(|(data, proofs)| {
+                        data.get(id)
+                            .and_then(|rows| project_ticket(c, ctx, rows, proofs, id).ok())
+                    })
+                })
+        })
+        .collect())
+}
+fn ticket_data_by_sale(
+    data: &BTreeMap<String, Vec<Value>>,
+) -> BTreeMap<String, BTreeMap<String, Vec<Value>>> {
+    let mut indexed = BTreeMap::<String, BTreeMap<String, Vec<Value>>>::new();
+    for (table, field) in [("ventas", "id"), ("venta_detalles", "venta_id")] {
+        for row in all(data, table) {
+            if let Some(id) = row[field].as_str() {
+                indexed
+                    .entry(id.to_owned())
+                    .or_default()
+                    .entry(table.to_owned())
+                    .or_default()
+                    .push(row.clone());
+            }
+        }
+    }
+    indexed
 }
 fn project_ticket(
     c: &Connection,
