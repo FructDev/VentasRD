@@ -10,6 +10,7 @@ const access=await readFile(new URL('../../supabase/migrations/20261017125853_na
 const operations=await readFile(new URL('../../supabase/migrations/'+productionOperationsFile,import.meta.url),'utf8');
 const fingerprints=await readFile(new URL('../../supabase/migrations/20261018020840_native_web_fingerprint_linear_v1.sql',import.meta.url),'utf8');
 const bulk=await readFile(new URL('../../supabase/migrations/20261018213133_native_resolution_bulk_execution_v1.sql',import.meta.url),'utf8');
+const membership=await readFile(new URL('../../supabase/migrations/20261018222701_native_resolution_indexed_membership_v1.sql',import.meta.url),'utf8');
 const enrollment=await readFile(new URL('./production-pica-enroll.sql',import.meta.url),'utf8');
 const quote=value=>'"'+value.replaceAll('"','""')+'"';
 async function setup(){
@@ -107,7 +108,7 @@ test('production cutover uses the audited stock-journal shape and blocks missing
 
 test('bulk cutover preserves full-size history, balances, exact canonical hashes, atomic rejection and replay',async(t)=>{
  const db=await setup();try{
-  await db.exec(bulk);await db.exec(bulk);
+  await db.exec(bulk);await db.exec(bulk);await db.exec(membership);await db.exec(membership);
   for(const v of [{z:'á 😀 \\"\n',a:[null,true,false,0,9007199254740991,{$number:'-0.00'}]},[],{},'text']){
    const r=(await db.query('select native_sales_canonical_v1($1) old,native_web_resolution_canonical_v1($1) current',[JSON.stringify(v)])).rows[0];assert.equal(r.current,r.old);
   }
@@ -151,7 +152,7 @@ test('bulk cutover preserves full-size history, balances, exact canonical hashes
 
 test('reviewed Pica archives invalid branch stock atomically, preserves every original and leaves another business unchanged',async()=>{
  const db=await isolatedProductionShape();try{
-  await db.exec(bulk);await db.exec(bulk);
+  await db.exec(bulk);await db.exec(bulk);await db.exec(membership);await db.exec(membership);
   const other=id(5300),foreignBranch=id(5301),retiredBranch=id(5302),otherProduct=id(5303);
   await db.exec(`insert into negocios(id,nombre,"dueño_id",plan_activo,plan_tier,acceso_hasta) values('${other}','SYNTHETIC other business','${actor}',true,'basico',1900000000000);
   insert into sucursales(id,negocio_id,nombre,fecha_creacion)values('${foreignBranch}','${other}','Other',1791712800000);
@@ -171,6 +172,8 @@ test('reviewed Pica archives invalid branch stock atomically, preserves every or
   const noncanonical=canon(p)+' ';await assert.rejects(rpc('native_web_cutover_v1',[noncanonical,hash(noncanonical)]),/RESOLUTION_INVALID/);
   const bad=structuredClone(p);bad.cutoverId=id(5314);bad.reconciliation.debtBalances=[];
   await assert.rejects(rpc('native_web_cutover_v1',[canon(bad),hash(bad)]),/RESOLUTION_DEBT_COVERAGE/);
+  const missingParent=structuredClone(p);missingParent.cutoverId=id(5316);missingParent.reconciliation.rows.find(t=>t.name==='productos').rows=[];
+  await assert.rejects(rpc('native_web_cutover_v1',[canon(missingParent),hash(missingParent)]),/RESOLUTION_SOURCE_PARENT_MISSING/);
   await db.exec('reset role');assert.equal((await db.query('select count(*) n from native_web_legacy_branch_stock_v1')).rows[0].n,0);assert.equal((await db.query(`select count(*) n from inventario_sucursales where producto_id='${product}'`)).rows[0].n,3);assert.equal(await otherRows(),beforeOther);
   await db.exec('set role authenticated');const receipt=await rpc('native_web_cutover_v1',[canon(p),hash(p)]);assert.deepEqual(await rpc('native_web_cutover_v1',[canon(p),hash(p)]),receipt);
   const manifest=await rpc('native_sales_bootstrap_v1',[...args,id(5315)]);const received=[];for(const page of manifest.pages)received.push(...JSON.parse((await rpc('native_sales_bootstrap_page_v1',[...args,id(5315),page.index])).payload));

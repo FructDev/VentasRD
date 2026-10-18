@@ -25,7 +25,9 @@ async function setup(){
  await installStockTimestampFix(db);
  await admin(db,await readFile(new URL('../../supabase/migrations/20261018020840_native_web_fingerprint_linear_v1.sql',import.meta.url),'utf8'));
  const bulk=await readFile(new URL('../../supabase/migrations/20261018213133_native_resolution_bulk_execution_v1.sql',import.meta.url),'utf8');
- await admin(db,bulk);await admin(db,bulk);return db;
+ await admin(db,bulk);await admin(db,bulk);
+ const membership=await readFile(new URL('../../supabase/migrations/20261018222701_native_resolution_indexed_membership_v1.sql',import.meta.url),'utf8');
+ await admin(db,membership);await admin(db,membership);return db;
 }
 
 test('resolution: branch counts create missing stock with required timestamp and replay without changing it',async()=>{
