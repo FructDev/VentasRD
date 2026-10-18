@@ -1,5 +1,11 @@
 //! Fixed Staging read endpoint and owner/PIN-bound SQLCipher reconciliation.
 use super::*;
+
+fn transition_timeout(rpc: &str) -> Duration {
+    // The one-time bulk handover has a 60s server budget. Other requests
+    // retain their existing 15s deadline, including ordinary sales and reads.
+    Duration::from_secs(if matches!(rpc, "native_web_resolution_commit_v1" | "native_web_resolution_abandon_v1") { 75 } else { 15 })
+}
 use ventard_core::storage::legacy_cutover as cut;
 use ventard_core::storage::legacy_transition as core;
 fn resolution_schema_failure(rpc: &str, code: Option<&str>) -> bool {
@@ -91,6 +97,7 @@ impl AccessState {
         config.validate()?;
         let response = Self::client()?
             .post(format!("{HOST}/rest/v1/rpc/{rpc}"))
+            .timeout(transition_timeout(rpc))
             .header("apikey", &config.publishable_key)
             .bearer_auth(&*token)
             .json(&args)
@@ -127,6 +134,8 @@ impl AccessState {
                     Some("RESOLUTION_PART_INVALID")=>"RESOLUTION_PART_INVALID",
                     Some("RESOLUTION_TRANSPORT_FULL")=>"RESOLUTION_TRANSPORT_FULL",
                     _ if resolution_schema_failure(rpc,v["code"].as_str())=>"RESOLUTION_SCHEMA_INCOMPATIBLE",
+                    _ if v["code"]=="57014" && matches!(rpc,"native_web_cutover_v1"|"native_web_resolution_commit_v1"|"native_web_resolution_abandon_v1")=>"CUTOVER_PROCESSING_TIMEOUT",
+                    Some("RESOLUTION_INVALID")=>"CUTOVER_INVALID",
                     Some("WEB_OBSERVATION_UNAVAILABLE") => "TABLE_UNAVAILABLE",
                     Some("WEB_OBSERVATION_TOO_LARGE") => "TRANSITION_TOO_LARGE",
                     Some("CUTOVER_SOURCE_CHANGED") => "CUTOVER_SOURCE_CHANGED",
@@ -419,6 +428,16 @@ impl AccessState {
 }
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn bulk_commit_deadline_is_separate_from_ordinary_transition_requests() {
+        for rpc in ["native_web_resolution_commit_v1", "native_web_resolution_abandon_v1"] {
+            assert_eq!(super::transition_timeout(rpc),std::time::Duration::from_secs(75));
+        }
+        for rpc in ["native_web_resolution_stage_v1","native_web_capture_v1","native_web_resolution_basis_v1","native_web_cutover_v1","native_sales_submit_v1"] {
+            assert_eq!(super::transition_timeout(rpc),std::time::Duration::from_secs(15));
+        }
+    }
+
     use super::*;
     #[test]
     fn chunked_commit_constraint_rejection_is_not_a_network_failure() {

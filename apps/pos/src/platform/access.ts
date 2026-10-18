@@ -277,6 +277,7 @@ const messages: Record<string, string> = {
   CUTOVER_SOURCE_CONFLICT:'La fuente guardada no coincide con su huella. Conserva las copias y revisa el origen antes de activar.',
   CUTOVER_STORAGE:'La operación no pudo confirmarse en el almacenamiento local. Recupera el mismo intento.',
   CUTOVER_INVALID:'Los datos del corte no cumplen el contrato esperado. No se activaron efectos a partir de esos datos.',
+  CUTOVER_PROCESSING_TIMEOUT:'El servidor alcanzó el tiempo máximo de esta conciliación. El intento se conserva; recupera el mismo corte después de revisar el servicio.',
   CUTOVER_ID_CONFLICT:'El intento de corte ya tiene datos distintos. Recupera el intento guardado.',
   CUTOVER_CONTEXT:'La cuenta, instalación o permiso cambió. El intento original se conserva.',
   CUTOVER_RECEIPT_INVALID:'La respuesta no demuestra este corte exacto; el intento sigue pendiente.',

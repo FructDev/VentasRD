@@ -22,7 +22,10 @@ async function installStockTimestampFix(db){
 async function setup(){
  const db=await setupBase();
  await admin(db,"alter table inventario_sucursales alter column fecha_actualizacion set not null,alter column fecha_actualizacion drop default;alter table transacciones_fiado add constraint transacciones_fiado_metodo_abono_check check(metodo_pago is null or(tipo='abono' and metodo_pago in('efectivo','tarjeta','transferencia')));");
- await installStockTimestampFix(db);return db;
+ await installStockTimestampFix(db);
+ await admin(db,await readFile(new URL('../../supabase/migrations/20261018020840_native_web_fingerprint_linear_v1.sql',import.meta.url),'utf8'));
+ const bulk=await readFile(new URL('../../supabase/migrations/20261018213133_native_resolution_bulk_execution_v1.sql',import.meta.url),'utf8');
+ await admin(db,bulk);await admin(db,bulk);return db;
 }
 
 test('resolution: branch counts create missing stock with required timestamp and replay without changing it',async()=>{
@@ -39,6 +42,14 @@ test('resolution: branch counts create missing stock with required timestamp and
 });
 test('resolution: original cloud-only cutover remains compatible without selected documents or history metadata',async()=>{const db=await setup();try{const p=await plan(db);delete p.reconciliation;const receipt=await submit(db,p);assert.equal(receipt.coverage,'CLOUD_CONVERGED_BASELINE');assert.deepEqual(await submit(db,p),receipt);assert.equal((await admin(db,'select stock_actual from inventario_sucursales'))[0].stock_actual,100);assert.equal((await admin(db,'select count(*) n from ventas'))[0].n,0);const m=await rpc(db,'native_sales_bootstrap_v1',[...context,id(2530)]);assert.equal(m.legacyResolutionHistory,undefined);assert.equal((await admin(db,'select count(*) n from native_web_resolutions_v1'))[0].n,0);}finally{await db.close()}});
 async function upload(db,raw,h,chunk=100000,cancel=false){const chars=Array.from(raw),parts=[];for(let i=0;i<chars.length;i+=chunk)parts.push(chars.slice(i,i+chunk).join(''));const p=JSON.parse(raw),args=[ctx,p.cutoverId,h,parts.length],method=cancel?'native_web_resolution_abandon_v1':'native_web_resolution_commit_v1';const initial=await rpc(db,method,args);if(initial.status!=='UPLOAD_REQUIRED')return initial;for(let index=0;index<parts.length;index++){const part=parts[index],r=await rpc(db,'native_web_resolution_stage_v1',[...args,index,part,hash(part)]);assert.equal(r.status,'STAGED');if(index===0){assert.deepEqual(await rpc(db,'native_web_resolution_stage_v1',[...args,index,part,hash(part)]),r);if(parts.length>1)assert.equal((await rpc(db,method,args)).status,'UPLOAD_REQUIRED')}}return rpc(db,method,args)}
+test('bulk resolution rejects null or missing sale parents without activating stock or balances',async()=>{
+ const db=await setup();try{
+  const p=await plan(db),detail=p.reconciliation.rows.find(t=>t.name==='venta_detalles').rows.at(-1);
+  detail.venta_id=null;await assert.rejects(submit(db,p),/RESOLUTION_MONEY_INVALID/);
+  delete detail.venta_id;await assert.rejects(submit(db,p),/RESOLUTION_MONEY_INVALID/);
+  for(const table of ['native_web_cutovers_v1','native_web_resolutions_v1','native_sales_ledger_v1'])assert.equal((await admin(db,'select count(*) n from '+table))[0].n,0);
+ }finally{await db.close()}
+});
 test('resolution: existing active service versions continue with only the next new payment effect',async()=>{const db=await setup();try{await admin(db,`insert into apartados(id,negocio_id,sucursal_id,estado,folio,cliente_nombre,items,total,abonado,abonos,fecha_creacion,fecha_actualizacion) values($1,$2,$3,'activo','AP-LEGACY','QA',$4,10,1,'[]',1791700000000,1791700000000)`,[id(2205),tenant,branch,JSON.stringify([{producto_id:product,nombre:'Producto',cantidad:2,precio_unitario:5}])]);const p=await plan(db);const rows=p.reconciliation.rows.find(t=>t.name==='apartados').rows;rows.splice(0,1); // The helper appended the reviewed variant after the current cloud version.
  const old=p.reconciliation.history.tables.find(t=>t.name==='apartados').rows;old.splice(1,1);const r=await submit(db,p);assert.equal(r.status,'BASELINE_ADOPTED');const baseline=(await rpc(db,'native_sales_bootstrap_v1',[...context,id(2500)])).legacyServices[0].document;assert.equal(baseline.paidCents,'300');assert.equal((await admin(db,"select (source_capture->'tables') data from native_web_resolutions_v1"))[0].data.find(t=>t.name==='apartados').rows[0].abonado.$number,'1');const req={kind:'LAYAWAY_ACTION',operationId:id(2501),layawayId:baseline.id,expectedRevision:'1',action:'PAYMENT',amountCents:'100',method:'TARJETA',turnId:null,warrantyDays:'0'},doc=(await admin(db,'select native_layaway_plan_v1($1,$2,$3,$4,$5,$6) value',[req,baseline,'1791712800000',actor,baseline.folio,baseline.folioNumber]))[0].value;doc.stock=[];doc.serials=[];doc.business=null;const command=managementCommand(2501,'LAYAWAY_PAYMENT',req,doc);command.permissionGrantId=id(99);const receipt=await submitManagement(db,command);assert.equal(receipt.effects[0].payload.layaway.paidCents,'400');assert.deepEqual(await submitManagement(db,command),receipt);assert.equal((await admin(db,'select count(*) n from native_sales_ledger_v1'))[0].n,1);assert.equal((await admin(db,'select stock_actual from inventario_sucursales'))[0].stock_actual,97);
  }finally{await db.close()}});
