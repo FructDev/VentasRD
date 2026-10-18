@@ -89,7 +89,7 @@ function SettingsPage({production=false}:{production?:boolean}) {
           <h3 className="text-lg font-bold text-vr-gray mb-1 border-b border-navy-3 pb-2">🩺 Estado del Sistema</h3>
           <p className="text-xs text-vr-gray mb-4">Datos de este dispositivo para soporte. No envía ventas ni datos de clientes.</p>
           <div className="bg-navy rounded-xl border border-navy-3 p-4">{[
-            ['Entorno',s.snapshot?.mode==='recovery-readonly'?'Archivo recuperado · sólo consulta':s.snapshot?.mode==='staging-operational'?(production?'Piloto de producción · operativo':'Staging QA · operativo'):s.snapshot?.mode==='staging-readonly'?'Staging QA · sólo lectura':s.snapshot?'Fixture sintético':'No disponible'],
+            ['Entorno',s.snapshot?.mode==='recovery-readonly'?'Archivo recuperado · sólo consulta':s.snapshot?.mode==='staging-operational'?(production?'Piloto de producción · operativo':'Staging QA · operativo'):s.snapshot?.mode==='staging-readonly'?(production?'Piloto de producción · sólo consulta':'Staging QA · sólo lectura'):s.snapshot?'Fixture sintético':'No disponible'],
             ['Pendientes totales',s.snapshot?.pendingOperations??'No disponible'],
             ['Ventas locales confirmadas',s.snapshot?.confirmedSales??'No disponible'],
           ].map(([label,value])=><div key={label} className="flex items-center justify-between gap-3 text-sm py-1.5 border-b border-navy-3/40"><span className="text-vr-gray">{label}</span><span className="font-mono font-bold text-white text-xs text-right">{value}</span></div>)}</div>

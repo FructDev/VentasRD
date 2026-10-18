@@ -1,7 +1,7 @@
 //! Explicit adoption of a reviewed cloud baseline. Legacy intentions remain
 //! preserved and never enter NATIVE1 outbox or acquire fabricated receipts.
 use super::{catalogue_preview::CatalogueContext, legacy_transition as transition};
-use crate::domain::canonical::canonicalize;
+use crate::domain::canonical::{canonicalize_bounded, CanonError};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -37,7 +37,13 @@ fn hash(raw: &str) -> String {
     format!("{:x}", Sha256::digest(raw.as_bytes()))
 }
 fn canonical(v: &Value) -> Result<(String, String), Error> {
-    canonicalize(v.to_string().as_bytes()).map_err(|_| invalid())
+    canonical_document(v.to_string().as_bytes())
+}
+fn canonical_document(bytes: &[u8]) -> Result<(String, String), Error> {
+    canonicalize_bounded(bytes, transition::MAX_CAPTURE).map_err(|e| match e {
+        CanonError::TooLarge => Error("RESOLUTION_TOO_LARGE"),
+        _ => invalid(),
+    })
 }
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -411,7 +417,7 @@ pub fn load(c: &Connection, ctx: &CatalogueContext, id: &str) -> Result<Pending,
     if saved != ctx_json(ctx)? {
         return Err(Error("CUTOVER_CONTEXT"));
     }
-    if canonicalize(intent.as_bytes()).map_err(|_| invalid())?.1 != hash {
+    if canonical_document(intent.as_bytes())?.1 != hash {
         return Err(Error("CUTOVER_SOURCE_CONFLICT"));
     }
     let receipt: Option<String> = c.query_row(
@@ -615,4 +621,21 @@ pub fn mark_active(c: &mut Connection, ctx: &CatalogueContext, id: &str) -> Resu
     )?;
     tx.commit()?;
     view(c, ctx)
+}
+
+#[cfg(test)]
+mod bulk_document_tests {
+    use super::*;
+    #[test]
+    fn cutover_documents_remain_bounded_to_the_migration_transport_limit() {
+        let oversized = vec![b' '; transition::MAX_CAPTURE + 1];
+        assert_eq!(
+            canonical_document(&oversized).unwrap_err().code(),
+            "RESOLUTION_TOO_LARGE"
+        );
+        assert_eq!(
+            canonical_document(br#"{"x":-1}"#).unwrap_err().code(),
+            "CUTOVER_INVALID"
+        );
+    }
 }

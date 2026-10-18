@@ -161,7 +161,11 @@ fn write_string(s: &str, out: &mut String) {
 /// Parse estricto de bytes JSON a [`CanonValue`]. Rechaza claves duplicadas,
 /// números no enteros/negativos/no canónicos, surrogates sueltos, BOM y basura final.
 pub fn parse(input: &[u8]) -> Result<CanonValue, CanonError> {
-    if input.len() > MAX_INPUT_BYTES {
+    parse_bounded(input, MAX_INPUT_BYTES)
+}
+
+fn parse_bounded(input: &[u8], max_bytes: usize) -> Result<CanonValue, CanonError> {
+    if input.len() > max_bytes {
         return Err(CanonError::TooLarge);
     }
     let text = std::str::from_utf8(input).map_err(|e| CanonError::Syntax(e.valid_up_to()))?;
@@ -181,7 +185,16 @@ pub fn parse(input: &[u8]) -> Result<CanonValue, CanonError> {
 
 /// Canonicaliza y calcula el hash en un paso (lo que hace el API al recibir).
 pub fn canonicalize(input: &[u8]) -> Result<(String, String), CanonError> {
-    let v = parse(input)?;
+    canonicalize_bounded(input, MAX_INPUT_BYTES)
+}
+
+/// Internal bulk-document boundary. Ordinary operations retain the 1 MiB
+/// public contract; reviewed migration packages use their separate size cap.
+pub(crate) fn canonicalize_bounded(
+    input: &[u8],
+    max_bytes: usize,
+) -> Result<(String, String), CanonError> {
+    let v = parse_bounded(input, max_bytes)?;
     let c = v.to_canonical_string();
     let h = sha256_hex(c.as_bytes());
     Ok((c, h))
@@ -526,6 +539,41 @@ mod tests {
         assert_eq!(parse(deep.as_bytes()), Err(CanonError::TooDeep));
         let big = vec![b' '; MAX_INPUT_BYTES + 1];
         assert_eq!(parse(&big), Err(CanonError::TooLarge));
+    }
+
+    #[test]
+    fn bulk_boundary_preserves_strict_canonical_rules_and_operation_limit() {
+        let large = format!("{{\"text\":\"{}\"}}", "x".repeat(MAX_INPUT_BYTES));
+        assert_eq!(canonicalize(large.as_bytes()), Err(CanonError::TooLarge));
+        let (body, hash) = canonicalize_bounded(large.as_bytes(), large.len()).unwrap();
+        assert_eq!(body, large);
+        assert_eq!(hash, sha256_hex(large.as_bytes()));
+        assert_eq!(
+            canonicalize_bounded(large.as_bytes(), large.len() - 1),
+            Err(CanonError::TooLarge)
+        );
+        for bad in [
+            r#"{"x":1,"x":2}"#,
+            r#"{"x":1.2}"#,
+            r#"{"x":-1}"#,
+            r#"{"x":9007199254740992}"#,
+            r#"{"x":"\ud800"}"#,
+        ] {
+            assert_eq!(
+                canonicalize_bounded(bad.as_bytes(), 32 * MAX_INPUT_BYTES),
+                canonicalize(bad.as_bytes())
+            );
+            assert!(canonicalize(bad.as_bytes()).is_err());
+        }
+        let deep = "[".repeat(MAX_DEPTH + 2) + &"]".repeat(MAX_DEPTH + 2);
+        assert_eq!(
+            canonicalize_bounded(deep.as_bytes(), 32 * MAX_INPUT_BYTES),
+            Err(CanonError::TooDeep)
+        );
+        assert_eq!(
+            canonicalize_bounded(br#"{"z":2,"a":1}"#, 32 * MAX_INPUT_BYTES),
+            canonicalize(br#"{"z":2,"a":1}"#)
+        );
     }
 
     #[test]

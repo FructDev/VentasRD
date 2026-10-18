@@ -58,7 +58,7 @@ fn context() -> CatalogueContext {
 }
 #[test]
 fn reviewed_thousand_sale_history_preserves_all_tickets_without_reloading_each_source() {
-    let (_, mut w) = create();
+    let (dir, mut w) = create();
     let ctx = context();
     let mut sales = vec![];
     let mut lines = vec![];
@@ -112,6 +112,53 @@ fn reviewed_thousand_sale_history_preserves_all_tickets_without_reloading_each_s
     assert!(
         elapsed < std::time::Duration::from_secs(10),
         "review reloaded the full history per sale: {elapsed:?}"
+    );
+    let mut i = input();
+    i.revision = report["revision"].as_u64().unwrap() as u32;
+    i.reconcile_selected = Some(true);
+    i.legacy_cash_history_confirmed = Some(true);
+    verified_backup(&mut w, &dir, &ctx, &i);
+    let pending = cut::prepare(w.connection(), &ctx, &i, "1791909600200").unwrap();
+    assert!(pending.intent.len() > ventard_core::domain::canonical::MAX_INPUT_BYTES);
+    let parts = cut::resolution_upload_parts(&pending.intent).unwrap();
+    assert_eq!(parts.concat(), pending.intent);
+    let recovered = cut::load(w.connection(), &ctx, &i.cutover_id).unwrap();
+    assert_eq!(recovered.intent, pending.intent);
+    assert_eq!(recovered.hash, pending.hash);
+    let replay = cut::prepare(w.connection(), &ctx, &i, "1791909600300").unwrap();
+    assert_eq!(replay.hash, pending.hash);
+    let plan: Value = serde_json::from_str(&pending.intent).unwrap();
+    let receipt = json!({"protocol":"ventard.web.cutover.receipt.1","status":"BASELINE_ADOPTED","cutoverId":i.cutover_id,"planHash":pending.hash,"context":ctx,"runId":i.run_id,"revision":i.revision,"backupId":i.backup_id,"coverage":"RECONCILED_SELECTED_BASELINE","legacyReplay":false});
+    cut::accept(w.connection(), &ctx, &i.cutover_id, &receipt).unwrap();
+    let history = &plan["reconciliation"]["history"];
+    let body = history.to_string();
+    assert!(body.len() > ventard_core::domain::canonical::MAX_INPUT_BYTES);
+    let h = cut::resolution_part_hash(&body);
+    let envelope = json!({"protocol":"ventard.web.resolution.history.envelope.1","context":ctx,"history":history,"historyHash":h,"receipt":receipt});
+    cut::stage_resolution_history(w.connection(), &ctx, &envelope).unwrap();
+    cut::stage_resolution_history(w.connection(), &ctx, &envelope).unwrap();
+    let manifest = json!({"legacyResolutionHistory":{"sha256":h,"cutoverId":i.cutover_id}});
+    cut::activate_resolution_history(w.connection(), &ctx, &manifest).unwrap();
+    drop(w);
+    let mut w = VaultWriter::open_encrypted(&dir, &CipherKey::new([119; 32])).unwrap();
+    assert_eq!(
+        cut::load(w.connection(), &ctx, &i.cutover_id)
+            .unwrap()
+            .state,
+        "ADOPTED"
+    );
+    assert_eq!(
+        transition::history(w.connection(), &ctx, "", None, None, None, 1).unwrap()["total"],
+        "1000"
+    );
+    let mut forged = envelope;
+    forged["history"]["tickets"][0]["totalCents"] = json!("9999");
+    assert!(cut::stage_resolution_history(w.connection(), &ctx, &forged).is_err());
+    assert_eq!(
+        w.connection()
+            .query_row::<i64, _, _>("SELECT count(*) FROM operation_journal", [], |r| r.get(0))
+            .unwrap(),
+        0
     );
 }
 fn create() -> (std::path::PathBuf, VaultWriter) {
