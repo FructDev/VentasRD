@@ -7,6 +7,7 @@ const tenant='864d08e5-2975-4b2d-a1e2-ba5a14f3d677',qa='96000000-0000-4000-8000-
 const schema=JSON.parse(await readFile(new URL('./fixtures/production-schema-20261017.json',import.meta.url),'utf8'));
 const access=await readFile(new URL('../../supabase/migrations/20261017125853_native_production_access_v1.sql',import.meta.url),'utf8');
 const operations=await readFile(new URL('../../supabase/migrations/'+productionOperationsFile,import.meta.url),'utf8');
+const fingerprints=await readFile(new URL('../../supabase/migrations/20261018020840_native_web_fingerprint_linear_v1.sql',import.meta.url),'utf8');
 const enrollment=await readFile(new URL('./production-pica-enroll.sql',import.meta.url),'utf8');
 const quote=value=>'"'+value.replaceAll('"','""')+'"';
 async function setup(){
@@ -20,7 +21,7 @@ async function setup(){
  }
  for(const c of [...schema.constraints].sort((a,b)=>Number(a.definition.startsWith("FOREIGN KEY"))-Number(b.definition.startsWith("FOREIGN KEY")))){assert.match(c.definition,/^(PRIMARY KEY|FOREIGN KEY|CHECK|UNIQUE) /);assert.ok(!/[;]|--|\/\*/.test(c.definition));await db.exec('alter table '+quote(c.table.replace(/^public\./,''))+' add constraint '+quote(c.name)+' '+c.definition)}
  await db.exec(`insert into auth.users values('${actor}');insert into negocios(id,nombre,"dueño_id",plan_activo,plan_tier,acceso_hasta) values('${tenant}','SYNTHETIC production-shape fixture','${actor}',true,'basico',1900000000000);insert into sucursales(id,negocio_id,nombre,fecha_creacion)values('${branch}','${tenant}','Fixture',1791712800000);insert into productos(id,negocio_id,nombre,codigo_barras,precio_venta,costo,stock_actual,tasa_itbis,fecha_actualizacion)values('${product}','${tenant}','Producto sintético','0001',100,60,100,.18,1791712800000);insert into inventario_sucursales(sucursal_id,producto_id,stock_actual,fecha_actualizacion)values('${branch}','${product}',100,1791712800000);insert into clientes(id,negocio_id,nombre,limite_credito,fecha_actualizacion)values('${customer}','${tenant}','Cliente sintético',5000,1791712800000);`);
- await db.exec(access);await db.exec(operations);await db.exec(operations);
+ await db.exec(access);await db.exec(operations);await db.exec(operations);await db.exec(fingerprints);await db.exec(fingerprints);
  return db;
  }catch(e){await db.close();const position=Number(e.position)||0;throw Error(JSON.stringify({message:e.message,code:e.code,where:e.where,near:e.query?.slice(Math.max(0,position-150),position+200)}))}
 }
