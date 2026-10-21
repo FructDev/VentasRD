@@ -5,6 +5,8 @@ use super::*;
 mod product_media;
 #[path = "team.rs"]
 mod team;
+#[path = "business_admin.rs"]
+mod business_admin;
 use ventard_core::application::{
     checkout,
     sales::{self, SaleLine, SaleOptions, SaleRequest},
@@ -17,6 +19,9 @@ use ventard_core::application::{
     deny_unknown_fields
 )]
 pub enum SalesAction {
+    AdministrationRead {},
+    AdministrationCreateBranch { #[serde(rename="operationId")] operation_id:String, #[serde(rename="branchId")] branch_id:String, name:String, address:String },
+    AdministrationSetPin { #[serde(rename="operationId")] operation_id:String, pin:String },
     TeamRead {},
     TeamExecute { input: ventard_core::storage::team::Input },
     TeamRecover { cancel: bool },
@@ -456,6 +461,7 @@ impl AccessState {
                 | "native_team_lookup_v1"
                 | "native_team_submit_v1"
                 | "native_team_cancel_v1"
+                | "native_business_admin_v1"
         ) {
             return Err((403, 0, None));
         }
@@ -896,6 +902,17 @@ impl AccessState {
                 }
                 Ok(json!({"status":"UNKNOWN","submitted":job.fresh}))
             }
+            SalesAction::AdministrationRead {} => self.administration("READ", None, json!({})),
+            SalesAction::AdministrationCreateBranch { operation_id, branch_id, name, address } => {
+                id(&branch_id)?;
+                if name.trim().is_empty() || name.chars().count()>120 || address.chars().count()>500 {return Err(error("ADMIN_INVALID"));}
+                self.administration("CREATE_BRANCH",Some(operation_id),json!({"id":branch_id,"name":name.trim(),"address":address.trim()}))
+            },
+            SalesAction::AdministrationSetPin { operation_id, pin } => {
+                let pin=Zeroizing::new(pin);
+                if pin.len()!=4 || !pin.bytes().all(|b|b.is_ascii_digit()){return Err(error("ADMIN_INVALID"));}
+                self.administration("SET_ADMIN_PIN",Some(operation_id),json!({"pinHash":ventard_core::domain::canonical::sha256_hex(pin.as_bytes())}))
+            },
             SalesAction::TeamRead {} => self.team_read(),
             SalesAction::TeamExecute { input } => self.team_send(Some(input),false),
             SalesAction::TeamRecover { cancel } => self.team_send(None,cancel),

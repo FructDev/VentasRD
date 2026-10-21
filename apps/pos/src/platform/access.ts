@@ -94,6 +94,9 @@ async function call<T = AccessView>(
   });
 }
 export const accessPort = {
+  administrationRead: () => call<{tenantId:string;branchId:string|null;branches:{id:string;name:string;address:string|null}[];pinConfigured:boolean}>("native_sales", {command:{action:'ADMINISTRATION_READ'}}),
+  administrationCreateBranch: (operationId:string,branchId:string,name:string,address:string) => call<{status:string}>("native_sales",{command:{action:'ADMINISTRATION_CREATE_BRANCH',operationId,branchId,name,address}}),
+  administrationSetPin: (operationId:string,pin:string) => call<{status:string}>("native_sales",{command:{action:'ADMINISTRATION_SET_PIN',operationId,pin}}),
   status: () => call("native_access_status"),
   login: (email: string, password: string) =>
     call("native_access_login", { email, password }),
@@ -188,8 +191,12 @@ export const fiscalPort = {
     call<FiscalView>("native_fiscal_prepare", { kind }),
 };
 const messages: Record<string, string> = {
+  ADMIN_MIGRATION_REQUIRED:'La conexión del Panel Administrativo requiere actualizar su función de servidor. Los datos locales siguen disponibles.',
+  ADMIN_REMOTE_CONFLICT:'No se aplicó un cambio nuevo: comprueba si ya existe una sucursal con ese nombre o recupera el mismo intento.',
+  ADMIN_REMOTE_UNAVAILABLE:'No se pudo confirmar la respuesta. Recupera el mismo intento; no crees otra sucursal para repetirlo.',
+  ADMIN_INVALID:'Revisa el nombre, dirección y PIN de cuatro dígitos.',
   SALES_PAYMENT_CONTEXT_INVALID:"El servidor rechazó el contexto de pago/turno. La venta se conserva con el mismo ID; revisa la causa antes de reintentar.",
-  SALES_SETUP_REQUIRED:"La sesión inició correctamente. Este negocio aún requiere preparar el traslado antes de vender. Descarga la captura de consulta en «Opciones de soporte» y abre Ajustes → Traslado desde la web para conciliar los datos y confirmar el corte.",
+  SALES_SETUP_REQUIRED:"La sesión inició correctamente. El dueño o administrador debe revisar el traslado y confirmar los saldos antes de comenzar a vender. Pulsa «Descargar catálogo y abrir VentaRD» para continuar la preparación.",
   SALES_SCOPE_CONFLICT:"El negocio QA ya se adoptó en otro ámbito. Usa la misma sucursal; no se cambiará ni reparará stock automáticamente.",
   SALES_SOURCE_UNVERIFIABLE:"Los datos de origen de Staging no permiten una preparación segura. Hay que revisar el dato incompatible; no se inventarán saldos, precios ni historia.",
   SALES_SCHEMA_INCOMPATIBLE:"La función de Staging no coincide con el esquema desplegado. Se conservan los datos; hace falta corregir la compatibilidad del servidor.",

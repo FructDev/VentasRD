@@ -2,7 +2,7 @@
 //! tokens, signed permissions or URLs are accepted from the renderer.
 use super::*;
 use ventard_core::{security::offline_grant::VerifiedGrant, storage::team as core};
-fn authorize(g: &VerifiedGrant, high: u64, opens: u64) -> Result<(), AppError> {
+pub(super) fn authorize(g: &VerifiedGrant, high: u64, opens: u64) -> Result<(), AppError> {
     let now = time().map_err(|_| {
         AppError::Protocol(ventard_core::application::errors::ProtocolError::MalformedPayload)
     })?;

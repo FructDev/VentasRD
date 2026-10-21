@@ -29,7 +29,7 @@ export async function buildProductionLocal({version='0.1.9',prepareOnly=false}={
    if(manifest.version!==version||manifest.publicConfigSha256!==hash(await readFile(publicConfigPath))||manifest.updatePublicKeySha256!==hash(updates.publicKey))throw Error('PRODUCTION_EXISTING_PACKAGE_CONFIG_CHANGED');
   }else manifest=await packageWindowsProduction({version,publicConfigPath,updateConfigPath});
   const directory=resolve(root,'scratch/windows-production-distribution',version),installerPath=resolve(directory,manifest.installer.file);
-  await prepareRelease({manifestPath:resolve(directory,'package.json'),installerPath,signaturePath:installerPath+'.sig',updateConfigPath,url:productionTarget.webOrigin+'/downloads/windows-x86_64/'+version+'/'+encodeURIComponent(manifest.installer.file),outputPath:resolve(root,'scratch/production-release.json')});
+  await prepareRelease({manifestPath:resolve(directory,'package.json'),installerPath,signaturePath:installerPath+'.sig',updateConfigPath,url:productionTarget.webOrigin+'/downloads/windows-x86_64/'+version+'/'+encodeURIComponent(manifest.installer.file),outputPath:resolve(directory,'release.json')});
   console.log('PRODUCTION_CANDIDATE_VERIFIED_LOCALLY; NOT_PUBLISHED_OR_ACTIVATED');return manifest;
  }finally{
   secret.fill(0);if(previous===undefined)delete process.env.TAURI_SIGNING_PRIVATE_KEY;else process.env.TAURI_SIGNING_PRIVATE_KEY=previous;

@@ -1685,7 +1685,8 @@ pub fn ticket(c: &Connection, ctx: &CatalogueContext, id: &str) -> Result<Value,
         .map(|run| checkouts(c, ctx, &run, &data))
         .transpose()?
         .unwrap_or_default();
-    project_ticket(c, ctx, &data, &checkouts, id)
+    let saved = super::legacy_cutover::resolution_history_tickets(c, ctx).map_err(|_| ());
+    project_ticket(ctx, &data, &checkouts, &saved, id)
 }
 /// Project a frozen set of historical tickets with the same published-first,
 /// run-fallback rules as individual ticket reads. Read each
@@ -1712,6 +1713,7 @@ pub(crate) fn history_tickets(
         Ok::<_, Error>((ticket_data_by_sale(&data), proofs))
     })()
     .ok();
+    let saved = super::legacy_cutover::resolution_history_tickets(c, ctx).map_err(|_| ());
     Ok(ids
         .iter()
         .filter_map(|id| {
@@ -1719,12 +1721,12 @@ pub(crate) fn history_tickets(
                 .as_ref()
                 .and_then(|(data, proofs)| {
                     data.get(id)
-                        .and_then(|rows| project_ticket(c, ctx, rows, proofs, id).ok())
+                        .and_then(|rows| project_ticket(ctx, rows, proofs, &saved, id).ok())
                 })
                 .or_else(|| {
                     fallback.as_ref().and_then(|(data, proofs)| {
                         data.get(id)
-                            .and_then(|rows| project_ticket(c, ctx, rows, proofs, id).ok())
+                            .and_then(|rows| project_ticket(ctx, rows, proofs, &saved, id).ok())
                     })
                 })
         })
@@ -1749,10 +1751,10 @@ fn ticket_data_by_sale(
     indexed
 }
 fn project_ticket(
-    c: &Connection,
     ctx: &CatalogueContext,
     data: &BTreeMap<String, Vec<Value>>,
     checkouts: &BTreeMap<String, super::legacy_checkout::Snapshot>,
+    saved_tickets: &Result<BTreeMap<String, Value>, ()>,
     id: &str,
 ) -> Result<Value, Error> {
     let r = all(data, "ventas")
@@ -1765,11 +1767,9 @@ fn project_ticket(
         })
         .ok_or_else(invalid)?;
     if !checkouts.contains_key(id) {
-        if let Some(saved) =
-            super::legacy_cutover::resolution_history_ticket(c, ctx, id).map_err(|_| invalid())?
-        {
+        if let Some(saved) = saved_tickets.as_ref().map_err(|_| invalid())?.get(id) {
             if saved["totalCents"] == json!(r.get("total").and_then(cents).map(|n| n.to_string())) {
-                return Ok(saved);
+                return Ok(saved.clone());
             }
         }
     }

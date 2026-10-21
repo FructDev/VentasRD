@@ -139,6 +139,11 @@ fn reviewed_thousand_sale_history_preserves_all_tickets_without_reloading_each_s
     cut::stage_resolution_history(w.connection(), &ctx, &envelope).unwrap();
     let manifest = json!({"legacyResolutionHistory":{"sha256":h,"cutoverId":i.cutover_id}});
     cut::activate_resolution_history(w.connection(), &ctx, &manifest).unwrap();
+    // Once the received history is active, the same review must not validate
+    // its entire envelope again for each of the thousand preserved tickets.
+    let started = std::time::Instant::now();
+    assert!(cut::selected_readiness(w.connection(), &ctx, &i.run_id).is_ok());
+    assert!(started.elapsed() < std::time::Duration::from_secs(10));
     drop(w);
     let mut w = VaultWriter::open_encrypted(&dir, &CipherKey::new([119; 32])).unwrap();
     assert_eq!(

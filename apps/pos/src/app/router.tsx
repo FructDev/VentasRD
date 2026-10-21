@@ -1,6 +1,7 @@
 import {applyBrand} from '../features/settings/brand';
 import {AccountHeader,BusinessIdentity,headerBusiness} from '../features/access/account-header';
 import {TeamPage} from '../features/settings/team-page';
+import {AdminPage} from '../features/management/admin-page';
 import {PublicCatalogueSettings} from '../features/settings/public-catalogue-settings';
 import {BusinessSettings} from '../features/settings/business-settings';
 import {BackupSettings} from '../features/settings/backup-settings';
@@ -76,15 +77,17 @@ function PendingModule({ name }: { name: string }) {
 }
 function SettingsPage({production=false}:{production?:boolean}) {
   const s = useSales();
+  const transfer = new URLSearchParams(useLocation().search).get('section') === 'traslado';
+  const canTransfer = s.snapshot && s.snapshot.mode !== 'recovery-readonly';
   return (
     <section className="h-full p-4 sm:p-8 overflow-y-auto">
       <div className="max-w-3xl mx-auto mb-6"><h1 className="text-2xl sm:text-3xl font-display font-black text-white">Configuración del Negocio</h1><p className="text-vr-gray mt-2">Personaliza la información que aparece en los tickets y reportes.</p></div>
-      <div className="grid gap-4 max-w-3xl mx-auto"><BusinessSettings/><PublicCatalogueSettings/><Link to="/configuracion/equipo" className="bg-navy-2 border border-navy-3 rounded-2xl p-5 text-gold font-bold">👥 Mi Equipo · Gestiona cajeros y vendedores →</Link>
+      <div className="grid gap-4 max-w-3xl mx-auto">{transfer && canTransfer && <><p role="status" className="p-4 rounded-xl bg-gold/10 text-gold">Tu acceso está listo. Revisa aquí los datos del negocio antes de confirmar el traslado. La captura es de consulta; todavía no se ha activado ningún saldo.</p><WebMigrationSettings/></>}<BusinessSettings/><PublicCatalogueSettings/><Link to="/configuracion/equipo" className="bg-navy-2 border border-navy-3 rounded-2xl p-5 text-gold font-bold">👥 Mi Equipo · Gestiona cajeros y vendedores →</Link>
         <PrintingSettings/>
         {!production&&<FiscalSettings/>}
         <BackupSettings/>
         <UpdateSettings/>
-        {s.snapshot&&s.snapshot.mode!=='recovery-readonly'&&<WebMigrationSettings/>}
+        {!transfer&&canTransfer&&<WebMigrationSettings/>}
         <div className="bg-navy-2 rounded-xl p-5 border border-navy-3">
           <h3 className="text-lg font-bold text-vr-gray mb-1 border-b border-navy-3 pb-2">🩺 Estado del Sistema</h3>
           <p className="text-xs text-vr-gray mb-4">Datos de este dispositivo para soporte. No envía ventas ni datos de clientes.</p>
@@ -175,6 +178,7 @@ function Layout({
           <Route path="/garantias" element={<Suspense fallback={<p className="p-6 text-vr-gray">Cargando Garantías…</p>}><WarrantiesPage /></Suspense>} />
           <Route path="/apartados" element={<Suspense fallback={<p className="p-6 text-vr-gray">Cargando Apartados…</p>}><LayawaysPage /></Suspense>} />
           <Route path="/dashboard" element={<ReportsPage summary />} />
+          <Route path="/admin" element={<AdminPage account={account}/>} />
           <Route path="/reportes" element={<ReportsPage />} />
           <Route path="/configuracion/equipo" element={<TeamPage />} />
           <Route path="/configuracion" element={<SettingsPage production={account?.environment==='production-pilot'}/>} />

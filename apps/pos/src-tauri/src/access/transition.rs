@@ -207,7 +207,16 @@ impl AccessState {
             }
             backup::Action::TransitionCutoverView { run_id } => {
                 id(&run_id)?;
-                self.cutover_owned(move|c,ctx|{let mut value=cut::readiness(c,&ctx,&run_id)?;value["pending"]=cut::view(c,&ctx)?;value["selectedBaseline"]=cut::selected_readiness(c,&ctx,&run_id)?;
+                self.cutover_owned(move|c,ctx|{
+                    let pending = cut::view(c, &ctx)?;
+                    // A frozen attempt is recovered from its verified intent/receipt.
+                    // Rebuilding the old review cannot change that attempt and used
+                    // to keep an already active business waiting on every ticket.
+                    if pending["runId"] == run_id && matches!(pending["state"].as_str(), Some("UNKNOWN" | "ADOPTED" | "ACTIVE")) {
+                        let revision: u32 = c.query_row("SELECT revision FROM legacy_transition_runs_v1 WHERE run_id=?1", [&run_id], |r| r.get(0))?;
+                        return Ok(json!({"runId":run_id,"revision":revision,"canPrepare":false,"blockers":[],"pending":pending,"backups":[],"coverage":"FROZEN_CUTOVER","legacyReplay":false}));
+                    }
+                    let mut value=cut::readiness(c,&ctx,&run_id)?;value["pending"]=pending;value["selectedBaseline"]=cut::selected_readiness(c,&ctx,&run_id)?;
                     let mut q=c.prepare("SELECT operation_id FROM native_backup_jobs_v1 WHERE tenant_id=?1 AND installation_id=?2 AND actor_id=?3 AND state='VERIFIED' ORDER BY rowid DESC LIMIT 20")?;
                     value["backups"]=json!(q.query_map((&ctx.tenant_id,&ctx.installation_id,&ctx.actor_id),|r|r.get::<_,String>(0))?.collect::<Result<Vec<_>,_>>()?);Ok(value)})
             }

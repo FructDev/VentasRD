@@ -1,4 +1,3 @@
-import {BusinessLogo} from './business-logo';
 // Markup from the definitive VentaRD TicketApartado; data is the frozen native operation.
 import type {LayawayTicket} from '../../platform/management';
 export function NativeTicketApartado({ticket}:{ticket:LayawayTicket}){
@@ -14,7 +13,7 @@ export function NativeTicketApartado({ticket}:{ticket:LayawayTicket}){
     return (
         <div className={`font-mono text-sm text-black ${claseTicket}`} style={{ width: impresion.anchoPapel, padding: es58 ? '4px' : '10px' }}>
             <div className="text-center mb-3">
-                <BusinessLogo business={b} layout={ticket.printLayout}/><h1 className="text-lg font-bold uppercase">{nombreNegocio}</h1>
+                <h1 className="text-lg font-bold uppercase">{nombreNegocio}</h1>
                 {rnc && <p className="text-xs">RNC: {rnc}</p>}
                 {direccion && <p className="text-xs">{direccion}</p>}
                 {telefono && <p className="text-xs">Tel: {telefono}</p>}

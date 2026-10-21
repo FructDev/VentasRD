@@ -261,6 +261,7 @@ pub fn read(
                 }
                 rows.push(data);
             }
+            result["productActivity"]=json!(top.iter().map(|(id,(name,q,total))|json!({"productId":id,"name":name,"quantity":{"numerator":q.numerator().to_string(),"denominator":q.denominator().to_string()},"subtotalCents":total.to_dto()})).collect::<Vec<_>>());
             let mut top = top.into_values().collect::<Vec<_>>();
             top.sort_by(|a, b| b.2.cents().cmp(&a.2.cents()).then_with(|| a.0.cmp(&b.0)));
             top.truncate(50);

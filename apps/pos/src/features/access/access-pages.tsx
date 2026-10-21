@@ -209,7 +209,17 @@ export function PreparationPage() {
   async function prepare() {
     await run(async () => {
       setProgress("Descargando y verificando tus datos para trabajar localmente…");
-      await salesAccountPort.bootstrap();
+      try {
+        await salesAccountPort.bootstrap();
+      } catch (e) {
+        if (!(typeof e === "object" && e !== null && "code" in e && e.code === "SALES_SETUP_REQUIRED")) throw e;
+        setSetupRequired(true);
+        if (!['owner', 'admin'].includes(view?.role ?? '')) throw e;
+        setProgress("Preparando la consulta para revisar el traslado de tu negocio…");
+        const state = await downloadCapture();
+        navigate("/configuracion?source=preview&section=traslado", { replace: true });
+        return state;
+      }
       const state = await accessPort.status();
       if (!state.operationalReady) throw { code: "SALES_EVIDENCE_INVALID" };
       navigate("/", { replace: true });
@@ -217,14 +227,15 @@ export function PreparationPage() {
     });
   }
   async function download() {
-    await run(async () => {
+    await run(downloadCapture);
+  }
+  async function downloadCapture() {
       for (let i = 0; i < 51; i++) {
         const step = await cataloguePort.step();
         setProgress(`Páginas verificadas: ${step.received}/${step.total}`);
         if (step.complete) return step.view;
       }
       throw { code: "CATALOGUE_INCOMPLETE" };
-    });
   }
   const tenants = view?.tenants ?? [],
     chosen = tenants.find((t) => t.id === tenant),

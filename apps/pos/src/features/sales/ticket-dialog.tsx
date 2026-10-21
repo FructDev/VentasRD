@@ -43,28 +43,20 @@ export function TicketDialog({
     }
   }
   return (
-    <div className="fixed inset-0 bg-black/80 z-[70] flex items-center justify-center p-4">
+    <div className="fixed inset-0 bg-black/70 backdrop-blur-md z-[70] flex items-end sm:items-center justify-center sm:p-4">
       <section
         ref={ref}
         onKeyDown={key}
         role="dialog"
         aria-modal="true"
         aria-labelledby="saved-ticket-title"
-        className="bg-white text-black rounded-xl p-6 max-w-md w-full max-h-[90vh] overflow-y-auto"
+        className="bg-navy-2 text-white border border-navy-3 rounded-t-2xl sm:rounded-2xl p-6 sm:p-8 max-w-md w-full max-h-[90vh] overflow-y-auto shadow-2xl"
       >
-        <h2 id="saved-ticket-title" className="font-bold text-xl text-center">
-          Ticket guardado · {ticket.ticket}
+        <h2 id="saved-ticket-title" className="font-display font-black text-2xl text-center">
+          Recibo de venta
         </h2>
-        <p className="text-xs text-center mt-2">
-          {synthetic
-            ? "PRUEBA SINTÉTICA · NO VÁLIDO FISCALMENTE"
-            : "COPIA LOCAL · validez fiscal no verificada"}
-        </p>
+        {synthetic&&<p className="text-xs text-center text-gold mt-2">PRUEBA SINTÉTICA</p>}
         <ReceiptDocument layout={ticket.printLayout} padding saleCopies><NativeTicketVenta ticket={ticket}/></ReceiptDocument>
-        <p className="text-xs text-gray-600 mt-4">
-          Importes originales guardados. Un pago registrado no acredita
-          liquidación bancaria. La solicitud de impresión no acredita salida de papel.
-        </p>
         {printNotice&&<p role="status" className="text-xs text-green-700 mt-3">{printNotice}</p>}{printError&&<p role="alert" className="text-xs text-red-700 mt-3">{printError}</p>}
         <button onClick={()=>void print()} disabled={!printTicket||!ticket.printSnapshotHash||printing} className="mt-4 w-full rounded-xl bg-gold-gradient text-navy p-3 font-bold disabled:opacity-30">{printing?'Preparando impresión…':hasPrintAttempt?'Recuperar solicitud de impresión':printNotice?'Reimprimir ticket':'Imprimir ticket'}</button>
         <button

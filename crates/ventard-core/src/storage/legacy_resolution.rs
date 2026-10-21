@@ -1035,3 +1035,20 @@ pub fn resolution_history_ticket(
             .cloned()
     }))
 }
+
+/// Validate the preserved envelope once for a batch, keeping its proofs and
+/// tenant/scope checks identical to an individual historical ticket read.
+pub(crate) fn resolution_history_tickets(
+    c: &Connection,
+    ctx: &CatalogueContext,
+) -> Result<BTreeMap<String, Value>, Error> {
+    let Some(history) = active_history(c, ctx)? else {
+        return Ok(BTreeMap::new());
+    };
+    history["tickets"]
+        .as_array()
+        .ok_or_else(invalid)?
+        .iter()
+        .map(|ticket| Ok((ticket["id"].as_str().ok_or_else(invalid)?.to_owned(), ticket.clone())))
+        .collect()
+}
