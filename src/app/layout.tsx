@@ -1,6 +1,6 @@
 // src/app/layout.tsx
 import type { Metadata, Viewport } from "next";
-import { Syne, DM_Sans, DM_Mono, Poppins, Montserrat, Space_Grotesk, Sora, Outfit, Playfair_Display } from "next/font/google";
+import localFont from "next/font/local";
 import "./globals.css";
 import { SyncProvider } from "@/components/providers/SyncProvider";
 import { AuthProvider } from "@/components/providers/AuthProvider";
@@ -26,34 +26,44 @@ const themeInitScript = `(function(){try{
 // una sola vez y muy temprano; si se pierde, el banner de instalar no sale).
 window.addEventListener('beforeinstallprompt',function(e){e.preventDefault();window.__vrdInstallEvt=e;});`;
 
-const syne = Syne({
-  subsets: ["latin"],
+const syne = localFont({
+  src: "../../apps/pos/src/assets/fonts/syne.ttf",
   variable: "--font-syne",
   display: "swap",
-  weight: ["400", "500", "600", "700", "800"],
+  weight: "400 800",
 });
 
-const dmSans = DM_Sans({
-  subsets: ["latin"],
+const dmSans = localFont({
+  src: "../../apps/pos/src/assets/fonts/dmsans.ttf",
   variable: "--font-dm-sans",
   display: "swap",
-  weight: ["400", "500", "600", "700"],
+  weight: "400 700",
 });
 
-const dmMono = DM_Mono({
-  subsets: ["latin"],
+const dmMono = localFont({
+  src: [
+    { path: "../../apps/pos/src/assets/fonts/dmmono.ttf", weight: "400", style: "normal" },
+    { path: "../../apps/pos/src/assets/fonts/dmmono500.ttf", weight: "500", style: "normal" },
+  ],
   variable: "--font-dm-mono",
   display: "swap",
-  weight: ["400", "500"],
 });
 
 // Fuentes de marca opcionales (personalización por tienda)
-const poppins = Poppins({ subsets: ["latin"], variable: "--font-poppins", display: "swap", weight: ["600", "700", "800"] });
-const montserrat = Montserrat({ subsets: ["latin"], variable: "--font-montserrat", display: "swap", weight: ["600", "700", "800"] });
-const spaceGrotesk = Space_Grotesk({ subsets: ["latin"], variable: "--font-space-grotesk", display: "swap", weight: ["500", "600", "700"] });
-const sora = Sora({ subsets: ["latin"], variable: "--font-sora", display: "swap", weight: ["600", "700", "800"] });
-const outfit = Outfit({ subsets: ["latin"], variable: "--font-outfit", display: "swap", weight: ["600", "700", "800"] });
-const playfair = Playfair_Display({ subsets: ["latin"], variable: "--font-playfair", display: "swap", weight: ["600", "700", "800"] });
+const poppins = localFont({
+  src: [
+    { path: "../../apps/pos/src/assets/fonts/poppins600.ttf", weight: "600", style: "normal" },
+    { path: "../../apps/pos/src/assets/fonts/poppins.ttf", weight: "700", style: "normal" },
+    { path: "../../apps/pos/src/assets/fonts/poppins800.ttf", weight: "800", style: "normal" },
+  ],
+  variable: "--font-poppins",
+  display: "swap",
+});
+const montserrat = localFont({ src: "../../apps/pos/src/assets/fonts/montserrat.ttf", variable: "--font-montserrat", display: "swap", weight: "600 800" });
+const spaceGrotesk = localFont({ src: "../../apps/pos/src/assets/fonts/spacegro.ttf", variable: "--font-space-grotesk", display: "swap", weight: "500 700" });
+const sora = localFont({ src: "../../apps/pos/src/assets/fonts/sora.ttf", variable: "--font-sora", display: "swap", weight: "600 800" });
+const outfit = localFont({ src: "../../apps/pos/src/assets/fonts/outfit.ttf", variable: "--font-outfit", display: "swap", weight: "600 800" });
+const playfair = localFont({ src: "../../apps/pos/src/assets/fonts/playfair.ttf", variable: "--font-playfair", display: "swap", weight: "600 800" });
 
 export const metadata: Metadata = {
   title: "VentaRD — POS Offline First",
