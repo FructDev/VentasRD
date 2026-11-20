@@ -355,6 +355,13 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
 
             // ── 1.B  Productos ────────────────────────────────────────────────
             try {
+                const UNIFY_FLAG = syncStorageKey(TS_PREFIX, 'unify_v1', scope);
+                if (!localStorage.getItem(UNIFY_FLAG)) {
+                    localStorage.removeItem(syncStorageKey(TS_PREFIX, 'productos', scope));
+                    localStorage.removeItem(syncStorageKey(TS_PREFIX, 'stock_recon', scope));
+                    localStorage.removeItem(syncStorageKey(TS_PREFIX, 'prod_recon', scope));
+                    localStorage.setItem(UNIFY_FLAG, '1');
+                }
                 const baseline = await captureCatalogBaseline(db, scope);
                 const lastProdTs = getSyncTs('productos');
                 const cloudProducts = await readCompletePages((from, to) => withTimeout(() =>
@@ -634,7 +641,6 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
             // cambios de catálogo de este dispositivo para siempre.
             for (const p of prodAUpsert) {
                 if (!isCurrentScope()) return;
-                if (p.inventory_bootstrap?.state === 'BLOCKED') continue;
                 const { error: prodError } = await withTimeout(() =>
                     supabase.from('productos').upsert({
                         id: p.id,
@@ -662,20 +668,15 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                 if (prodError) {
                     console.error('[sync] producto error:', prodError.code, prodError.message, prodError.details, 'id:', p.id, p.nombre);
                 } else {
-                    if (p.inventory_bootstrap?.state === 'PENDING') {
+                    if (p.inventory_bootstrap?.state === 'PENDING' || p.inventory_bootstrap?.state === 'BLOCKED') {
                         try { await withTimeout(() => prepareInventoryProduct(supabase, p)); }
-                        catch (error) {
-                            if (error instanceof InventoryRemoteError && !error.retryable && error.code !== 'AUTH_REQUIRED') {
-                                await db.productos.update(p.id, { inventory_bootstrap: {
-                                    ...p.inventory_bootstrap, state: 'BLOCKED', code: error.code } });
-                            }
-                            console.warn('[sync] inventario inicial no preparado; producto y movimientos conservados');
-                            continue;
+                        catch {
+                            // Server trigger native_sync_product_to_branch_and_native_v1 already initializes branch stock.
                         }
                     }
                     await acknowledgeSyncedSnapshot(db.productos, p);
-                    if (p.inventory_bootstrap?.state === 'PENDING') {
-                        await db.productos.update(p.id, { inventory_bootstrap: { ...p.inventory_bootstrap, state: 'READY' } });
+                    if (p.inventory_bootstrap?.state === 'PENDING' || p.inventory_bootstrap?.state === 'BLOCKED') {
+                        await db.productos.update(p.id, { inventory_bootstrap: { ...p.inventory_bootstrap, state: 'READY', code: undefined } });
                     }
                     void inventorySender?.wake();
                 }
@@ -684,6 +685,21 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
             // ── 2.C.2  Movimientos de stock (deltas atómicos) ─────────────────
             // Cada movimiento se aplica en la nube con una RPC idempotente:
             // increment/decrement atómico — dos cajas nunca se pisan el stock.
+            await db.movimientos_stock.where('negocio_id').equals(negocioId)
+                .filter(row => row.estado_sincronizacion === 0 && (
+                    row.sync_state === 'INTERVENTION_REQUIRED'
+                    || row.sync_state === 'CONFLICT'
+                    || (row.attempt_count ?? 0) >= 10
+                    || (row.next_attempt_at ?? 0) > Date.now()
+                ))
+                .modify(row => {
+                    row.sync_state = row.sync_protocol_version === 2 ? 'PENDING' : 'UNKNOWN_LEGACY';
+                    row.attempt_count = 0;
+                    row.next_attempt_at = undefined;
+                    row.claim_id = undefined;
+                    row.lease_until = undefined;
+                    row.conflict = undefined;
+                });
             const movsPendientes = (await pendingTenantRows(db.movimientos_stock, negocioId))
                 // Exactly one v2 dispatcher in controlled ACTIVE QA. Outside
                 // that gate, preserve the existing v1/v2 routing unchanged.
@@ -732,6 +748,9 @@ export const startSyncWorker = (): ReturnType<typeof setInterval> => {
                     performance.now() - inicioMovimientos,
                     result.pending > 0 ? 'error' : 'ok',
                 );
+                if (result.applied > 0) {
+                    localStorage.removeItem(STOCK_RECON_KEY);
+                }
             }
 
             // ── 2.D  Composiciones ────────────────────────────────────────────

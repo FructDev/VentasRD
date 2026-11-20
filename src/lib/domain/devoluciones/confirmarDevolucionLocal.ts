@@ -34,7 +34,7 @@ export async function confirmarDevolucionLocal(database: VentaRDDatabase, entrad
             return { devolucion: journal.resultado as DevolucionLocal, reutilizada: true };
         }
         const venta = await database.ventas.get(entrada.ventaId);
-        if (!venta || venta.negocio_id !== entrada.negocioId || (venta.sucursal_id ?? null) !== (entrada.sucursalId ?? null)) throw new Error('refund_ambito_invalido');
+        if (!venta || venta.negocio_id !== entrada.negocioId || (venta.sucursal_id && !entrada.sucursalId) || (venta.sucursal_id && entrada.sucursalId && venta.sucursal_id !== entrada.sucursalId)) throw new Error('refund_ambito_invalido');
         if (entrada.fecha < venta.fecha_creacion) throw new Error('refund_fecha_invalida');
         const detalles = await database.venta_detalles.where('venta_id').equals(venta.id).toArray();
         if (!detalles.length || detalles.some(d => d.negocio_id !== entrada.negocioId)) throw new Error('refund_sale_basis_unavailable');
@@ -51,17 +51,22 @@ export async function confirmarDevolucionLocal(database: VentaRDDatabase, entrad
         for (const d of detalles) vendidos.set(d.producto_id, (vendidos.get(d.producto_id) ?? 0) + d.cantidad);
         let bases = efectos?.stockPorItem ?? await sharedReturnStockBasis(database,venta.id);
         if (!bases) {
-            // Legacy simple solo si los movimientos persistidos coinciden exactamente
-            // con todas las cantidades vendidas. Sin receta actual ni backfill.
             const movimientos = efectos?.movimientosStock ?? await database.movimientos_stock.where('negocio_id')
                 .equals(entrada.negocioId).filter(m => m.tipo === 'venta' && m.referencia_id === venta.id).toArray();
-            const consumidos = new Map<string, number>();
-            for (const m of movimientos) {
-                if (m.delta >= 0 || m.valor_absoluto != null || (m.sucursal_id ?? null) !== (venta.sucursal_id ?? null)) throw new Error('refund_stock_basis_unavailable');
-                consumidos.set(m.producto_id, (consumidos.get(m.producto_id) ?? 0) - m.delta);
-            }
             const stockVendidos = new Map([...vendidos].filter(([id]) => !detalles.some(d => d.producto_id === id && d.sin_stock)));
-            if (consumidos.size !== stockVendidos.size || [...stockVendidos].some(([id, qty]) => consumidos.get(id) !== qty)) throw new Error('refund_stock_basis_unavailable');
+            if (movimientos.length > 0) {
+                const consumidos = new Map<string, number>();
+                for (const m of movimientos) {
+                    if (m.delta >= 0 || m.valor_absoluto != null || (m.sucursal_id && venta.sucursal_id && m.sucursal_id !== venta.sucursal_id)) throw new Error('refund_stock_basis_unavailable');
+                    consumidos.set(m.producto_id, (consumidos.get(m.producto_id) ?? 0) - m.delta);
+                }
+                if (consumidos.size !== stockVendidos.size || [...stockVendidos].some(([id, qty]) => consumidos.get(id) !== qty)) throw new Error('refund_stock_basis_unavailable');
+            } else {
+                // If local stock movements are absent (e.g. sale synced from another computer or older than retention),
+                // simple products have an exact 1:1 stock basis from venta_detalles; combos still require historical recipe evidence.
+                const prods = await database.productos.bulkGet([...stockVendidos.keys()]);
+                if (prods.some(p => !p || p.tipo === 'combo')) throw new Error('refund_stock_basis_unavailable');
+            }
             bases = [...vendidos].map(([productoId, cantidadVendida]) => ({ productoId, cantidadVendida,
                 consumos: stockVendidos.has(productoId) ? [{ productoId, cantidad: cantidadVendida }] : [] }));
         }
@@ -122,12 +127,12 @@ export async function confirmarDevolucionLocal(database: VentaRDDatabase, entrad
             }
         }
         if (entrada.serialIds && liberar.length !== selected.size) throw new Error('refund_serial_owner_invalid');
-        const turnos = await database.cajas.where('negocio_id').equals(entrada.negocioId)
-            .filter(c => c.estado === 'abierta' && (c.sucursal_id ?? null) === (entrada.sucursalId ?? null)).toArray();
-        if (turnos.length > 1) throw new Error('turno_ambiguo');
-        if (turnos[0] && entrada.fecha < turnos[0].fecha_apertura) throw new Error('turno_fecha_invalida');
+        const turnos = (await database.cajas.where('negocio_id').equals(entrada.negocioId)
+            .filter(c => c.estado === 'abierta' && (c.sucursal_id ?? null) === (entrada.sucursalId ?? null)).toArray())
+            .sort((a, b) => (b.fecha_apertura || 0) - (a.fecha_apertura || 0));
+        const turnoActivo = turnos[0] && entrada.fecha >= turnos[0].fecha_apertura ? turnos[0] : undefined;
         const devolucion: DevolucionLocal = { id: entrada.operationId, negocio_id: entrada.negocioId, venta_id: venta.id,
-            sucursal_id: entrada.sucursalId, ...(turnos[0] ? { caja_id: turnos[0].id } : {}),
+            sucursal_id: entrada.sucursalId, ...(turnoActivo ? { caja_id: turnoActivo.id } : {}),
             items_devueltos: [...cantidades].filter(([, qty]) => qty > 0).map(([id, qty]) => ({ producto_id: id,
                 cantidad: qty, precio_unitario: detalles.find(d => d.producto_id === id)!.precio_unitario })),
             monto_devuelto: monto, razon: entrada.razon, fecha_creacion: entrada.fecha, estado_sincronizacion: 0,
@@ -141,10 +146,11 @@ export async function confirmarDevolucionLocal(database: VentaRDDatabase, entrad
             estado_sincronizacion: 0, fecha_actualizacion: entrada.fecha });
         if (venta.metodo_pago === 'fiado') {
             const cargo = await buscarCargoFiadoDeVenta(database, entrada.negocioId, venta.id);
-            if (!cargo || cargo.cliente_id !== venta.cliente_id) throw new Error('refund_credit_basis_unavailable');
+            const clienteFiadoId = cargo?.cliente_id ?? venta.cliente_id;
+            if (!clienteFiadoId || (cargo && venta.cliente_id && cargo.cliente_id !== venta.cliente_id)) throw new Error('refund_credit_basis_unavailable');
             // Ajuste comercial legacy de deuda, NO recepción de efectivo. No caja/método inventados.
             await database.transacciones_fiado.add({ id: effectId('fiado'), negocio_id: entrada.negocioId,
-                sucursal_id: entrada.sucursalId, cliente_id: cargo.cliente_id, venta_id: venta.id, tipo: 'abono',
+                sucursal_id: entrada.sucursalId, cliente_id: clienteFiadoId, venta_id: venta.id, tipo: 'abono',
                 monto, concepto: `Devolución — ${entrada.razon}`, fecha_creacion: entrada.fecha,
                 fecha_actualizacion: entrada.fecha, estado_sincronizacion: 0 });
         }
